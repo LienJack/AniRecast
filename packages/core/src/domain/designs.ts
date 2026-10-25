@@ -1,14 +1,18 @@
 import { AniError, newId } from '@anirecast/shared';
 import { all, type Db, fromJson, one, run, toJson, tx } from '../db.ts';
 import { appendEvent } from '../events.ts';
+import { type CastMember, listCast } from './cast.ts';
+import { getCastAnalysis } from './cast-analysis.ts';
 import type { InputRef, Review, Verdict, VersionStatus } from './generation.ts';
 import { getReview, listReviews } from './generation.ts';
 import { getPersona } from './personas.ts';
 import { getProject, type Project, projectDir } from './projects.ts';
 
 /**
- * A library character redrawn for one project in that animation's style. Three sheets per character, each
- * versioned and reviewed like boards; approved sheets replace the library references in boards and takes.
+ * A binding (an original character of the clip → the library character replacing her) redesigned for the
+ * project: the library character redrawn the way this animation draws the original, with the expressions and
+ * poses the original has in the clip. Three sheets per binding, each versioned and reviewed like boards;
+ * approved sheets replace the library references in boards and takes for that character.
  */
 export type DesignKind = 'turnaround' | 'expressions' | 'poses';
 export const DESIGN_KINDS: readonly DesignKind[] = ['turnaround', 'expressions', 'poses'];
@@ -16,6 +20,8 @@ export const DESIGN_KINDS: readonly DesignKind[] = ['turnaround', 'expressions',
 export interface Design {
   id: string;
   projectId: string;
+  /** The original character this design replaces (null for designs made before bindings). */
+  castMemberId: string | null;
   personaId: string;
   kind: DesignKind;
   version: number;
@@ -36,6 +42,7 @@ export interface Design {
 interface Row {
   id: string;
   project_id: string;
+  cast_member_id: string | null;
   persona_id: string;
   kind: DesignKind;
   version: number;
@@ -56,6 +63,7 @@ interface Row {
 const toDesign = (r: Row): Design => ({
   id: r.id,
   projectId: r.project_id,
+  castMemberId: r.cast_member_id,
   personaId: r.persona_id,
   kind: r.kind,
   version: r.version,
@@ -92,19 +100,60 @@ export function listDesigns(db: Db, projectId: string, personaId?: string): Desi
   ).map(toDesign);
 }
 
+export interface Binding {
+  castMemberId: string;
+  personaId: string;
+}
+
+/** The approved sheet of one binding (the original character and the library character now replacing her). */
 export function approvedDesign(
   db: Db,
   projectId: string,
-  personaId: string,
+  binding: Binding,
   kind: DesignKind,
 ): Design | undefined {
   const r = one<Row>(
     db,
-    `SELECT * FROM designs WHERE project_id = :projectId AND persona_id = :personaId AND kind = :kind
-       AND status = 'approved' ORDER BY version DESC LIMIT 1`,
-    { projectId, personaId, kind },
+    `SELECT * FROM designs WHERE project_id = :projectId AND cast_member_id = :castId AND persona_id = :personaId
+       AND kind = :kind AND status = 'approved' ORDER BY version DESC LIMIT 1`,
+    { projectId, castId: binding.castMemberId, personaId: binding.personaId, kind },
   );
   return r && toDesign(r);
+}
+
+/** Original characters of the project bound to a library character, oldest first. */
+export function projectBindings(db: Db, projectId: string): Binding[] {
+  return all<{ id: string; persona_id: string }>(
+    db,
+    `SELECT id, persona_id FROM cast_members WHERE project_id = :projectId AND status = 'active'
+       AND persona_id IS NOT NULL ORDER BY created_at`,
+    { projectId },
+  ).map((r) => ({ castMemberId: r.id, personaId: r.persona_id }));
+}
+
+/**
+ * A cast member id, or (for older callers and Codex) a library character: the binding(s) that use it. A design
+ * id resolves to its own binding.
+ */
+export function resolveBindings(db: Db, projectId: string, ref: string): Binding[] {
+  const cast = one<{ id: string; persona_id: string | null; project_id: string }>(
+    db,
+    `SELECT id, persona_id, project_id FROM cast_members WHERE id = :ref OR (project_id = :projectId AND label = :ref)`,
+    { ref, projectId },
+  );
+  if (cast) {
+    if (cast.project_id !== projectId) throw new AniError('usage', `${ref} belongs to another project`);
+    if (!cast.persona_id)
+      throw new AniError('conflict', 'This character is not bound to a library character yet', {
+        hint: 'Bind it first (角色設計 or `anirecast cast map`).',
+      });
+    return [{ castMemberId: cast.id, personaId: cast.persona_id }];
+  }
+  const persona = getPersona(db, ref);
+  const bound = projectBindings(db, projectId).filter((b) => b.personaId === persona.id);
+  if (!bound.length)
+    throw new AniError('conflict', `No original character in this project is bound to ${persona.name}`);
+  return bound;
 }
 
 /** Library characters this project swaps in: mapped cast members and per-shot overrides. */
@@ -158,6 +207,7 @@ export function createDesign(
   db: Db,
   input: {
     projectId: string;
+    castMemberId: string | null;
     personaId: string;
     kind: DesignKind;
     prompt: string;
@@ -181,11 +231,12 @@ export function createDesign(
     const id = newId('dsg', now);
     run(
       db,
-      `INSERT INTO designs (id, project_id, persona_id, kind, version, status, prompt, model, params_json, inputs_json, parent_id, created_by, created_at)
-       VALUES (:id, :projectId, :personaId, :kind, :version, 'queued', :prompt, :model, :params, :inputs, :parentId, :createdBy, :now)`,
+      `INSERT INTO designs (id, project_id, cast_member_id, persona_id, kind, version, status, prompt, model, params_json, inputs_json, parent_id, created_by, created_at)
+       VALUES (:id, :projectId, :castId, :personaId, :kind, :version, 'queued', :prompt, :model, :params, :inputs, :parentId, :createdBy, :now)`,
       {
         id,
         projectId: input.projectId,
+        castId: input.castMemberId,
         personaId: input.personaId,
         kind: input.kind,
         version,
@@ -204,7 +255,7 @@ export function createDesign(
       entityType: 'design',
       entityId: id,
       projectId: input.projectId,
-      payload: { personaId: input.personaId, kind: input.kind, version },
+      payload: { personaId: input.personaId, castMemberId: input.castMemberId, kind: input.kind, version },
     });
     return getDesign(db, id);
   });
@@ -263,8 +314,8 @@ export function reviewDesign(
       run(
         db,
         `UPDATE designs SET status = 'ready' WHERE project_id = :p AND persona_id = :q AND kind = :k
-           AND status = 'approved' AND id != :id`,
-        { p: d.projectId, q: d.personaId, k: d.kind, id: d.id },
+           AND cast_member_id IS :c AND status = 'approved' AND id != :id`,
+        { p: d.projectId, q: d.personaId, k: d.kind, c: d.castMemberId, id: d.id },
       );
       run(db, `UPDATE designs SET status = 'approved' WHERE id = :id`, { id: d.id });
     } else if (input.verdict === 'changes') {
@@ -297,27 +348,47 @@ export function reviewDesign(
   });
 }
 
-/** Per character: its note and the latest and approved version of each sheet. */
+/**
+ * The design step of a project: every bound original character with its library character, the project note,
+ * the analysis of the original and the latest / approved version of each sheet; and the characters not bound.
+ */
 export function designOverview(db: Db, projectId: string) {
   getProject(db, projectId);
-  return projectPersonaIds(db, projectId).map((personaId) => {
-    const persona = getPersona(db, personaId);
-    const designs = listDesigns(db, projectId, personaId).map((d) => ({
-      ...d,
-      reviews: listReviews(db, d.id),
-    }));
-    return {
-      persona,
-      note: designNote(db, projectId, personaId),
-      sheets: DESIGN_KINDS.map((kind) => {
-        const versions = designs.filter((d) => d.kind === kind);
-        return {
-          kind,
-          latest: versions.at(-1) ?? null,
-          approved: versions.filter((d) => d.status === 'approved').at(-1) ?? null,
-          versions,
-        };
-      }),
-    };
+  const active = listCast(db, projectId);
+  const castInfo = (c: CastMember) => ({
+    id: c.id,
+    label: c.label,
+    description: c.description,
+    thumbPath: c.thumbPath,
+    shotCount: c.shotIds.length,
+    lookPolicy: c.looks[0]?.lookPolicy ?? ('persona' as const),
   });
+  const bindings = active
+    .filter((c) => c.personaId)
+    .map((c) => {
+      const persona = getPersona(db, c.personaId as string);
+      const designs = all<Row>(
+        db,
+        `SELECT * FROM designs WHERE project_id = :projectId AND cast_member_id = :castId AND persona_id = :personaId
+         ORDER BY kind, version`,
+        { projectId, castId: c.id, personaId: persona.id },
+      ).map((r) => ({ ...toDesign(r), reviews: listReviews(db, r.id) }));
+      return {
+        cast: castInfo(c),
+        persona,
+        note: designNote(db, projectId, persona.id),
+        analysis: getCastAnalysis(db, c.id),
+        sheets: DESIGN_KINDS.map((kind) => {
+          const versions = designs.filter((d) => d.kind === kind);
+          return {
+            kind,
+            latest: versions.at(-1) ?? null,
+            approved: versions.filter((d) => d.status === 'approved').at(-1) ?? null,
+            versions,
+          };
+        }),
+      };
+    });
+  const unbound = active.filter((c) => !c.personaId && c.shotIds.length > 0).map(castInfo);
+  return { bindings, unbound };
 }

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   addPersonaImage,
+  castAppearances,
   createCastMember,
   createClip,
   createPersona,
@@ -16,12 +17,16 @@ import {
   listAgentTasks,
   listJobs,
   mapCast,
+  normalizeAnalysis,
   planBoard,
   projectSummaries,
   queueDesign,
   recomputeShotModes,
   replacementSignature,
   replaceShots,
+  run,
+  saveCastAnalysis,
+  setAnalysisPicks,
   setDesignNote,
   setKeyframes,
   submitReview,
@@ -31,7 +36,7 @@ import {
 } from '../src/index.ts';
 import { tempDir } from './helpers.ts';
 
-function fixture(): { ws: Workspace; projectId: string; shotId: string; personaId: string } {
+function fixture(): { ws: Workspace; projectId: string; shotId: string; personaId: string; castId: string } {
   const ws = initWorkspace(path.join(tempDir(), 'ws'));
   const src = createSource(ws.db, { title: 'op' }, 'user');
   updateSource(
@@ -53,6 +58,7 @@ function fixture(): { ws: Workspace; projectId: string; shotId: string; personaI
   const [shot] = replaceShots(ws.db, clip.id, [{ start: 0, end: 23 }], 'daemon');
   const frame = 'projects/op/kf.jpg';
   mkdirSync(path.dirname(ws.abs(frame)), { recursive: true });
+  mkdirSync(ws.abs('projects/op/crops'), { recursive: true });
   writeFileSync(ws.abs(frame), 'frame');
   setKeyframes(ws.db, shot!.id, [{ frame: 12, role: 'mid', path: frame }]);
   const ref = path.join(tempDir(), 'ref.png');
@@ -60,10 +66,31 @@ function fixture(): { ws: Workspace; projectId: string; shotId: string; personaI
   const persona = createPersona(ws, { name: 'Claude' }, 'user');
   addPersonaImage(ws, persona.id, ref, { view: 'full' }, 'user');
   const girl = createCastMember(ws.db, { projectId: project.id, label: 'girl' }, 'daemon');
-  createTracklet(ws.db, { shotId: shot!.id, castMemberId: girl.id });
+  const tracklet = createTracklet(ws.db, { shotId: shot!.id, castMemberId: girl.id });
+  // Two appearances of the original with head and body crops, as identification leaves them.
+  for (const [i, frame] of [4, 16].entries()) {
+    for (const part of ['head', 'body']) {
+      const rel = `projects/op/crops/t${i}_${part}.jpg`;
+      writeFileSync(ws.abs(rel), `${part} ${i}`);
+    }
+    run(
+      ws.db,
+      `INSERT INTO detections (id, tracklet_id, frame, head_bbox_json, body_bbox_json, head_crop_path, body_crop_path)
+       VALUES (:id, :t, :frame, :head, :body, :hp, :bp)`,
+      {
+        id: `det_${i}`,
+        t: tracklet.id,
+        frame,
+        head: JSON.stringify([0.4, 0.1, 0.5 + i * 0.05, 0.3]),
+        body: JSON.stringify([0.3, 0.1, 0.6 + i * 0.05, 0.9]),
+        hp: `projects/op/crops/t${i}_head.jpg`,
+        bp: `projects/op/crops/t${i}_body.jpg`,
+      },
+    );
+  }
   mapCast(ws.db, girl.id, persona.id, 'user');
   recomputeShotModes(ws.db, project.id);
-  return { ws, projectId: project.id, shotId: shot!.id, personaId: persona.id };
+  return { ws, projectId: project.id, shotId: shot!.id, personaId: persona.id, castId: girl.id };
 }
 
 /** What the design handler does once the model answers. */
@@ -84,7 +111,13 @@ describe('character design', () => {
     expect(listJobs(ws.db).filter((j) => j.type === 'design.generate')).toHaveLength(3);
     const [turnaround] = queued;
     expect(turnaround!.design.prompt).toContain('Adaptation for this project: covered shoulders, looser cut');
-    expect(turnaround!.design.inputs.map((i) => i.role)).toEqual([`persona:${personaId}`, 'style']);
+    // The turnaround sees the original's largest body crop and a frame of the shot she is in.
+    expect(turnaround!.design.inputs.map((i) => i.role)).toEqual([
+      `persona:${personaId}`,
+      expect.stringMatching(/^original:/),
+      'style',
+    ]);
+    expect(turnaround!.design.prompt).toContain('draw her the way this opening draws girl');
     ws.close();
   });
 
@@ -111,6 +144,68 @@ describe('character design', () => {
     expect(refs(turnaround)).toEqual(['', 'P01 主設定三視圖']);
     expect(refs(expressions)).toEqual(['P02 頭部角度', 'P03 表情範圍']);
     expect(refs(poses)).toEqual(['', 'P08 表演動作']);
+    ws.close();
+  });
+
+  it('draws the expressions and poses the original has, from the analysis, as one reference grid', () => {
+    const { ws, projectId, personaId, castId } = fixture();
+    const appearances = castAppearances(ws, castId);
+    expect(appearances.map((a) => a.head)).toEqual(['projects/op/crops/t1_head.jpg']);
+    saveCastAnalysis(
+      ws.db,
+      castId,
+      normalizeAnalysis(
+        {
+          style: 'thin dark lines, two-tone cel shading',
+          body: 'about 7 heads tall',
+          outfit: 'navy school uniform',
+          expressions: [
+            { label: 'determined glare', description: 'narrowed eyes', appearance: 1 },
+            { label: 'soft smile', appearance: 1 },
+            { label: 'made up', appearance: 9 },
+          ],
+          poses: [{ label: 'running, gun drawn', appearance: 1 }],
+        },
+        appearances,
+      ),
+      { model: 'm', costUsd: 0.01, actor: 'daemon' },
+    );
+    setAnalysisPicks(ws.db, castId, { expressions: [0, 1] }, 'user');
+    const [expressions] = queueDesign(ws, projectId, castId, 'user', { kind: 'expressions' });
+    expect(expressions!.design.inputs.map((i) => i.role)).toEqual([
+      `persona:${personaId}`,
+      'tile:1',
+      'tile:2',
+    ]);
+    expect(expressions!.design.params).toMatchObject({ castMemberId: castId, tile: { columns: 2 } });
+    expect(expressions!.design.prompt).toContain(
+      'Image 2 is a grid of the original character "girl"\'s expressions',
+    );
+    expect(expressions!.design.prompt).toContain('1. determined glare (narrowed eyes); 2. soft smile');
+    expect(expressions!.design.prompt).toContain('exactly 2 head-and-shoulders portraits');
+    expect(expressions!.design.prompt).toContain('How this opening draws girl: thin dark lines');
+    setAnalysisPicks(ws.db, castId, { expressions: [] }, 'user');
+    const [generic] = queueDesign(ws, projectId, castId, 'user', { kind: 'expressions' });
+    expect(generic!.design.prompt).toContain('nine head-and-shoulders portraits');
+    ws.close();
+  });
+
+  it('keeps two originals bound to the same library character apart', () => {
+    const { ws, projectId, shotId, personaId, castId } = fixture();
+    const other = createCastMember(ws.db, { projectId, label: 'friend' }, 'daemon');
+    createTracklet(ws.db, { shotId, castMemberId: other.id });
+    mapCast(ws.db, other.id, personaId, 'user');
+    const all = queueDesign(ws, projectId, personaId, 'user', { kind: 'turnaround' });
+    expect(all.map((q) => q.design.castMemberId).sort()).toEqual([castId, other.id].sort());
+    const mine = all.find((q) => q.design.castMemberId === castId)!;
+    finish(ws, mine.design.id);
+    submitReview(ws, { targetId: mine.design.id, verdict: 'approve', actor: 'user' });
+    const overview = designOverview(ws.db, projectId);
+    expect(overview.bindings.map((b) => [b.cast.label, Boolean(b.sheets[0]?.approved)])).toEqual([
+      ['girl', true],
+      ['friend', false],
+    ]);
+    expect(projectSummaries(ws)[0]).toMatchObject({ step: 'design', designed: 1, toDesign: 2 });
     ws.close();
   });
 
@@ -144,7 +239,7 @@ describe('character design', () => {
     expect(roles).toContain(getDesign(ws.db, turnaround!.design.id).path);
     expect(replacementSignature(ws.db, shotId)).not.toBe(before);
     const overview = designOverview(ws.db, projectId);
-    expect(overview[0]?.sheets[0]?.approved?.id).toBe(turnaround!.design.id);
+    expect(overview.bindings[0]?.sheets[0]?.approved?.id).toBe(turnaround!.design.id);
     ws.close();
   });
 

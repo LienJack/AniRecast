@@ -548,6 +548,36 @@ CREATE INDEX handoffs_project ON handoffs(project_id, status);
     // No more 5-image limit per library entry; a caption says what each image shows so requests can pick.
     sql: `ALTER TABLE persona_images ADD COLUMN label TEXT NOT NULL DEFAULT '';`,
   },
+  {
+    version: 8,
+    name: 'designs per binding, original character analysis',
+    // A design belongs to a binding (original character → library character), not to the library character:
+    // it is drawn from that original's style, build, expressions and poses. Existing designs go to the one
+    // original bound to their library character.
+    sql: `
+ALTER TABLE designs ADD COLUMN cast_member_id TEXT REFERENCES cast_members(id);
+UPDATE designs SET cast_member_id = (
+  SELECT c.id FROM cast_members c
+  WHERE c.project_id = designs.project_id AND c.persona_id = designs.persona_id AND c.status = 'active'
+  ORDER BY c.created_at LIMIT 1
+);
+CREATE INDEX designs_binding ON designs(project_id, cast_member_id, kind);
+
+-- 原片分析: how the animation draws an original character, her build and outfit, her expressions and poses.
+CREATE TABLE cast_analyses (
+  cast_member_id TEXT PRIMARY KEY REFERENCES cast_members(id),
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  status TEXT NOT NULL CHECK (status IN ('queued', 'analyzing', 'ready', 'failed')),
+  analysis_json TEXT NOT NULL DEFAULT '{}',
+  tracklets_json TEXT NOT NULL DEFAULT '[]',
+  model TEXT,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  error TEXT,
+  created_by TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

@@ -214,11 +214,17 @@ export function failJob(
 }
 
 /** The version row each generation job produces, so a cancelled job does not leave it looking pending. */
-const PRODUCES: Record<string, { table: string; key: string; pending: string[] }> = {
+const PRODUCES: Record<string, { table: string; key: string; pending: string[]; column?: string }> = {
   'board.generate': { table: 'boards', key: 'boardId', pending: ['queued', 'generating'] },
   'take.generate': { table: 'takes', key: 'takeId', pending: ['queued', 'generating'] },
   'render.compose': { table: 'renders', key: 'renderId', pending: ['queued', 'rendering'] },
   'design.generate': { table: 'designs', key: 'designId', pending: ['queued', 'generating'] },
+  'design.analyze': {
+    table: 'cast_analyses',
+    key: 'castMemberId',
+    column: 'cast_member_id',
+    pending: ['queued', 'analyzing'],
+  },
 };
 
 function closeProducedVersion(db: Db, job: Job): void {
@@ -228,7 +234,7 @@ function closeProducedVersion(db: Db, job: Job): void {
   run(
     db,
     `UPDATE ${target.table} SET status = 'failed', error = 'Cancelled'
-     WHERE id = :versionId AND status IN (${target.pending.map((s) => `'${s}'`).join(', ')})`,
+     WHERE ${target.column ?? 'id'} = :versionId AND status IN (${target.pending.map((s) => `'${s}'`).join(', ')})`,
     { versionId },
   );
 }

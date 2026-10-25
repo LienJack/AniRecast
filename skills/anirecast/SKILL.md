@@ -42,8 +42,10 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
    frames on top, new frames below) to check motion, identity and the requested change.
    If the problem is really the character design (wrong outfit, wrong face), say so: the board should be
    revised first (`anirecast board generate … --from <approved board>`), then a new take.
-4. Review feedback on a **character design** sheet (`targetType: design`; turnaround, expressions or poses of a
-   library character redrawn in this animation's style): revise with
+4. Review feedback on a **character design** sheet (`targetType: design`). A design belongs to a binding: an
+   original character of the clip and the library character replacing her. It is drawn from the original's
+   analysis (`anirecast design list` → `analysis`: how the animation draws her, her build and outfit, and the
+   expressions / poses she has, each from a shot), so the sheet matches the role. Revise with
    `anirecast design generate <project> --from <designId> --extra "<what to change>" --wait` and view the new
    sheet (`anirecast design show <newId>` → `absPath`). A revision keeps the earlier instructions. If the change
    applies to every sheet of the character (e.g. "cover the shoulders"), say so in the done note and suggest
@@ -126,6 +128,8 @@ anirecast jobs list --status running        # what the daemon is doing
 anirecast cost <project>                    # spend so far
 anirecast quota                             # requests left today per model (Omni: 100/day on API tier 2)
 anirecast shots boundaries <project>        # every cut: same moment or cut, who decided, how sure
-anirecast design list <project>             # character designs: note, latest and approved sheet per kind
+anirecast design list <project>             # bindings: original → library character, analysis, note, sheets
+anirecast design analyze <project> <cast>   # 原片分析 of one original (add --generate to redraw the sheets after)
+anirecast design pick <project> <cast> --expressions 1,3 --poses 2   # which analysed items the sheets use
 anirecast codex show <hof_id>               # a discussion: question, folder, submitted result, what was imported
 ```

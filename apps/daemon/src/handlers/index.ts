@@ -2,6 +2,7 @@ import type { JobHandler } from '../runner.ts';
 import { analyzeShotsHandler, identifyCastHandler } from './analysis.ts';
 import { detectShotsHandler, extractClipHandler, prepareShotsHandler } from './clips.ts';
 import { shotContinuityHandler } from './continuity.ts';
+import { analyzeCastHandler } from './design.ts';
 import {
   composeRenderHandler,
   generateBoardHandler,
@@ -22,6 +23,7 @@ export function createHandlers(): Map<string, JobHandler> {
     ['shots.prepare', prepareShotsHandler],
     ['shots.continuity', shotContinuityHandler],
     ['board.generate', generateBoardHandler],
+    ['design.analyze', analyzeCastHandler],
     ['design.generate', generateDesignHandler],
     ['take.generate', generateTakeHandler],
     ['take.still', stillTakeHandler],

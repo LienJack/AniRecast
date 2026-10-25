@@ -30,6 +30,7 @@ import {
 } from '@anirecast/core';
 import {
   conformTake,
+  cropGrid,
   probe,
   renderSequence,
   scaleForUpload,
@@ -152,8 +153,28 @@ export const generateDesignHandler: JobHandler = async (ctx) => {
   const project = getProject(ws.db, design.projectId);
   const persona = getPersona(ws.db, design.personaId);
   try {
-    const images = design.inputs.map((i) => ({ path: ws.abs(i.path), mimeType: mimeFor(i.path) }));
-    const params = design.params as { aspectRatio?: '16:9' | '9:16' | '1:1'; imageSize?: '1K' | '2K' };
+    const params = design.params as {
+      aspectRatio?: '16:9' | '9:16' | '1:1';
+      imageSize?: '1K' | '2K';
+      tile?: { columns?: number };
+    };
+    const stem = `${designDir(project, persona.slug)}/${design.kind}-v${String(design.version).padStart(3, '0')}`;
+    // The original's crops for expressions or poses go to the model as one grid (read left to right, top to
+    // bottom), so a sheet stays within the few character images the image model handles well.
+    const tiles = design.inputs.filter((i) => i.role.startsWith('tile:'));
+    const grid = tiles.length ? `${stem}-reference.jpg` : null;
+    if (grid) {
+      const columns = params.tile?.columns ?? 3;
+      const rows: string[][] = [];
+      for (let i = 0; i < tiles.length; i += columns)
+        rows.push(tiles.slice(i, i + columns).map((t) => ws.abs(t.path)));
+      await cropGrid(rows, outPath(ws, grid), { cell: 384, maxPerRow: columns }, { signal });
+    }
+    const firstTile = design.inputs.findIndex((i) => i.role.startsWith('tile:'));
+    const images = design.inputs
+      .filter((i, k) => !i.role.startsWith('tile:') || k === firstTile)
+      .map((i) => (i.role.startsWith('tile:') && grid ? grid : i.path))
+      .map((p) => ({ path: ws.abs(p), mimeType: mimeFor(p) }));
     budgetCheck(ctx, estimateImageCost(design.model, params.imageSize ?? '2K', images.length));
     updateDesign(ws.db, designId, { status: 'generating' }, 'daemon');
     ctx.progress(0.1, `drawing the ${design.kind} sheet`);
@@ -169,7 +190,6 @@ export const generateDesignHandler: JobHandler = async (ctx) => {
     );
     ledger(ctx, result, project.id, null);
     const ext = result.mimeType === 'image/png' ? 'png' : 'jpg';
-    const stem = `${designDir(project, persona.slug)}/${design.kind}-v${String(design.version).padStart(3, '0')}`;
     await writeFile(outPath(ws, `${stem}.${ext}`), result.data);
     await writeProvenance(ws, `${stem}.json`, {
       kind: 'design',
@@ -181,6 +201,8 @@ export const generateDesignHandler: JobHandler = async (ctx) => {
       prompt: design.prompt,
       params: design.params,
       inputs: design.inputs,
+      ...(grid ? { referenceGrid: grid } : {}),
+      castMemberId: design.castMemberId,
       provider: result.provider,
       usage: result.usage,
       costUsd: result.costUsd,

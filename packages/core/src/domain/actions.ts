@@ -5,16 +5,19 @@ import { enqueueJob } from '../jobs.ts';
 import { assertNotBlockedOut, assertQuota } from '../quota.ts';
 import type { Workspace } from '../workspace.ts';
 import { createAgentTask, getAgentTask, listAgentTasks } from './agent-tasks.ts';
-import { listCast, shotCast } from './cast.ts';
+import { getCastMember, listCast, shotCast } from './cast.ts';
+import { markCastAnalysisQueued } from './cast-analysis.ts';
 import { findActiveClip, getClip } from './clips.ts';
 import { findCodexThread } from './codex.ts';
 import {
   approvedDesign,
+  type Binding,
   createDesign,
   DESIGN_KINDS,
   type DesignKind,
   getDesign,
-  projectPersonaIds,
+  projectBindings,
+  resolveBindings,
   reviewDesign,
 } from './designs.ts';
 import {
@@ -106,44 +109,86 @@ export function queueTake(
   return { take, job };
 }
 
-/** Queues one design sheet of a library character for this project (all three when `kind` is omitted). */
+/**
+ * Queues design sheets (all three when `kind` is omitted) for the bindings `ref` names: an original character
+ * (cast id or label), or a library character (every original bound to it). `fromDesignId` revises that sheet.
+ */
 export function queueDesign(
   ws: Workspace,
   projectRef: string,
-  personaRef: string,
+  ref: string | null,
   actor: string,
   opts: { kind?: DesignKind; extra?: string; fromDesignId?: string } = {},
 ) {
   const project = getProject(ws.db, projectRef);
-  const persona = getPersona(ws.db, personaRef);
   const from = opts.fromDesignId ? getDesign(ws.db, opts.fromDesignId) : undefined;
+  const bindings: Binding[] = from
+    ? from.castMemberId
+      ? [{ castMemberId: from.castMemberId, personaId: from.personaId }]
+      : resolveBindings(ws.db, project.id, from.personaId).slice(0, 1)
+    : ref
+      ? resolveBindings(ws.db, project.id, ref)
+      : projectBindings(ws.db, project.id);
+  if (!bindings.length)
+    throw new AniError('conflict', 'No original character is bound to a library character yet');
   const kinds = from ? [from.kind] : opts.kind ? [opts.kind] : [...DESIGN_KINDS];
   const config = loadConfig();
-  return kinds.map((kind) => {
-    const plan = planDesign(ws, project.id, persona.id, kind, {
-      ...(opts.extra ? { extra: opts.extra } : {}),
-      ...(from ? { fromDesignId: from.id } : {}),
-    });
-    const design = createDesign(ws.db, {
-      projectId: project.id,
-      personaId: persona.id,
-      kind,
-      prompt: plan.prompt,
-      model: config.models.design,
-      params: plan.params,
-      inputs: plan.inputs,
-      parentId: from?.id ?? null,
-      createdBy: actor,
-    });
-    const job = enqueueJob(ws.db, {
-      type: 'design.generate',
+  return bindings.flatMap((binding) =>
+    kinds.map((kind) => {
+      const plan = planDesign(ws, project.id, binding, kind, {
+        ...(opts.extra ? { extra: opts.extra } : {}),
+        ...(from ? { fromDesignId: from.id } : {}),
+      });
+      const design = createDesign(ws.db, {
+        projectId: project.id,
+        castMemberId: binding.castMemberId,
+        personaId: binding.personaId,
+        kind,
+        prompt: plan.prompt,
+        model: config.models.design,
+        params: plan.params,
+        inputs: plan.inputs,
+        parentId: from?.id ?? null,
+        createdBy: actor,
+      });
+      const job = enqueueJob(ws.db, {
+        type: 'design.generate',
+        lane: 'generate',
+        projectId: project.id,
+        payload: { designId: design.id },
+        requestedBy: actor,
+        maxAttempts: 2,
+      });
+      return { design, job };
+    }),
+  );
+}
+
+/**
+ * Queues 原片分析 for the bindings `ref` names (all when null): what the original character looks like and does
+ * in the clip. With `thenKinds`, the design sheets are queued once the analysis is in.
+ */
+export function queueCastAnalysis(
+  ws: Workspace,
+  projectRef: string,
+  ref: string | null,
+  actor: string,
+  opts: { thenKinds?: DesignKind[] } = {},
+) {
+  const project = getProject(ws.db, projectRef);
+  const bindings = ref ? resolveBindings(ws.db, project.id, ref) : projectBindings(ws.db, project.id);
+  if (!bindings.length)
+    throw new AniError('conflict', 'No original character is bound to a library character yet');
+  return bindings.map((b) => {
+    markCastAnalysisQueued(ws.db, b.castMemberId, actor);
+    return enqueueJob(ws.db, {
+      type: 'design.analyze',
       lane: 'generate',
       projectId: project.id,
-      payload: { designId: design.id },
+      payload: { castMemberId: b.castMemberId, thenKinds: opts.thenKinds ?? [], actor },
       requestedBy: actor,
       maxAttempts: 2,
     });
-    return { design, job };
   });
 }
 
@@ -194,7 +239,9 @@ function submitDesignReview(
   });
   if (input.verdict === 'approve') {
     // A newly approved turnaround changes what boards and takes use: stale the shots that show this character.
-    const shots = listShotsOfPersona(ws.db, design.projectId, design.personaId);
+    const shots = design.castMemberId
+      ? getCastMember(ws.db, design.castMemberId).shotIds
+      : listShotsOfPersona(ws.db, design.projectId, design.personaId);
     for (const id of shots) markShotGenerationStale(ws.db, id, 'character design approved', input.actor);
   }
   if (input.verdict === 'changes') {
@@ -208,9 +255,7 @@ function submitDesignReview(
     return { review, task };
   }
   if (input.verdict === 'regenerate') {
-    const [queued] = queueDesign(ws, design.projectId, design.personaId, input.actor, {
-      fromDesignId: design.id,
-    });
+    const [queued] = queueDesign(ws, design.projectId, null, input.actor, { fromDesignId: design.id });
     return { review, queued: { design: queued!.design, jobId: queued!.job.id } };
   }
   return { review };
@@ -358,8 +403,8 @@ export function projectSummaries(ws: Workspace) {
       (s) => shotStage(ws.db, s.id, project.generationTier) === 'approved',
     ).length;
     const castMapped = listCast(ws.db, project.id).filter((c) => c.personaId).length;
-    const personaIds = projectPersonaIds(ws.db, project.id);
-    const designed = personaIds.filter((id) => approvedDesign(ws.db, project.id, id, 'turnaround')).length;
+    const bindings = projectBindings(ws.db, project.id);
+    const designed = bindings.filter((b) => approvedDesign(ws.db, project.id, b, 'turnaround')).length;
     const renders = listRenders(ws.db, project.id);
     const tasks = listAgentTasks(ws.db, { projectId: project.id }).filter(
       (t) => t.status !== 'done' && t.status !== 'cancelled',
@@ -370,7 +415,7 @@ export function projectSummaries(ws: Workspace) {
         ? 'shots'
         : castMapped === 0
           ? 'cast'
-          : designed < personaIds.length
+          : designed < bindings.length
             ? 'design'
             : approved < working.length
               ? 'generate'
@@ -391,7 +436,7 @@ export function projectSummaries(ws: Workspace) {
       approved,
       castMapped,
       designed,
-      toDesign: personaIds.length,
+      toDesign: bindings.length,
       renders: renders.length,
       openTasks: tasks.length,
       needsUser: tasks.filter((t) => t.status === 'needs_user').length,

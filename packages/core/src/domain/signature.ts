@@ -12,21 +12,21 @@ export function replacementSignature(db: Db, shotId: string): string {
   const projectId = all<{ project_id: string }>(db, 'SELECT project_id FROM clips WHERE id = :id', {
     id: shot.clipId,
   })[0]?.project_id;
-  // The approved design of each persona joins the signature only once one exists, so projects without the
+  // The approved design of each binding joins the signature only once one exists, so projects without the
   // design step keep the signatures their versions were made with.
-  const design = (personaId: string) =>
+  const design = (castId: string, personaId: string) =>
     all<{ id: string }>(
       db,
-      `SELECT id FROM designs WHERE project_id = :projectId AND persona_id = :personaId
+      `SELECT id FROM designs WHERE project_id = :projectId AND cast_member_id = :castId AND persona_id = :personaId
          AND kind = 'turnaround' AND status = 'approved' ORDER BY version DESC LIMIT 1`,
-      { projectId: projectId ?? '', personaId },
+      { projectId: projectId ?? '', castId, personaId },
     )[0]?.id;
   const personas = [
     ...new Set(
       shotCast(db, shotId)
         .filter((e) => e.personaId && e.cast)
         .map((e) => {
-          const d = design(e.personaId!);
+          const d = design(e.cast!.id, e.personaId!);
           return `${e.cast!.id}:${e.personaId}:${e.look?.lookPolicy ?? 'persona'}${d ? `:${d}` : ''}`;
         }),
     ),

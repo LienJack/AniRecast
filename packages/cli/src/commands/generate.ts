@@ -32,13 +32,15 @@ import {
   loadConfig,
   projectCacheDir,
   projectOfShot,
-  projectPersonaIds,
   queueBoard,
+  queueCastAnalysis,
   queueDesign,
   queueStillTake,
   queueTake,
   quotaOverview,
+  resolveBindings,
   safetyBlockCount,
+  setAnalysisPicks,
   setDesignNote,
   shotStage,
   spendBreakdown,
@@ -138,19 +140,75 @@ export function registerGenerate(program: Command): void {
 
   const design = program
     .command('design')
-    .description("Character design (角色設計): library characters redrawn in this animation's style");
+    .description(
+      'Character design (角色設計): an original character bound to a library character, analysed, then redesigned',
+    );
   design
     .command('list <project>')
-    .description('Every swapped-in character with its note and the latest / approved version of each sheet')
+    .description(
+      'Bindings with their analysis, note and the latest / approved version of each sheet; unbound characters',
+    )
     .action(
       command((projectRef: string) =>
         withWorkspace(globals(), (ws) => designOverview(ws.db, getProject(ws.db, projectRef).id)),
       ),
     );
   design
-    .command('generate <project> [persona]')
+    .command('analyze <project> [character]')
     .description(
-      'Draw design sheets: turnaround, expressions and poses (all mapped characters when no persona)',
+      '原片分析: how the animation draws the original character, her build, outfit, expressions and poses (all bindings when no character)',
+    )
+    .option('--generate', 'queue the three sheets once the analysis is in')
+    .option('--wait', 'wait for the analysis')
+    .action(
+      command(
+        (projectRef: string, character: string | undefined, opts: { generate?: boolean; wait?: boolean }) =>
+          withWorkspace(globals(), async (ws) => {
+            const jobs = queueCastAnalysis(ws, projectRef, character ?? null, actorFromEnv(), {
+              ...(opts.generate ? { thenKinds: ['turnaround', 'expressions', 'poses'] } : {}),
+            });
+            return waitAll(
+              ws,
+              jobs.map((j) => j.id),
+              opts.wait,
+            );
+          }),
+      ),
+    );
+  design
+    .command('pick <project> <character>')
+    .description(
+      'Which analysed expressions and poses the sheets use (numbers from `design list`, starting at 1)',
+    )
+    .option('--expressions <numbers>', 'e.g. 1,2,5 (empty string = none)')
+    .option('--poses <numbers>', 'e.g. 1,3')
+    .action(
+      command((projectRef: string, character: string, opts: { expressions?: string; poses?: string }) =>
+        withWorkspace(globals(), (ws) => {
+          const [binding] = resolveBindings(ws.db, getProject(ws.db, projectRef).id, character);
+          const nums = (v: string | undefined) =>
+            v === undefined
+              ? undefined
+              : v
+                  .split(',')
+                  .map((n) => n.trim())
+                  .filter(Boolean)
+                  .map((n) => Number(n) - 1);
+          const expressions = nums(opts.expressions);
+          const poses = nums(opts.poses);
+          return setAnalysisPicks(
+            ws.db,
+            (binding as { castMemberId: string }).castMemberId,
+            { ...(expressions ? { expressions } : {}), ...(poses ? { poses } : {}) },
+            actorFromEnv(),
+          );
+        }),
+      ),
+    );
+  design
+    .command('generate <project> [character]')
+    .description(
+      'Draw design sheets for a binding (original character id or label, or a library character): turnaround, expressions, poses; all bindings when omitted',
     )
     .option('--kind <kind>', 'only one sheet: turnaround, expressions or poses')
     .option('--extra <text>', 'extra instructions')
@@ -160,23 +218,20 @@ export function registerGenerate(program: Command): void {
       command(
         (
           projectRef: string,
-          personaRef: string | undefined,
+          character: string | undefined,
           opts: { kind?: DesignKind; extra?: string; from?: string; wait?: boolean },
         ) =>
           withWorkspace(globals(), async (ws) => {
-            const project = getProject(ws.db, projectRef);
-            const personas = opts.from
-              ? [getDesign(ws.db, opts.from).personaId]
-              : personaRef
-                ? [personaRef]
-                : projectPersonaIds(ws.db, project.id);
-            if (!personas.length) throw new AniError('conflict', 'No character is mapped to a persona yet');
-            const queued = personas.flatMap((p) =>
-              queueDesign(ws, project.id, p, actorFromEnv(), {
+            const queued = queueDesign(
+              ws,
+              projectRef,
+              opts.from ? null : (character ?? null),
+              actorFromEnv(),
+              {
                 ...(opts.kind ? { kind: opts.kind } : {}),
                 ...(opts.extra ? { extra: opts.extra } : {}),
                 ...(opts.from ? { fromDesignId: opts.from } : {}),
-              }),
+              },
             );
             return {
               designs: queued.map((q) => q.design),

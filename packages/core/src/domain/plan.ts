@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { AniError, isTextOnlyVideoModel } from '@anirecast/shared';
 import { all, fromJson } from '../db.ts';
 import type { Workspace } from '../workspace.ts';
-import { type ShotCastEntry, shotCast } from './cast.ts';
+import { getCastMember, type ShotCastEntry, shotCast } from './cast.ts';
+import { getCastAnalysis } from './cast-analysis.ts';
 import { findActiveClip } from './clips.ts';
-import { approvedDesign, type DesignKind, designNote, getDesign } from './designs.ts';
+import { approvedDesign, type Binding, type DesignKind, designNote, getDesign } from './designs.ts';
 import { approvedBoard, getBoard, getTake, type InputRef } from './generation.ts';
 import { type Bbox, overlaysToRemove, type TextOverlay } from './overlays.ts';
 import { getPersona, type Persona, type PersonaImage } from './personas.ts';
@@ -128,10 +129,14 @@ function castInShot(
     const persona = getPersona(ws.db, personaId);
     // The project's approved design sheets (drawn in this animation's style, no labels) replace the library
     // references; the library is the fallback before the design step is done.
-    const designed = (['turnaround', 'expressions'] as const)
-      .map((kind) => approvedDesign(ws.db, projectId, personaId, kind)?.path)
-      .filter((p): p is string => Boolean(p));
-    if (designed.length > 0 && approvedDesign(ws.db, projectId, personaId, 'turnaround'))
+    const castId = entries.find((e) => e.cast)?.cast?.id;
+    const binding = castId ? { castMemberId: castId, personaId } : undefined;
+    const designed = binding
+      ? (['turnaround', 'expressions'] as const)
+          .map((kind) => approvedDesign(ws.db, projectId, binding, kind)?.path)
+          .filter((p): p is string => Boolean(p))
+      : [];
+    if (binding && designed.length > 0 && approvedDesign(ws.db, projectId, binding, 'turnaround'))
       return { persona, entries, imagePaths: designed.slice(0, perPersonaCap) };
     if (persona.images.length === 0) {
       throw new AniError('conflict', `Persona "${persona.name}" has no reference image`, {
@@ -332,20 +337,29 @@ function styleFrames(ws: Workspace, projectId: string, n: number): string[] {
   return picked.map((s) => mid(s.id)).filter((p): p is string => Boolean(p));
 }
 
-/** The largest body crop of the character this persona replaces: proportions in this animation's style. */
-function replacedBodyCrop(ws: Workspace, projectId: string, personaId: string): string | undefined {
-  return all<{ path: string }>(
+/** The largest body crops of an original character, one per shot: her proportions as this animation draws them. */
+function castBodyCrops(ws: Workspace, castId: string, n: number): Array<{ path: string; shotId: string }> {
+  const rows = all<{ path: string; shot_id: string }>(
     ws.db,
-    `SELECT d.body_crop_path AS path FROM detections d
-       JOIN tracklets t ON t.id = d.tracklet_id JOIN cast_members c ON c.id = t.cast_member_id
-     WHERE c.project_id = :projectId AND c.persona_id = :personaId AND d.body_crop_path IS NOT NULL
-       AND d.body_bbox_json IS NOT NULL
+    `SELECT d.body_crop_path AS path, t.shot_id FROM detections d JOIN tracklets t ON t.id = d.tracklet_id
+     WHERE t.cast_member_id = :castId AND d.body_crop_path IS NOT NULL AND d.body_bbox_json IS NOT NULL
      ORDER BY (json_extract(d.body_bbox_json, '$[2]') - json_extract(d.body_bbox_json, '$[0]'))
-            * (json_extract(d.body_bbox_json, '$[3]') - json_extract(d.body_bbox_json, '$[1]')) DESC
-     LIMIT 1`,
-    { projectId, personaId },
-  )[0]?.path;
+            * (json_extract(d.body_bbox_json, '$[3]') - json_extract(d.body_bbox_json, '$[1]')) DESC`,
+    { castId },
+  );
+  const out: Array<{ path: string; shotId: string }> = [];
+  for (const r of rows) {
+    if (out.length >= n) break;
+    if (out.some((o) => o.shotId === r.shot_id) || !existsSync(ws.abs(r.path))) continue;
+    out.push({ path: r.path, shotId: r.shot_id });
+  }
+  return out;
 }
+
+const midFrame = (ws: Workspace, shotId: string): string | undefined => {
+  const frames = listKeyframes(ws.db, shotId);
+  return (frames.find((k) => k.role === 'mid') ?? frames[0])?.path;
+};
 
 /** The two library references that matter most for each sheet, by view (imports keep expressions, then poses). */
 function personaRefsFor(persona: Persona, kind: DesignKind): string[] {
@@ -374,53 +388,102 @@ const DESIGN_TASK: Record<DesignKind, string> = {
     'Draw an action sheet: the same character in four full-body poses side by side at the same scale — walking toward the viewer, walking away while looking back over the shoulder, running, and a relaxed everyday pose (leaning, or holding a cup).',
 };
 
+/** Columns of a sheet (and of the reference grid) for `n` expressions or poses. */
+export const sheetColumns = (kind: DesignKind, n: number): number =>
+  kind === 'poses' ? (n <= 4 ? n : 3) : n <= 3 ? n : n === 4 ? 2 : 3;
+
 /**
- * Request for one design sheet: the library character redrawn in this animation's style. Images, in order:
- * two persona references, two style frames from the animation, one body crop of the character replaced.
+ * Request for one design sheet of a binding: the library character redesigned for the original character she
+ * replaces. Images sent, in order: two library references; then for the turnaround, the original's largest body
+ * crops and one frame of the opening; for expressions and poses, one grid of the original's crops (one cell per
+ * ticked item of the analysis, tiled by the daemon so it counts as a single image). Without an analysis the
+ * expression and pose sheets fall back to a generic set, still drawn from the original's crops and a frame.
  */
 export function planDesign(
   ws: Workspace,
   projectId: string,
-  personaId: string,
+  binding: Binding,
   kind: DesignKind,
   opts: { extra?: string; fromDesignId?: string } = {},
 ): Plan {
-  const persona = getPersona(ws.db, personaId);
+  const persona = getPersona(ws.db, binding.personaId);
   if (persona.kind !== 'character') throw new AniError('usage', 'Only characters get design sheets');
+  const cast = getCastMember(ws.db, binding.castMemberId);
   const base = opts.fromDesignId ? getDesign(ws.db, opts.fromDesignId) : undefined;
   const personaRefs = personaRefsFor(persona, kind);
   if (personaRefs.length === 0)
     throw new AniError('conflict', `Persona "${persona.name}" has no reference image`, {
       hint: 'Add one with `anirecast persona image-add`.',
     });
-  const style = styleFrames(ws, projectId, 2);
-  const crop = replacedBodyCrop(ws, projectId, personaId);
+  const analysis = getCastAnalysis(ws.db, cast.id)?.data ?? null;
+  const items =
+    kind === 'expressions' ? (analysis?.expressions ?? []) : kind === 'poses' ? (analysis?.poses ?? []) : [];
+  const cells = items
+    .filter((it) => it.use)
+    .map((it) => {
+      const a = analysis?.appearances[it.appearance];
+      const path = kind === 'expressions' ? (a?.head ?? a?.body) : (a?.body ?? a?.head);
+      return path && existsSync(ws.abs(path)) ? { item: it, path, shotNo: a?.shotNo } : null;
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+  const bodies = castBodyCrops(ws, cast.id, kind === 'turnaround' ? 2 : 1);
+  const frame = bodies[0] ? midFrame(ws, bodies[0].shotId) : styleFrames(ws, projectId, 1)[0];
   const refs: Array<Omit<InputRef, 'sha256'>> = [
     ...personaRefs.map((path) => ({ role: `persona:${persona.id}`, path })),
-    ...style.map((path) => ({ role: 'style', path })),
-    ...(crop ? [{ role: 'replaced', path: crop }] : []),
+    ...(cells.length
+      ? cells.map((c, i) => ({ role: `tile:${i + 1}`, path: c.path }))
+      : [
+          ...bodies.map((b) => ({ role: `original:${cast.id}`, path: b.path })),
+          ...(frame ? [{ role: 'style', path: frame }] : []),
+        ]),
   ];
-  const n = (role: string) => refs.flatMap((r, i) => (r.role.startsWith(role) ? [i + 1] : []));
-  const span = (idx: number[]) => (idx.length === 1 ? `Image ${idx[0]}` : `Images ${idx[0]}–${idx.at(-1)}`);
-  const lines = [
-    `${span(n('persona:'))} show the character "${persona.name}"${persona.description ? ` (${persona.description})` : ''}.`,
-  ];
-  if (style.length)
-    lines.push(
-      `${span(n('style'))} ${style.length === 1 ? 'is a frame' : 'are frames'} from the anime opening she will appear in. Redraw her in that animation's drawing style exactly: line weight and line colour, eye and face construction, head-to-body proportions, cel shading and shadow shapes, colour saturation and level of detail. Take only the drawing style from them, not anyone's face, hair or outfit.`,
-    );
-  if (crop)
-    lines.push(
-      `${span(n('replaced'))} shows the character she replaces in that opening; use it only for proportions, height and how bodies are drawn in this style — not for identity, face, hair or outfit.`,
-    );
-  lines.push(
-    `Keep her identity from ${span(n('persona:'))}: hairstyle and hair colour, eye colour, face, outfit design and colours, and accessories.`,
+  // Prompt numbering follows the images as sent: all tile crops become one grid image.
+  const sent = refs.filter(
+    (r, i) => !r.role.startsWith('tile:') || refs.findIndex((x) => x.role.startsWith('tile:')) === i,
   );
-  const note = designNote(ws.db, projectId, personaId);
+  const n = (role: string) => sent.flatMap((r, i) => (r.role.startsWith(role) ? [i + 1] : []));
+  const span = (idx: number[]) => (idx.length === 1 ? `Image ${idx[0]}` : `Images ${idx[0]}–${idx.at(-1)}`);
+  const who = `the original character "${cast.label}"`;
+  const followsSource = (cast.looks[0]?.lookPolicy ?? 'persona') === 'follow_source';
+  const lines = [
+    `${span(n('persona:'))} show the library character "${persona.name}"${persona.description ? ` (${persona.description})` : ''}. She replaces ${who} in an anime opening.`,
+  ];
+  if (cells.length) {
+    const what = kind === 'expressions' ? 'expressions' : 'poses and actions';
+    lines.push(
+      `${span(n('tile:'))} is a grid of ${who}'s ${what} in this opening, read left to right, top to bottom: ${cells
+        .map((c, i) => `${i + 1}. ${c.item.label}${c.item.description ? ` (${c.item.description})` : ''}`)
+        .join('; ')}.`,
+    );
+  } else {
+    if (n('original:').length) lines.push(`${span(n('original:'))} show ${who} as this opening draws her.`);
+    if (n('style').length) lines.push(`${span(n('style'))} is a frame from the opening.`);
+  }
+  const drawnLike = `the way this opening draws ${cast.label}: the same head-to-body ratio, height and build, eye and face construction, line weight and line colour, cel shading and shadow shapes, colour saturation and level of detail`;
+  lines.push(
+    `Redesign ${persona.name} as a character of this anime. Keep her identity from ${span(n('persona:'))} — face, hairstyle and hair colour, eye colour, accessories and distinctive features${followsSource ? '' : ', outfit design and colours'} — but draw her ${drawnLike}.`,
+  );
+  lines.push(
+    followsSource
+      ? `Outfit: she wears ${cast.label}'s outfit${analysis?.outfit ? ` (${analysis.outfit})` : ''}, with her own hair, face and features.`
+      : `Do not copy ${cast.label}'s face, hair or outfit.`,
+  );
+  if (analysis?.style) lines.push(`How this opening draws ${cast.label}: ${analysis.style}`);
+  if (analysis?.body) lines.push(`${cast.label}'s build: ${analysis.body}`);
+  const note = designNote(ws.db, projectId, persona.id);
   if (note) lines.push(`Adaptation for this project: ${note}`);
   const styleNotes = projectStyleNotes(ws, projectId);
   if (styleNotes) lines.push(`About the animation's style: ${styleNotes}`);
-  lines.push(DESIGN_TASK[kind]);
+  const columns = sheetColumns(kind, cells.length);
+  if (cells.length && kind === 'expressions')
+    lines.push(
+      `Draw an expression sheet of ${persona.name}: exactly ${cells.length} head-and-shoulders portraits in a grid of ${columns} columns, in the same order as ${span(n('tile:'))}. Each portrait makes the same expression as the matching cell — eye shape and openness, brow angle, mouth shape, blush, tears or sweat marks, head tilt and angle — but with ${persona.name}'s face, hair, eye colour and accessories.`,
+    );
+  else if (cells.length)
+    lines.push(
+      `Draw an action sheet of ${persona.name}: exactly ${cells.length} full-body figures${columns < cells.length ? ` in rows of ${columns}` : ' side by side'} at the same scale, in the same order as ${span(n('tile:'))}. Each figure takes the same pose as the matching cell — body angle, limb positions, weight, hand gestures and camera angle — as ${persona.name}.`,
+    );
+  else lines.push(DESIGN_TASK[kind]);
   lines.push(
     'Plain light grey background. No text, labels, captions, numbers, logos or watermarks anywhere in the image.',
   );
@@ -436,6 +499,8 @@ export function planDesign(
     params: {
       aspectRatio: '16:9',
       imageSize: '2K',
+      castMemberId: cast.id,
+      ...(cells.length ? { tile: { columns, shots: cells.map((c) => c.shotNo) } } : {}),
       ...(base ? { fromDesignId: base.id } : {}),
       ...(extras.length ? { extras } : {}),
     },

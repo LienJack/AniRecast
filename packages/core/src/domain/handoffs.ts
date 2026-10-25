@@ -20,11 +20,13 @@ import { getCastMember, listCast } from './cast.ts';
 import { findActiveClip } from './clips.ts';
 import {
   approvedDesign,
+  type Binding,
   DESIGN_KINDS,
   type DesignKind,
   designNote,
   designOverview,
   getDesign,
+  resolveBindings,
   setDesignNote,
 } from './designs.ts';
 import { type Board, getBoard, getTake, listTakes, shotStage, type Take } from './generation.ts';
@@ -70,7 +72,9 @@ export type HandoffAction =
   | { type: 'design.note'; persona: string; note: string; why?: string }
   | {
       type: 'design.generate';
-      persona: string;
+      /** The original character (cast id); or `persona` for every original bound to it; or just `from`. */
+      cast?: string;
+      persona?: string;
       kind?: DesignKind;
       from?: string;
       extra?: string;
@@ -318,7 +322,12 @@ function shotSection(ws: Workspace, shotId: string, focusId: string | null) {
       `- 出場：「${e.cast.label}」→ ${e.persona ? `換成 ${e.persona.name}（\`${e.persona.slug}\`）` : '保留原角色'}`,
     );
     if (e.persona) {
-      const design = approvedDesign(ws.db, d.project.id, e.persona.id, 'turnaround');
+      const design = approvedDesign(
+        ws.db,
+        d.project.id,
+        { castMemberId: e.cast.id, personaId: e.persona.id },
+        'turnaround',
+      );
       const ref = design?.path ? ws.abs(design.path) : sheetOf(ws, e.persona);
       if (ref && !images.some((i) => i.path === ref))
         images.push({
@@ -358,27 +367,47 @@ function shotSection(ws: Workspace, shotId: string, focusId: string | null) {
   return { lines, images, context: d };
 }
 
-function personaSection(ws: Workspace, projectId: string, personaId: string, focusId: string | null) {
-  const persona = getPersona(ws.db, personaId);
-  const entry = designOverview(ws.db, projectId).find((e) => e.persona.id === persona.id);
+/** One binding: the original character, the library character replacing her, the analysis and the sheets. */
+function bindingSection(ws: Workspace, projectId: string, castId: string, focusId: string | null) {
+  const entry = designOverview(ws.db, projectId).bindings.find((b) => b.cast.id === castId);
+  const cast = getCastMember(ws.db, castId);
   const images: BriefImage[] = [];
+  if (cast.thumbPath) images.push({ path: ws.abs(cast.thumbPath), about: `原片角色「${cast.label}」` });
+  const lines = [`### 原片角色「${cast.label}」（\`${cast.id}\`）`];
+  if (cast.description) lines.push(`- 描述：${cast.description}`);
+  lines.push(
+    `- 服裝處理：${(cast.looks[0]?.lookPolicy ?? 'persona') === 'follow_source' ? '跟原片走（只換臉和特徵）' : '用人設的服裝與髮型'}`,
+  );
+  const a = entry?.analysis;
+  if (a?.data) {
+    lines.push(
+      `- 原片分析${a.stale ? '（原片角色的出場有變，建議重新分析）' : ''}：畫風：${a.data.style || '—'}；身形：${a.data.body || '—'}；服裝：${a.data.outfit || '—'}`,
+    );
+    const item = (it: { label: string; description: string; appearance: number; use: boolean }) => {
+      const ap = a.data?.appearances[it.appearance];
+      return `${it.use ? '' : '（不用）'}${it.label}${it.description ? `：${it.description}` : ''}${ap ? `（分鏡 #${ap.shotNo}，${ws.abs(ap.head ?? ap.body ?? '')}）` : ''}`;
+    };
+    if (a.data.expressions.length) lines.push(`- 原片表情：${a.data.expressions.map(item).join('；')}`);
+    if (a.data.poses.length) lines.push(`- 原片動作：${a.data.poses.map(item).join('；')}`);
+  } else lines.push(`- 原片分析：${a ? a.status : '還沒做'}`);
+  if (!cast.personaId) return { lines: [...lines, '- 還沒綁定物料庫角色'], images, context: { cast } };
+  const persona = getPersona(ws.db, cast.personaId);
   const lib = sheetOf(ws, persona);
   if (lib) images.push({ path: lib, about: `${persona.name}（物料庫原圖）` });
-  const lines = [
-    `### ${persona.name}（\`${persona.slug}\`）`,
+  lines.push(
+    '',
+    `換成物料庫角色 ${persona.name}（\`${persona.slug}\`）`,
     ...(persona.description ? [`- 物料庫描述：${persona.description}`] : []),
-    `- 物料庫圖片：${persona.images.map((i) => `${ws.abs(i.path)}（${i.view}）`).join('、') || '無'}`,
+    `- 物料庫圖片：${persona.images.map((i) => `${ws.abs(i.path)}（${i.label || i.view}）`).join('、') || '無'}`,
     `- 這個項目的改編說明：${designNote(ws.db, projectId, persona.id) || '（沒有）'}`,
-  ];
+  );
   // Where the character appears, and why the latest attempts there failed (often the content filter).
   const tier = getProject(ws.db, projectId).generationTier;
-  const shotIds = all<{ shot_id: string }>(
+  const shotIds = all<{ id: string }>(
     ws.db,
-    `SELECT DISTINCT t.shot_id FROM tracklets t JOIN cast_members c ON c.id = t.cast_member_id
-       JOIN shots s ON s.id = t.shot_id
-     WHERE c.project_id = :projectId AND c.persona_id = :personaId ORDER BY s.order_index`,
-    { projectId, personaId: persona.id },
-  ).map((r) => r.shot_id);
+    `SELECT id FROM shots WHERE id IN (SELECT shot_id FROM tracklets WHERE cast_member_id = :castId) ORDER BY order_index`,
+    { castId },
+  ).map((r) => r.id);
   if (shotIds.length) {
     lines.push('', `出場的分鏡（${shotIds.length} 個，檔位 ${TIER_TEXT[tier]}）：`);
     for (const id of shotIds.slice(0, 40)) {
@@ -407,16 +436,36 @@ function personaSection(ws: Workspace, projectId: string, personaId: string, foc
         about: `${persona.name} 的${KIND_TEXT[sheet.kind]} v${show.version}`,
       });
   }
-  const focus = entry?.sheets.flatMap((s) => s.versions).find((v) => v.id === focusId);
+  const focus = entry?.sheets.flatMap((sh) => sh.versions).find((v) => v.id === focusId);
   if (focus) {
     lines.push('', `討論的版本 \`${focus.id}\` 的提示詞：`, '```text', focus.prompt, '```');
-    for (const input of focus.inputs.filter((i) => i.role === 'style' || i.role === 'replaced'))
+    for (const input of focus.inputs.filter((i) => i.role === 'style' || i.role.startsWith('original:')))
       images.push({
         path: ws.abs(input.path),
-        about: input.role === 'style' ? '畫風參考幀' : '被替換角色的身形',
+        about: input.role === 'style' ? '原片畫面' : `「${cast.label}」的身形`,
       });
   }
-  return { lines, images, context: { persona, designs: entry ?? null } };
+  return { lines, images, context: { binding: entry ?? null } };
+}
+
+/** A library character: every original character bound to it in this project (or just the library entry). */
+function personaSection(ws: Workspace, projectId: string, personaId: string, focusId: string | null) {
+  const persona = getPersona(ws.db, personaId);
+  const bound = designOverview(ws.db, projectId).bindings.filter((b) => b.persona.id === persona.id);
+  if (!bound.length) {
+    const lib = sheetOf(ws, persona);
+    return {
+      lines: [`### ${persona.name}（\`${persona.slug}\`）`, '- 這個項目還沒有原片角色綁定它。'],
+      images: lib ? [{ path: lib, about: `${persona.name}（物料庫原圖）` }] : [],
+      context: { persona },
+    };
+  }
+  const parts = bound.map((b) => bindingSection(ws, projectId, b.cast.id, focusId));
+  return {
+    lines: parts.flatMap((p, i) => (i ? ['', ...p.lines] : p.lines)),
+    images: parts.flatMap((p) => p.images),
+    context: { bindings: parts.map((p) => p.context) },
+  };
 }
 
 function projectSection(ws: Workspace, project: Project) {
@@ -446,25 +495,23 @@ function targetSection(ws: Workspace, project: Project, type: HandoffTarget, id:
   if (type === 'shot' && id) return shotSection(ws, id, null);
   if (type === 'board' && id) return shotSection(ws, getBoard(ws.db, id).shotId, id);
   if (type === 'take' && id) return shotSection(ws, getTake(ws.db, id).shotId, id);
-  if (type === 'design' && id) return personaSection(ws, project.id, getDesign(ws.db, id).personaId, id);
+  if (type === 'design' && id) {
+    const d = getDesign(ws.db, id);
+    return d.castMemberId
+      ? bindingSection(ws, project.id, d.castMemberId, id)
+      : personaSection(ws, project.id, d.personaId, id);
+  }
   if (type === 'persona' && id) return personaSection(ws, project.id, id, null);
   if (type === 'cast' && id) {
     const c = getCastMember(ws.db, id);
-    const base = c.personaId ? personaSection(ws, project.id, c.personaId, null) : null;
-    const images: BriefImage[] = c.thumbPath
-      ? [{ path: ws.abs(c.thumbPath), about: `原片角色「${c.label}」` }]
-      : [];
+    const base = bindingSection(ws, project.id, id, null);
     return {
       lines: [
-        `### 角色「${c.label}」（\`${c.id}\`）`,
-        ...(c.description ? [`- 描述：${c.description}`] : []),
-        `- 出現在 ${c.shotIds.length} 個分鏡：${c.shotIds.map((s) => shotNo(ws.db, s)).join('、')}`,
-        `- 造型：${c.looks.map((l) => `${l.label}（${l.lookPolicy}）`).join('、') || '一種'}`,
-        `- 換成：${c.personaId ? getPersona(ws.db, c.personaId).name : '保留原角色'}`,
-        ...(base ? ['', ...base.lines] : []),
+        ...base.lines,
+        `- 出現在 ${c.shotIds.length} 個分鏡；造型：${c.looks.map((l) => `${l.label}（${l.lookPolicy}）`).join('、') || '一種'}`,
       ],
-      images: [...images, ...(base?.images ?? [])],
-      context: { cast: c, persona: base?.context ?? null },
+      images: base.images,
+      context: { cast: c, binding: base.context },
     };
   }
   if (type === 'task' && id) {
@@ -473,7 +520,9 @@ function targetSection(ws: Workspace, project: Project, type: HandoffTarget, id:
     const base = t.shotId
       ? shotSection(ws, t.shotId, ctx.target?.id ?? null)
       : ctx.target && 'personaId' in ctx.target
-        ? personaSection(ws, project.id, ctx.target.personaId, ctx.target.id)
+        ? ctx.target.castMemberId
+          ? bindingSection(ws, project.id, ctx.target.castMemberId, ctx.target.id)
+          : personaSection(ws, project.id, ctx.target.personaId, ctx.target.id)
         : null;
     const payload = t.payload as { comment?: string; contactSheets?: string[] };
     const sheets = (payload.contactSheets ?? []).map((p) => ({ path: ws.abs(p), about: '對照表' }));
@@ -526,7 +575,7 @@ const ACTION_DOCS = [
   '| type | 欄位 | 導入時會做什麼 |',
   '| --- | --- | --- |',
   '| `design.note` | `persona`, `note` | 設定這個項目對角色的改編說明（每張角色設計都會用） |',
-  '| `design.generate` | `persona`, `kind?`（turnaround／expressions／poses，省略＝三張）, `from?`, `extra?` | 生成或修正角色設計（付費） |',
+  '| `design.generate` | `cast`（原片角色 id）或 `persona`, `kind?`（turnaround／expressions／poses，省略＝三張）, `from?`, `extra?` | 依綁定重新設計或修正角色設計（付費） |',
   '| `board.generate` | `shot`, `from?`, `extra?` | 生成或修正分鏡圖（付費） |',
   '| `take.generate` | `shot`, `from?`, `extra?`, `tier?` | 生成或修正分鏡視頻（付費，佔每日配額） |',
   '| `take.still` | `shot`, `tier?` | 用通過的分鏡圖做靜態分鏡視頻（免費） |',
@@ -862,26 +911,42 @@ function parseResult(ws: Workspace, h: Handoff, raw: unknown, actor: string, now
           paid: false,
         };
     } else if (type === 'design.generate') {
-      const p = personaAt(a.persona, at);
       const kind = a.kind as DesignKind | undefined;
       if (kind !== undefined && !DESIGN_KINDS.includes(kind))
         problems.push(`${at}.kind: must be one of ${DESIGN_KINDS.join(', ')}`);
       const d = from ? tryGet(`${at}.from`, () => getDesign(db, from)) : undefined;
-      if (d && p && (d.personaId !== p.id || d.projectId !== h.projectId))
-        problems.push(`${at}.from: ${from} is not a design of ${p.name} in this project`);
-      if (p)
+      if (d && d.projectId !== h.projectId) problems.push(`${at}.from: ${from} belongs to another project`);
+      const castRef = text(a.cast);
+      const personaRef = text(a.persona);
+      let bindings: Binding[] = [];
+      if (d) bindings = [{ castMemberId: d.castMemberId ?? '', personaId: d.personaId }];
+      else if (castRef || personaRef)
+        bindings =
+          tryGet(`${at}.${castRef ? 'cast' : 'persona'}`, () =>
+            resolveBindings(db, h.projectId, (castRef ?? personaRef) as string),
+          ) ?? [];
+      else problems.push(`${at}: say which character: cast (original character id), persona or from`);
+      if (bindings.length) {
+        const names = bindings
+          .map((b) => {
+            const c = b.castMemberId ? getCastMember(db, b.castMemberId) : null;
+            return `${c ? `「${c.label}」→ ` : ''}${getPersona(db, b.personaId).name}`;
+          })
+          .join('、');
         item = {
           action: {
             type,
-            persona: p.id,
+            ...(castRef ? { cast: castRef } : {}),
+            ...(personaRef ? { persona: personaRef } : {}),
             ...(kind ? { kind } : {}),
             ...(from ? { from } : {}),
             ...(extra ? { extra } : {}),
             ...base,
           },
-          label: `${d ? `修正 ${p.name} 的${KIND_TEXT[d.kind]}（依 v${d.version}）` : `生成 ${p.name} 的${kind ? KIND_TEXT[kind] : '三張角色設計'}`}${extraText(extra)}`,
+          label: `${d ? `修正 ${names} 的${KIND_TEXT[d.kind]}（依 v${d.version}）` : `重新設計 ${names} 的${kind ? KIND_TEXT[kind] : '三張角色設計'}`}${extraText(extra)}`,
           paid: true,
         };
+      }
     } else if (type === 'board.generate' || type === 'take.generate' || type === 'take.still') {
       const shot = shotAt(a.shot, `${at}.shot`);
       const tier = type === 'board.generate' ? undefined : tierAt(a.tier, `${at}.tier`);
@@ -1021,7 +1086,7 @@ function applyOne(ws: Workspace, h: Handoff, a: HandoffAction, actor: string): s
       setDesignNote(ws.db, project.id, a.persona, a.note, actor);
       return [a.persona];
     case 'design.generate':
-      return queueDesign(ws, project.id, a.persona, actor, {
+      return queueDesign(ws, project.id, a.from ? null : (a.cast ?? a.persona ?? null), actor, {
         ...(a.kind ? { kind: a.kind } : {}),
         ...(a.extra ? { extra: a.extra } : {}),
         ...(a.from ? { fromDesignId: a.from } : {}),

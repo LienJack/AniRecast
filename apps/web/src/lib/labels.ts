@@ -154,6 +154,7 @@ const JOB_TYPE_LABEL: Record<string, string> = {
   'take.generate': '生成分鏡視頻',
   'take.still': '分鏡圖轉靜態視頻',
   'design.generate': '生成角色設計',
+  'design.analyze': '原片角色分析',
   'shots.continuity': '切點判斷',
   'render.compose': '合成成片',
   noop: '測試任務',

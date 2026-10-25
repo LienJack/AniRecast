@@ -21,10 +21,12 @@ import type {
 export type {
   AgentTask,
   AgentTaskStatus,
+  AnalysisItem,
   AniEvent,
   AssetKind,
   AssignedBy,
   Board,
+  CastAnalysis,
   CastMember,
   Clip,
   Design,
@@ -62,7 +64,9 @@ export type {
 
 export type ProjectOverview = ReturnType<typeof projectOverview>;
 export type ProjectSummary = ReturnType<typeof projectSummaries>[number];
-export type PersonaDesigns = ReturnType<typeof designOverview>[number];
+export type DesignOverview = ReturnType<typeof designOverview>;
+export type BindingDesigns = DesignOverview['bindings'][number];
+export type UnboundCast = DesignOverview['unbound'][number];
 export type OverviewShot = ProjectOverview['shots'][number];
 export type ShotDetail = ReturnType<typeof shotDetail>;
 export type ShotCastEntry = ShotDetail['cast'][number];

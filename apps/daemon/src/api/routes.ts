@@ -19,6 +19,7 @@ import {
   createProject,
   createRender,
   createSource,
+  DESIGN_KINDS,
   type DesignKind,
   designOverview,
   enqueueJob,
@@ -28,7 +29,6 @@ import {
   getAgentTask,
   getBoard,
   getCastMember,
-  getDesign,
   getHandoff,
   getJob,
   getPersona,
@@ -61,9 +61,9 @@ import {
   type PersonaView,
   projectOfShot,
   projectOverview,
-  projectPersonaIds,
   projectSummaries,
   queueBoard,
+  queueCastAnalysis,
   queueDesign,
   queueStillTake,
   queueTake,
@@ -76,6 +76,7 @@ import {
   requestCancel,
   retryJob,
   type ShotMode,
+  setAnalysisPicks,
   setDesignNote,
   setGenerationTier,
   setLookPolicy,
@@ -548,23 +549,43 @@ export function registerRoutes(
   );
   app.post('/api/projects/:ref/designs', async (c) =>
     handle(c, async () => {
-      const b = await body<{ personaId?: string; kind?: DesignKind; extra?: string; fromDesignId?: string }>(
-        c,
-      );
-      const project = getProject(ws.db, c.req.param('ref'));
-      const personas = b.fromDesignId
-        ? [getDesign(ws.db, b.fromDesignId).personaId]
-        : b.personaId
-          ? [b.personaId]
-          : projectPersonaIds(ws.db, project.id);
-      return personas.flatMap((p) =>
-        queueDesign(ws, project.id, p, USER, {
+      const b = await body<{
+        castId?: string;
+        personaId?: string;
+        kind?: DesignKind;
+        extra?: string;
+        fromDesignId?: string;
+      }>(c);
+      return queueDesign(
+        ws,
+        c.req.param('ref'),
+        b.fromDesignId ? null : (b.castId ?? b.personaId ?? null),
+        USER,
+        {
           ...(b.kind ? { kind: b.kind } : {}),
           ...(b.extra ? { extra: b.extra } : {}),
           ...(b.fromDesignId ? { fromDesignId: b.fromDesignId } : {}),
-        }),
+        },
       );
     }),
+  );
+  app.post('/api/projects/:ref/designs/analyze', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ castId?: string; generate?: boolean }>(c);
+      return queueCastAnalysis(ws, c.req.param('ref'), b.castId ?? null, USER, {
+        ...(b.generate ? { thenKinds: [...DESIGN_KINDS] } : {}),
+      });
+    }),
+  );
+  app.post('/api/cast/:id/analysis/picks', async (c) =>
+    handle(c, async () =>
+      setAnalysisPicks(
+        ws.db,
+        c.req.param('id'),
+        await body<{ expressions?: number[]; poses?: number[] }>(c),
+        USER,
+      ),
+    ),
   );
   app.post('/api/projects/:ref/designs/note', async (c) =>
     handle(c, async () => {

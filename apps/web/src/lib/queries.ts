@@ -6,12 +6,12 @@ import type {
   AssetKind,
   CastMember,
   CostSummary,
+  DesignOverview,
   DiscussionView,
   Handoff,
   Health,
   Job,
   Persona,
-  PersonaDesigns,
   Project,
   ProjectOverview,
   ProjectSummary,
@@ -107,7 +107,7 @@ export const useProjectTasks = (ref: string) =>
 export const useDesigns = (ref: string) =>
   useQuery({
     queryKey: qk.designs(ref),
-    queryFn: () => api.get<PersonaDesigns[]>(`/api/projects/${encodeURIComponent(ref)}/designs`),
+    queryFn: () => api.get<DesignOverview>(`/api/projects/${encodeURIComponent(ref)}/designs`),
   });
 export const useDiscussions = (ref: string) =>
   useQuery({
