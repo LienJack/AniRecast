@@ -107,6 +107,26 @@ describe('board prompt: who is on screen', () => {
     ws.close();
   });
 
+  it('does not prefer a keyframe just because one head was detected twice there', () => {
+    const { ws, projectId, shotId, personaId } = fixture();
+    const early = 'projects/op/kf-early.jpg';
+    writeFileSync(ws.abs(early), 'early frame');
+    setKeyframes(ws.db, shotId, [
+      { frame: 2, role: 'first', path: early },
+      { frame: 12, role: 'mid', path: 'projects/op/kf.jpg' },
+    ]);
+    const girl = createCastMember(ws.db, { projectId, label: 'girl' }, 'daemon');
+    const a = createTracklet(ws.db, { shotId, castMemberId: girl.id }).id;
+    const b = createTracklet(ws.db, { shotId, castMemberId: girl.id }).id;
+    detect(ws, a, 2, [0.2, 0.1, 0.45, 0.6]);
+    detect(ws, b, 2, [0.25, 0.15, 0.35, 0.4]);
+    detect(ws, a, 12, [0.2, 0.1, 0.45, 0.6]);
+    mapCast(ws.db, girl.id, personaId, 'user');
+    recomputeShotModes(ws.db, projectId);
+    expect(planBoard(ws, shotId).inputs[0]?.path).toBe('projects/op/kf.jpg');
+    ws.close();
+  });
+
   it('keeps every view of a character in a collage frame', () => {
     const prompt = boardFor((ws, shotId, castId) => {
       for (const x of [0.05, 0.3, 0.55, 0.8])

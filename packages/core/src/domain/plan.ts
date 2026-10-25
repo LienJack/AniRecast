@@ -52,6 +52,22 @@ function detectionsOf(ws: Workspace, entries: ShotCastEntry[]): Det[] {
   );
 }
 
+const sameCharacter = (a: ShotCastEntry, b: ShotCastEntry): boolean =>
+  a === b || (a.cast !== null && a.cast.id === b.cast?.id);
+
+/** Distinct heads in one frame: a head detected twice at two sizes (inside each other) counts once. */
+function distinctHeads(dets: Det[]): Det[] {
+  const kept: Det[] = [];
+  for (const d of [...dets].sort((a, b) => area(b.box) - area(a.box))) {
+    const duplicate = kept.some(
+      (k) =>
+        k.entry === d.entry || (sameCharacter(k.entry, d.entry) && d.box && k.box && nested(d.box, k.box)),
+    );
+    if (!duplicate) kept.push(d);
+  }
+  return kept;
+}
+
 /**
  * The frame the board is drawn from: the keyframe showing the most people to replace, nearest the
  * representative frame on ties. A character who only walks in late is then on the frame the model sees.
@@ -62,7 +78,7 @@ function boardKeyframe(ws: Workspace, shot: Shot, dets: Det[]): Keyframe {
     throw new AniError('conflict', 'Shot has no keyframes yet', {
       hint: 'Wait for shot preparation to finish.',
     });
-  const shown = (frame: number) => new Set(dets.filter((d) => d.frame === frame).map((d) => d.entry)).size;
+  const shown = (frame: number) => distinctHeads(dets.filter((d) => d.frame === frame)).length;
   return frames.reduce((best, k) => {
     const diff = shown(k.frame) - shown(best.frame);
     if (diff !== 0) return diff > 0 ? k : best;
@@ -79,13 +95,7 @@ function onScreenTogether(group: ShotCastEntry[], dets: Det[], frame: number): S
   const own = dets.filter((d) => group.includes(d.entry));
   if (group.length < 2 || own.length === 0) return group;
   const ref = own.reduce((b, d) => (Math.abs(d.frame - frame) < Math.abs(b.frame - frame) ? d : b));
-  const atRef = own.filter((d) => d.frame === ref.frame).sort((a, b) => area(b.box) - area(a.box));
-  const kept: Det[] = [];
-  for (const d of atRef) {
-    if (kept.some((k) => k.entry === d.entry || (d.box && k.box && nested(d.box, k.box)))) continue;
-    kept.push(d);
-  }
-  return kept.map((k) => k.entry);
+  return distinctHeads(own.filter((d) => d.frame === ref.frame)).map((k) => k.entry);
 }
 
 /** Who to replace in a shot, grouped by persona, and the keyframe to show the image model. */
