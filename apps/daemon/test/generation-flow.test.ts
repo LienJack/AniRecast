@@ -99,6 +99,25 @@ describe('board → take → render with the fake provider', () => {
       expect(status.map((s) => s.mode)).toEqual(['replace', 'clean', 'replace', 'keep']);
       expect(status.map((s) => s.stage)).toEqual(['board_pending', 'take_pending', 'board_pending', 'keep']);
 
+      // Character design: one sheet drawn through the image model and filed under the project.
+      const drawn = await cliData<{ designs: Array<{ id: string }> }>(t, [
+        'design',
+        'generate',
+        project.slug,
+        persona.slug,
+        '--kind',
+        'turnaround',
+        '--wait',
+      ]);
+      const design = await cliData<{ design: { status: string; absPath: string; path: string } }>(t, [
+        'design',
+        'show',
+        drawn.designs[0]!.id,
+      ]);
+      expect(design.design.status).toBe('ready');
+      expect(design.design.path).toMatch(/designs\/.+\/turnaround-v001\.png$/);
+      expect(existsSync(design.design.absPath)).toBe(true);
+
       // Takes for replace shots are refused until a board is approved.
       const early = await cliData<{ takes: unknown[] }>(t, [
         'take',

@@ -13,6 +13,7 @@ import {
   MODE_TONE,
   STAGE_LABEL,
   STAGE_TONE,
+  TARGET_TYPE_LABEL,
   TASK_KIND_LABEL,
   TASK_STATUS_LABEL,
   TASK_STATUS_TONE,
@@ -145,7 +146,7 @@ export function TaskCard({
         <span className="font-medium text-xs">{TASK_KIND_LABEL[task.kind] ?? task.kind}</span>
         {payload.targetType ? (
           <span className="text-muted-foreground text-xs">
-            {payload.targetType === 'board' ? '分鏡圖' : '分鏡視頻'}
+            {TARGET_TYPE_LABEL[payload.targetType] ?? payload.targetType}
           </span>
         ) : null}
         {showShot && task.shotId && projectSlug ? (

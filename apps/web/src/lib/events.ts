@@ -94,7 +94,7 @@ function keysFor(e: AniEvent): QueryKey[] {
     if (e.kind === 'job.progress' || e.kind === 'job.started') return keys;
     if (type.startsWith('source.')) keys.push(qk.sources);
     if (e.projectId) keys.push(project, shot);
-    if (type.startsWith('board.') || type.startsWith('take.') || type.startsWith('render.'))
+    if (['board.', 'take.', 'render.', 'design.'].some((prefix) => type.startsWith(prefix)))
       keys.push(qk.cost, qk.workspace);
     return keys;
   }

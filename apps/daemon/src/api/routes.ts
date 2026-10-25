@@ -16,11 +16,14 @@ import {
   createProject,
   createRender,
   createSource,
+  type DesignKind,
+  designOverview,
   enqueueJob,
   findActiveClip,
   type GenerationTier,
   getActiveClip,
   getCastMember,
+  getDesign,
   getJob,
   getPersona,
   getProject,
@@ -49,8 +52,10 @@ import {
   type PersonaView,
   projectOfShot,
   projectOverview,
+  projectPersonaIds,
   projectSummaries,
   queueBoard,
+  queueDesign,
   queueStillTake,
   queueTake,
   quotaOverview,
@@ -61,6 +66,7 @@ import {
   requestCancel,
   retryJob,
   type ShotMode,
+  setDesignNote,
   setGenerationTier,
   setLookPolicy,
   setOverlayRemoval,
@@ -514,6 +520,38 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
   );
 
   // ---- generation & review ---------------------------------------------------------------------
+  app.get('/api/projects/:ref/designs', (c) =>
+    handle(c, () => designOverview(ws.db, getProject(ws.db, c.req.param('ref')).id)),
+  );
+  app.post('/api/projects/:ref/designs', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ personaId?: string; kind?: DesignKind; extra?: string; fromDesignId?: string }>(
+        c,
+      );
+      const project = getProject(ws.db, c.req.param('ref'));
+      const personas = b.fromDesignId
+        ? [getDesign(ws.db, b.fromDesignId).personaId]
+        : b.personaId
+          ? [b.personaId]
+          : projectPersonaIds(ws.db, project.id);
+      return personas.flatMap((p) =>
+        queueDesign(ws, project.id, p, USER, {
+          ...(b.kind ? { kind: b.kind } : {}),
+          ...(b.extra ? { extra: b.extra } : {}),
+          ...(b.fromDesignId ? { fromDesignId: b.fromDesignId } : {}),
+        }),
+      );
+    }),
+  );
+  app.post('/api/projects/:ref/designs/note', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ personaId: string; note: string }>(c);
+      const project = getProject(ws.db, c.req.param('ref'));
+      return {
+        note: setDesignNote(ws.db, project.id, getPersona(ws.db, b.personaId).id, b.note ?? '', USER),
+      };
+    }),
+  );
   app.post('/api/projects/:ref/boards', async (c) =>
     handle(c, async () => {
       const b = await body<{ shotIds?: string[]; extra?: string; fromBoardId?: string }>(c);

@@ -3,8 +3,11 @@ import path from 'node:path';
 import {
   assertWithinBudget,
   boardFileStem,
+  designDir,
   findActiveClip,
   getBoard,
+  getDesign,
+  getPersona,
   getProject,
   getRender,
   getShot,
@@ -20,6 +23,7 @@ import {
   type Take,
   takeFileStem,
   updateBoard,
+  updateDesign,
   updateRender,
   updateTake,
   type Workspace,
@@ -136,6 +140,69 @@ export const generateBoardHandler: JobHandler = async (ctx) => {
   } catch (error) {
     if (!signal.aborted)
       updateBoard(ws.db, boardId, { status: 'failed', error: toEnvelopeError(error).message }, 'daemon');
+    throw error;
+  }
+};
+
+/** One character design sheet, drawn by the image model from the persona, style frames and a body crop. */
+export const generateDesignHandler: JobHandler = async (ctx) => {
+  const { workspace: ws, services, signal, job } = ctx;
+  const { designId } = job.payload as { designId: string };
+  const design = getDesign(ws.db, designId);
+  const project = getProject(ws.db, design.projectId);
+  const persona = getPersona(ws.db, design.personaId);
+  try {
+    const images = design.inputs.map((i) => ({ path: ws.abs(i.path), mimeType: mimeFor(i.path) }));
+    const params = design.params as { aspectRatio?: '16:9' | '9:16' | '1:1'; imageSize?: '1K' | '2K' };
+    budgetCheck(ctx, estimateImageCost(design.model, params.imageSize ?? '2K', images.length));
+    updateDesign(ws.db, designId, { status: 'generating' }, 'daemon');
+    ctx.progress(0.1, `drawing the ${design.kind} sheet`);
+    const result = await metered(ctx, { model: design.model, kind: 'image' }, () =>
+      services.provider.generateImage({
+        model: design.model,
+        prompt: design.prompt,
+        images,
+        aspectRatio: params.aspectRatio ?? '16:9',
+        imageSize: params.imageSize ?? '2K',
+        signal,
+      }),
+    );
+    ledger(ctx, result, project.id, null);
+    const ext = result.mimeType === 'image/png' ? 'png' : 'jpg';
+    const stem = `${designDir(project, persona.slug)}/${design.kind}-v${String(design.version).padStart(3, '0')}`;
+    await writeFile(outPath(ws, `${stem}.${ext}`), result.data);
+    await writeProvenance(ws, `${stem}.json`, {
+      kind: 'design',
+      id: design.id,
+      persona: { id: persona.id, slug: persona.slug, name: persona.name },
+      sheet: design.kind,
+      version: design.version,
+      model: design.model,
+      prompt: design.prompt,
+      params: design.params,
+      inputs: design.inputs,
+      provider: result.provider,
+      usage: result.usage,
+      costUsd: result.costUsd,
+      createdBy: design.createdBy,
+      generatedAt: new Date().toISOString(),
+    });
+    const updated = updateDesign(
+      ws.db,
+      designId,
+      {
+        status: 'ready',
+        path: `${stem}.${ext}`,
+        costUsd: result.costUsd,
+        remote: result.remote,
+        error: null,
+      },
+      'daemon',
+    );
+    return { result: { design: updated }, costUsd: result.costUsd };
+  } catch (error) {
+    if (!signal.aborted)
+      updateDesign(ws.db, designId, { status: 'failed', error: toEnvelopeError(error).message }, 'daemon');
     throw error;
   }
 };

@@ -211,8 +211,51 @@ export class FalProvider implements Provider {
     };
   }
 
-  async generateImage(_req: ImageGenRequest): Promise<ImageGenResult> {
-    throw new AniError('usage', 'fal image models are not wired in yet; use a Gemini image model');
+  /** Reference-guided image models on fal (GPT Image 2.5 `…/edit`): up to 16 reference images. */
+  async generateImage(req: ImageGenRequest): Promise<ImageGenResult> {
+    const t0 = Date.now();
+    const endpoint = req.model.startsWith(FAL_PREFIX) ? req.model.slice(FAL_PREFIX.length) : req.model;
+    if (!/gpt-image/.test(endpoint) || !endpoint.endsWith('/edit'))
+      throw new AniError('usage', `fal endpoint ${endpoint} is not set up for reference images`, {
+        hint: 'Use fal:openai/gpt-image-2.5/sunburst/edit.',
+      });
+    const imageUrls = await Promise.all(req.images.slice(0, 16).map((m) => this.#upload(m, req.signal)));
+    const long = req.imageSize === '1K' ? 1536 : 2048;
+    const short = Math.round(((req.imageSize === '1K' ? 1536 : 2048) * 9) / 16 / 16) * 16;
+    const image_size =
+      req.aspectRatio === '1:1'
+        ? { width: long, height: long }
+        : req.aspectRatio === '9:16'
+          ? { width: short, height: long }
+          : { width: long, height: short };
+    const { output, units, requestId } = await this.#run(
+      endpoint,
+      {
+        prompt: req.prompt,
+        image_urls: imageUrls,
+        image_size,
+        quality: 'high',
+        output_format: 'png',
+        num_images: 1,
+      },
+      'fal image',
+      req.signal,
+    );
+    const first = (output.images as Array<{ url?: string; content_type?: string }> | undefined)?.[0];
+    if (!first?.url) throw new AniError('provider_rejected', 'fal returned no image');
+    const file = await fetch(first.url, req.signal ? { signal: req.signal } : {});
+    if (!file.ok) throw falError(file.status, {}, 'fal download');
+    const unitPrice = await this.#unitPrice(endpoint);
+    return {
+      data: Buffer.from(await file.arrayBuffer()),
+      mimeType: first.content_type === 'image/jpeg' ? 'image/jpeg' : 'image/png',
+      provider: 'fal',
+      model: req.model,
+      usage: { inputTokens: 0, outputTokens: 0, raw: { billableUnits: units, unitPrice } },
+      costUsd: units * unitPrice,
+      latencyMs: Date.now() - t0,
+      remote: { interactionId: requestId },
+    };
   }
 
   async analyzeImages<T>(_req: VisionRequest): Promise<VisionResult<T>> {

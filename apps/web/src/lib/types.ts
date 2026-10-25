@@ -5,6 +5,7 @@
 import type {
   AgentTask,
   Board,
+  designOverview,
   Job,
   LocalConfig,
   LockInfo,
@@ -25,6 +26,8 @@ export type {
   Board,
   CastMember,
   Clip,
+  Design,
+  DesignKind,
   GenerationTier,
   InspectResult,
   Job,
@@ -54,6 +57,7 @@ export type {
 
 export type ProjectOverview = ReturnType<typeof projectOverview>;
 export type ProjectSummary = ReturnType<typeof projectSummaries>[number];
+export type PersonaDesigns = ReturnType<typeof designOverview>[number];
 export type OverviewShot = ProjectOverview['shots'][number];
 export type ShotDetail = ReturnType<typeof shotDetail>;
 export type ShotCastEntry = ShotDetail['cast'][number];

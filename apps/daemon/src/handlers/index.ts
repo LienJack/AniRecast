@@ -5,6 +5,7 @@ import { shotContinuityHandler } from './continuity.ts';
 import {
   composeRenderHandler,
   generateBoardHandler,
+  generateDesignHandler,
   generateTakeHandler,
   stillTakeHandler,
 } from './generation.ts';
@@ -21,6 +22,7 @@ export function createHandlers(): Map<string, JobHandler> {
     ['shots.prepare', prepareShotsHandler],
     ['shots.continuity', shotContinuityHandler],
     ['board.generate', generateBoardHandler],
+    ['design.generate', generateDesignHandler],
     ['take.generate', generateTakeHandler],
     ['take.still', stillTakeHandler],
     ['render.compose', composeRenderHandler],

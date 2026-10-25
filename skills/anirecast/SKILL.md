@@ -40,9 +40,15 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
    frames on top, new frames below) to check motion, identity and the requested change.
    If the problem is really the character design (wrong outfit, wrong face), say so: the board should be
    revised first (`anirecast board generate … --from <approved board>`), then a new take.
-4. Finish: `anirecast tasks done <task> --note "<one sentence: what you changed>" --result <newVersionId>`.
+4. Review feedback on a **character design** sheet (`targetType: design`; turnaround, expressions or poses of a
+   library character redrawn in this animation's style): revise with
+   `anirecast design generate <project> --from <designId> --extra "<what to change>" --wait` and view the new
+   sheet (`anirecast design show <newId>` → `absPath`). A revision keeps the earlier instructions. If the change
+   applies to every sheet of the character (e.g. "cover the shoulders"), say so in the done note and suggest
+   `anirecast design note <project> <persona> "<note>"` to the human rather than repeating it per sheet.
+5. Finish: `anirecast tasks done <task> --note "<one sentence: what you changed>" --result <newVersionId>`.
    The note is shown to the human next to the new version, so make it specific.
-5. If the comment is ambiguous, or two attempts did not satisfy it: `anirecast tasks ask <task> --question "…"`.
+6. If the comment is ambiguous, or two attempts did not satisfy it: `anirecast tasks ask <task> --question "…"`.
 
 ## Same-person identification (`cast_review` tasks)
 
@@ -99,4 +105,5 @@ anirecast jobs list --status running        # what the daemon is doing
 anirecast cost <project>                    # spend so far
 anirecast quota                             # requests left today per model (Omni: 100/day on API tier 2)
 anirecast shots boundaries <project>        # every cut: same moment or cut, who decided, how sure
+anirecast design list <project>             # character designs: note, latest and approved sheet per kind
 ```

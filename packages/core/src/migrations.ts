@@ -461,6 +461,63 @@ ALTER TABLE personas ADD COLUMN kind TEXT NOT NULL DEFAULT 'character' CHECK (ki
 CREATE INDEX personas_kind ON personas(kind, archived);
 `,
   },
+  {
+    version: 5,
+    name: 'character design sheets, shot lighting, take segments',
+    rebuildsTables: true,
+    sql: `
+CREATE TABLE reviews_v5 (
+  id TEXT PRIMARY KEY,
+  target_type TEXT NOT NULL CHECK (target_type IN ('board', 'take', 'render', 'design')),
+  target_id TEXT NOT NULL,
+  verdict TEXT NOT NULL CHECK (verdict IN ('approve', 'changes', 'regenerate', 'keep_original')),
+  comment TEXT,
+  annotations_json TEXT NOT NULL DEFAULT '[]',
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+INSERT INTO reviews_v5 SELECT * FROM reviews;
+DROP TABLE reviews;
+ALTER TABLE reviews_v5 RENAME TO reviews;
+CREATE INDEX reviews_target ON reviews(target_type, target_id);
+
+-- A library character redrawn for one project in that animation's style: turnaround, expressions, poses.
+CREATE TABLE designs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  persona_id TEXT NOT NULL REFERENCES personas(id),
+  kind TEXT NOT NULL CHECK (kind IN ('turnaround', 'expressions', 'poses')),
+  version INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'generating', 'ready', 'approved', 'rejected', 'failed', 'stale')),
+  path TEXT,
+  prompt TEXT NOT NULL,
+  model TEXT NOT NULL,
+  params_json TEXT NOT NULL DEFAULT '{}',
+  inputs_json TEXT NOT NULL DEFAULT '[]',
+  parent_id TEXT REFERENCES designs(id),
+  remote_json TEXT NOT NULL DEFAULT '{}',
+  error TEXT,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE (project_id, persona_id, kind, version)
+);
+CREATE INDEX designs_project ON designs(project_id, persona_id, kind);
+
+-- How a project adapts a library character (e.g. "covered shoulders, looser cut"); the library is untouched.
+CREATE TABLE project_personas (
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  persona_id TEXT NOT NULL REFERENCES personas(id),
+  note TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, persona_id)
+);
+
+ALTER TABLE shots ADD COLUMN lighting TEXT;
+-- Takes generated together in one request (consecutive shots edited as one segment) share an id.
+ALTER TABLE takes ADD COLUMN segment_id TEXT;
+`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

@@ -79,6 +79,8 @@ export function estimateVideoEditCost(
 }
 
 export function estimateImageCost(model: string, size: ImageSize, refImages: number): number {
+  // GPT Image 2.5 on fal bills per request in USD units; observed around 0.1–0.2 at high quality.
+  if (model.startsWith(FAL_PREFIX)) return 0.25;
   return imageCost(model, size, refImages * 1120 + 200);
 }
 

@@ -153,6 +153,9 @@ const JOB_TYPE_LABEL: Record<string, string> = {
   'cast.identify': '同一人識別',
   'board.generate': '生成分鏡圖',
   'take.generate': '生成分鏡視頻',
+  'take.still': '分鏡圖轉靜態視頻',
+  'design.generate': '生成角色設計',
+  'shots.continuity': '切點判斷',
   'render.compose': '合成成片',
   noop: '測試任務',
 };
@@ -185,6 +188,13 @@ export const TASK_STATUS_TONE: Record<AgentTaskStatus, Tone> = {
 export const TASK_KIND_LABEL: Record<string, string> = {
   review_feedback: '評審意見',
   cast_review: '同一人識別判斷',
+  shot_review: '分鏡切點判斷',
+};
+
+export const TARGET_TYPE_LABEL: Record<string, string> = {
+  board: '分鏡圖',
+  take: '分鏡視頻',
+  design: '角色設計',
 };
 
 export const OVERLAY_LABEL: Record<OverlayCategory, string> = {

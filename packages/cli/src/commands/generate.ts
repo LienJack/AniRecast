@@ -12,10 +12,14 @@ import {
   claimNextAgentTask,
   completeAgentTask,
   createRender,
+  type DesignKind,
+  designOverview,
   enqueueJob,
   findActiveClip,
   type GenerationTier,
   getBoard,
+  getDesign,
+  getPersona,
   getProject,
   getRender,
   getTake,
@@ -28,11 +32,14 @@ import {
   loadConfig,
   projectCacheDir,
   projectOfShot,
+  projectPersonaIds,
   queueBoard,
+  queueDesign,
   queueStillTake,
   queueTake,
   quotaOverview,
   safetyBlockCount,
+  setDesignNote,
   shotStage,
   spendBreakdown,
   submitReview,
@@ -126,6 +133,85 @@ export function registerGenerate(program: Command): void {
     .action(
       command((id: string) =>
         withWorkspace(globals(), (ws) => ({ board: getBoard(ws.db, id), reviews: listReviews(ws.db, id) })),
+      ),
+    );
+
+  const design = program
+    .command('design')
+    .description("Character design (角色設計): library characters redrawn in this animation's style");
+  design
+    .command('list <project>')
+    .description('Every swapped-in character with its note and the latest / approved version of each sheet')
+    .action(
+      command((projectRef: string) =>
+        withWorkspace(globals(), (ws) => designOverview(ws.db, getProject(ws.db, projectRef).id)),
+      ),
+    );
+  design
+    .command('generate <project> [persona]')
+    .description(
+      'Draw design sheets: turnaround, expressions and poses (all mapped characters when no persona)',
+    )
+    .option('--kind <kind>', 'only one sheet: turnaround, expressions or poses')
+    .option('--extra <text>', 'extra instructions')
+    .option('--from <designId>', 'revise this sheet (same inputs, plus --extra)')
+    .option('--wait', 'wait for the sheets')
+    .action(
+      command(
+        (
+          projectRef: string,
+          personaRef: string | undefined,
+          opts: { kind?: DesignKind; extra?: string; from?: string; wait?: boolean },
+        ) =>
+          withWorkspace(globals(), async (ws) => {
+            const project = getProject(ws.db, projectRef);
+            const personas = opts.from
+              ? [getDesign(ws.db, opts.from).personaId]
+              : personaRef
+                ? [personaRef]
+                : projectPersonaIds(ws.db, project.id);
+            if (!personas.length) throw new AniError('conflict', 'No character is mapped to a persona yet');
+            const queued = personas.flatMap((p) =>
+              queueDesign(ws, project.id, p, actorFromEnv(), {
+                ...(opts.kind ? { kind: opts.kind } : {}),
+                ...(opts.extra ? { extra: opts.extra } : {}),
+                ...(opts.from ? { fromDesignId: opts.from } : {}),
+              }),
+            );
+            return {
+              designs: queued.map((q) => q.design),
+              ...(await waitAll(
+                ws,
+                queued.map((q) => q.job.id),
+                opts.wait,
+              )),
+            };
+          }),
+      ),
+    );
+  design.command('show <design>').action(
+    command((id: string) =>
+      withWorkspace(globals(), (ws) => {
+        const d = getDesign(ws.db, id);
+        return { design: { ...d, absPath: d.path ? ws.abs(d.path) : null }, reviews: listReviews(ws.db, id) };
+      }),
+    ),
+  );
+  design
+    .command('note <project> <persona> <note>')
+    .description(
+      'How this project adapts the character (e.g. "covered shoulders, looser cut"); used by every sheet',
+    )
+    .action(
+      command((projectRef: string, personaRef: string, note: string) =>
+        withWorkspace(globals(), (ws) => {
+          const project = getProject(ws.db, projectRef);
+          const persona = getPersona(ws.db, personaRef);
+          return {
+            persona: persona.slug,
+            note: setDesignNote(ws.db, project.id, persona.id, note, actorFromEnv()),
+          };
+        }),
       ),
     );
 

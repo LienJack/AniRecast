@@ -9,6 +9,7 @@ import type {
   Health,
   Job,
   Persona,
+  PersonaDesigns,
   Project,
   ProjectOverview,
   ProjectSummary,
@@ -39,6 +40,7 @@ export const qk = {
   jobs: ['jobs'] as const,
   tasks: ['tasks'] as const,
   projectTasks: (ref: string) => ['project', ref, 'tasks'] as const,
+  designs: (ref: string) => ['project', ref, 'designs'] as const,
   cost: ['cost'] as const,
 };
 
@@ -97,6 +99,11 @@ export const useProjectTasks = (ref: string) =>
   useQuery({
     queryKey: qk.projectTasks(ref),
     queryFn: () => api.get<AgentTask[]>(`/api/tasks?project=${encodeURIComponent(ref)}`),
+  });
+export const useDesigns = (ref: string) =>
+  useQuery({
+    queryKey: qk.designs(ref),
+    queryFn: () => api.get<PersonaDesigns[]>(`/api/projects/${encodeURIComponent(ref)}/designs`),
   });
 export const useJobs = () =>
   useQuery({ queryKey: qk.jobs, queryFn: () => api.get<Job[]>('/api/jobs?limit=200') });

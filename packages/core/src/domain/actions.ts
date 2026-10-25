@@ -1,5 +1,6 @@
 import { AniError } from '@anirecast/shared';
 import { loadConfig } from '../config.ts';
+import { all } from '../db.ts';
 import { enqueueJob } from '../jobs.ts';
 import { assertNotBlockedOut, assertQuota } from '../quota.ts';
 import type { Workspace } from '../workspace.ts';
@@ -7,6 +8,15 @@ import { createAgentTask, getAgentTask, listAgentTasks } from './agent-tasks.ts'
 import { listCast, shotCast } from './cast.ts';
 import { findActiveClip, getClip } from './clips.ts';
 import { findCodexThread } from './codex.ts';
+import {
+  approvedDesign,
+  createDesign,
+  DESIGN_KINDS,
+  type DesignKind,
+  getDesign,
+  projectPersonaIds,
+  reviewDesign,
+} from './designs.ts';
 import {
   addReview,
   approvedBoard,
@@ -24,7 +34,7 @@ import {
 import { markShotGenerationStale, recomputeShotModes } from './modes.ts';
 import { listTextOverlays } from './overlays.ts';
 import { getPersona } from './personas.ts';
-import { planBoard, planTake, sha256File } from './plan.ts';
+import { planBoard, planDesign, planTake, sha256File } from './plan.ts';
 import { type GenerationTier, getProject, listProjects } from './projects.ts';
 import { getShot, listKeyframes, listShots, projectOfShot } from './shots.ts';
 import { getSource } from './sources.ts';
@@ -96,6 +106,47 @@ export function queueTake(
   return { take, job };
 }
 
+/** Queues one design sheet of a library character for this project (all three when `kind` is omitted). */
+export function queueDesign(
+  ws: Workspace,
+  projectRef: string,
+  personaRef: string,
+  actor: string,
+  opts: { kind?: DesignKind; extra?: string; fromDesignId?: string } = {},
+) {
+  const project = getProject(ws.db, projectRef);
+  const persona = getPersona(ws.db, personaRef);
+  const from = opts.fromDesignId ? getDesign(ws.db, opts.fromDesignId) : undefined;
+  const kinds = from ? [from.kind] : opts.kind ? [opts.kind] : [...DESIGN_KINDS];
+  const config = loadConfig();
+  return kinds.map((kind) => {
+    const plan = planDesign(ws, project.id, persona.id, kind, {
+      ...(opts.extra ? { extra: opts.extra } : {}),
+      ...(from ? { fromDesignId: from.id } : {}),
+    });
+    const design = createDesign(ws.db, {
+      projectId: project.id,
+      personaId: persona.id,
+      kind,
+      prompt: plan.prompt,
+      model: config.models.design,
+      params: plan.params,
+      inputs: plan.inputs,
+      parentId: from?.id ?? null,
+      createdBy: actor,
+    });
+    const job = enqueueJob(ws.db, {
+      type: 'design.generate',
+      lane: 'generate',
+      projectId: project.id,
+      payload: { designId: design.id },
+      requestedBy: actor,
+      maxAttempts: 2,
+    });
+    return { design, job };
+  });
+}
+
 /** `model` of takes made from a still board, so they are told apart from video-model takes. */
 export const STILL_TAKE_MODEL = 'still';
 
@@ -129,6 +180,52 @@ export function queueStillTake(ws: Workspace, shotId: string, tier: GenerationTi
   return { take, job };
 }
 
+/** Review of a design sheet: approve, request changes (Codex revises it) or regenerate with the same inputs. */
+function submitDesignReview(
+  ws: Workspace,
+  input: { targetId: string; verdict: Verdict; comment?: string | null; actor: string },
+) {
+  const design = getDesign(ws.db, input.targetId);
+  const review = reviewDesign(ws.db, {
+    designId: design.id,
+    verdict: input.verdict,
+    comment: input.comment ?? null,
+    createdBy: input.actor,
+  });
+  if (input.verdict === 'approve') {
+    // A newly approved turnaround changes what boards and takes use: stale the shots that show this character.
+    const shots = listShotsOfPersona(ws.db, design.projectId, design.personaId);
+    for (const id of shots) markShotGenerationStale(ws.db, id, 'character design approved', input.actor);
+  }
+  if (input.verdict === 'changes') {
+    const task = createAgentTask(ws.db, {
+      kind: 'review_feedback',
+      projectId: design.projectId,
+      reviewId: review.id,
+      payload: { targetType: 'design', targetId: design.id, comment: input.comment, annotations: [] },
+      createdBy: input.actor,
+    });
+    return { review, task };
+  }
+  if (input.verdict === 'regenerate') {
+    const [queued] = queueDesign(ws, design.projectId, design.personaId, input.actor, {
+      fromDesignId: design.id,
+    });
+    return { review, queued: { design: queued!.design, jobId: queued!.job.id } };
+  }
+  return { review };
+}
+
+/** Shots of the project's active clip where a cast member mapped to this persona appears. */
+function listShotsOfPersona(db: Workspace['db'], projectId: string, personaId: string): string[] {
+  return all<{ shot_id: string }>(
+    db,
+    `SELECT DISTINCT t.shot_id FROM tracklets t JOIN cast_members c ON c.id = t.cast_member_id
+     WHERE c.project_id = :projectId AND c.persona_id = :personaId`,
+    { projectId, personaId },
+  ).map((r) => r.shot_id);
+}
+
 /** After any cast/overlay change: recompute automatic modes and stale affected versions. */
 export function settleCast(
   ws: Workspace,
@@ -152,6 +249,7 @@ export function submitReview(
     actor: string;
   },
 ) {
+  if (input.targetId.startsWith('dsg_')) return submitDesignReview(ws, input);
   const isBoard = input.targetId.startsWith('brd_');
   const target = isBoard ? getBoard(ws.db, input.targetId) : getTake(ws.db, input.targetId);
   const review = addReview(ws.db, {
@@ -247,7 +345,7 @@ export function projectOverview(ws: Workspace, ref: string) {
 }
 
 /** Which step of the project flow comes next. */
-export type ProjectStep = 'clip' | 'shots' | 'cast' | 'generate' | 'render' | 'done';
+export type ProjectStep = 'clip' | 'shots' | 'cast' | 'design' | 'generate' | 'render' | 'done';
 
 /** One line per project for the project list: source, progress through the flow, open tasks. */
 export function projectSummaries(ws: Workspace) {
@@ -260,6 +358,8 @@ export function projectSummaries(ws: Workspace) {
       (s) => shotStage(ws.db, s.id, project.generationTier) === 'approved',
     ).length;
     const castMapped = listCast(ws.db, project.id).filter((c) => c.personaId).length;
+    const personaIds = projectPersonaIds(ws.db, project.id);
+    const designed = personaIds.filter((id) => approvedDesign(ws.db, project.id, id, 'turnaround')).length;
     const renders = listRenders(ws.db, project.id);
     const tasks = listAgentTasks(ws.db, { projectId: project.id }).filter(
       (t) => t.status !== 'done' && t.status !== 'cancelled',
@@ -270,11 +370,13 @@ export function projectSummaries(ws: Workspace) {
         ? 'shots'
         : castMapped === 0
           ? 'cast'
-          : approved < working.length
-            ? 'generate'
-            : renders.length === 0
-              ? 'render'
-              : 'done';
+          : designed < personaIds.length
+            ? 'design'
+            : approved < working.length
+              ? 'generate'
+              : renders.length === 0
+                ? 'render'
+                : 'done';
     return {
       ...project,
       source: {
@@ -288,6 +390,8 @@ export function projectSummaries(ws: Workspace) {
       toGenerate: working.length,
       approved,
       castMapped,
+      designed,
+      toDesign: personaIds.length,
       renders: renders.length,
       openTasks: tasks.length,
       needsUser: tasks.filter((t) => t.status === 'needs_user').length,
@@ -300,11 +404,13 @@ export function projectSummaries(ws: Workspace) {
 export function taskContext(ws: Workspace, taskId: string) {
   const task = getAgentTask(ws.db, taskId);
   const shot = task.shotId ? getShot(ws.db, task.shotId) : null;
-  const payload = task.payload as { targetType?: 'board' | 'take'; targetId?: string };
+  const payload = task.payload as { targetType?: 'board' | 'take' | 'design'; targetId?: string };
   const target = payload.targetId
     ? payload.targetType === 'board'
       ? getBoard(ws.db, payload.targetId)
-      : getTake(ws.db, payload.targetId)
+      : payload.targetType === 'design'
+        ? getDesign(ws.db, payload.targetId)
+        : getTake(ws.db, payload.targetId)
     : null;
   const abs = (rel: string | null | undefined) => (rel ? ws.abs(rel) : null);
   const project = getProject(ws.db, task.projectId);
@@ -339,6 +445,8 @@ export function taskContext(ws: Workspace, taskId: string) {
         ? `Revise with \`anirecast board generate ${project.slug} --from ${payload.targetId} --extra "<instructions>" --wait\`, view the new board, then \`anirecast tasks done ${task.id} --note "…" --result <newBoardId>\`.`
         : payload.targetType === 'take'
           ? `Revise with \`anirecast take generate ${project.slug} --from ${payload.targetId} --extra "<instructions>" --wait\`, check it with \`anirecast take sheet <newTakeId>\`, then \`anirecast tasks done ${task.id} --note "…" --result <newTakeId>\`.`
-          : 'Follow the task payload.',
+          : payload.targetType === 'design'
+            ? `Revise with \`anirecast design generate ${project.slug} --from ${payload.targetId} --extra "<instructions>" --wait\`, view the new sheet, then \`anirecast tasks done ${task.id} --note "…" --result <newDesignId>\`.`
+            : 'Follow the task payload.',
   };
 }

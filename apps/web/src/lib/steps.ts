@@ -9,6 +9,12 @@ export const STEPS = [
   { id: 'clip', label: '節選', to: '/projects/$ref/clip', hint: '選要重製的時間範圍' },
   { id: 'shots', label: '分鏡', to: '/projects/$ref/shots', hint: '切鏡、合併連續動作、字幕' },
   { id: 'cast', label: '角色', to: '/projects/$ref/cast', hint: '片中角色與要換成的人設' },
+  {
+    id: 'design',
+    label: '角色設計',
+    to: '/projects/$ref/design',
+    hint: '用這部動畫的畫風重畫人設：三視圖、表情、動作',
+  },
   { id: 'generate', label: '生成與評審', to: '/projects/$ref/review', hint: '分鏡圖、分鏡視頻與評審' },
   { id: 'render', label: '成片', to: '/projects/$ref/renders', hint: '合成與對比' },
 ] as const;
@@ -32,6 +38,7 @@ export function stepOfPath(pathname: string): StepId | undefined {
     clip: 'clip',
     shots: 'shots',
     cast: 'cast',
+    design: 'design',
     review: 'generate',
     renders: 'render',
   };
