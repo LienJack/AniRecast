@@ -4,6 +4,7 @@ import {
   getProject,
   getShot,
   getSource,
+  listShots,
   projectOfShot,
   replaceShots,
   sampleFrames,
@@ -101,7 +102,12 @@ interface DetectResult {
 }
 
 /** Keyframes and the per-shot source segment (what gets uploaded for editing). */
-async function prepareShots(ctx: JobContext, shotIds: string[], from: number, to: number): Promise<void> {
+export async function prepareShots(
+  ctx: JobContext,
+  shotIds: string[],
+  from: number,
+  to: number,
+): Promise<void> {
   const { workspace: ws, signal, progress } = ctx;
   for (const [i, shotId] of shotIds.entries()) {
     const project = projectOfShot(ws.db, shotId);
@@ -149,15 +155,39 @@ export const detectShotsHandler: JobHandler = async (ctx) => {
   if (last && last.end < clip.frameCount - 1) last.end = clip.frameCount - 1;
   const shots = replaceShots(ws.db, clip.id, ranges, 'daemon');
   progress(0.3, `${shots.length} shots`);
+  const result = { clipId: clip.id, shots: shots.length, cuts: ranges.slice(1).map((r) => r.start) };
+  // Judge the cuts first, so nothing is prepared or analyzed for shots that are about to merge.
+  if (ctx.services.config.continuity.enabled) {
+    const continuity = enqueueJob(ws.db, {
+      type: 'shots.continuity',
+      lane: 'generate',
+      projectId: clip.projectId,
+      payload: { clipId: clip.id, apply: true, review: true, chain: true },
+      requestedBy: job.requestedBy,
+    });
+    return { result: { ...result, continuityJobId: continuity.id } };
+  }
+  return { result: { ...result, ...(await continueAfterShots(ctx, clip.id, 0.3)) } };
+};
+
+/**
+ * The rest of the pipeline once the shot list is settled: prepare every shot, then (with autoAnalyze) queue
+ * the Flash pass for overlaid text and descriptions, and same-person identification.
+ */
+export async function continueAfterShots(
+  ctx: JobContext,
+  clipId: string,
+  from: number,
+): Promise<{ analyzeJobId?: string; identifyJobId?: string }> {
+  const { workspace: ws, job } = ctx;
+  const clip = getClip(ws.db, clipId);
   await prepareShots(
     ctx,
-    shots.map((s) => s.id),
-    0.3,
+    listShots(ws.db, clipId).map((s) => s.id),
+    from,
     1,
   );
-  const result = { clipId: clip.id, shots: shots.length, cuts: ranges.slice(1).map((r) => r.start) };
-  if (!ctx.services.config.pipeline.autoAnalyze) return { result };
-  // Next steps of the pipeline: overlaid text + descriptions (Flash) and same-person identification.
+  if (!ctx.services.config.pipeline.autoAnalyze) return {};
   const analyze = enqueueJob(ws.db, {
     type: 'shots.analyze',
     lane: 'generate',
@@ -172,8 +202,8 @@ export const detectShotsHandler: JobHandler = async (ctx) => {
     payload: { projectId: clip.projectId, redetect: true },
     requestedBy: job.requestedBy,
   });
-  return { result: { ...result, analyzeJobId: analyze.id, identifyJobId: identify.id } };
-};
+  return { analyzeJobId: analyze.id, identifyJobId: identify.id };
+}
 
 /** Rebuilds keyframes and source segments after split/merge or a representative-frame change. */
 export const prepareShotsHandler: JobHandler = async (ctx) => {

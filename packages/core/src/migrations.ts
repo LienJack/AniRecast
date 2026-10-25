@@ -5,6 +5,11 @@ interface Migration {
   version: number;
   name: string;
   sql: string;
+  /**
+   * Rebuilds tables (SQLite cannot change a CHECK in place). Runs with foreign keys off, as SQLite's
+   * documented procedure requires, and checks them before switching them back on.
+   */
+  rebuildsTables?: boolean;
 }
 
 /** Times are epoch milliseconds. Paths are workspace-relative POSIX strings. */
@@ -393,6 +398,60 @@ CREATE INDEX provider_requests_model_at ON provider_requests(model, at);
 CREATE INDEX provider_requests_shot ON provider_requests(shot_id);
 `,
   },
+  {
+    version: 3,
+    name: 'shot boundaries and shot review tasks',
+    rebuildsTables: true,
+    sql: `
+CREATE TABLE agent_tasks_v3 (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('review_feedback', 'cast_review', 'shot_review')),
+  review_id TEXT REFERENCES reviews(id),
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  shot_id TEXT REFERENCES shots(id),
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL CHECK (status IN ('open', 'claimed', 'done', 'needs_user', 'cancelled')),
+  claimed_by TEXT,
+  claimed_at INTEGER,
+  question TEXT,
+  answer TEXT,
+  result_note TEXT,
+  result_target_id TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+INSERT INTO agent_tasks_v3 SELECT * FROM agent_tasks;
+DROP TABLE agent_tasks;
+ALTER TABLE agent_tasks_v3 RENAME TO agent_tasks;
+CREATE INDEX agent_tasks_status ON agent_tasks(status, created_at);
+
+CREATE TABLE codex_threads_v3 (
+  scope TEXT NOT NULL CHECK (scope IN ('shot', 'project_cast', 'project_shots')),
+  scope_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (scope, scope_id)
+);
+INSERT INTO codex_threads_v3 SELECT * FROM codex_threads;
+DROP TABLE codex_threads;
+ALTER TABLE codex_threads_v3 RENAME TO codex_threads;
+
+-- One row per cut (at_frame = first frame of the later shot, clip numbering): whether the two sides belong to
+-- one continuous moment, and who decided. User decisions are locked; judges never override them.
+CREATE TABLE shot_boundaries (
+  clip_id TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+  at_frame INTEGER NOT NULL,
+  verdict TEXT NOT NULL CHECK (verdict IN ('same_moment', 'cut')),
+  confidence REAL,
+  reason TEXT,
+  decided_by TEXT NOT NULL,
+  locked INTEGER NOT NULL DEFAULT 0,
+  sheet_path TEXT,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (clip_id, at_frame)
+);
+`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -416,14 +475,22 @@ export function migrate(db: Db): { from: number; to: number } {
   }
   for (const m of MIGRATIONS) {
     if (m.version <= from) continue;
+    if (m.rebuildsTables) db.exec('PRAGMA foreign_keys = OFF');
     db.exec('BEGIN IMMEDIATE');
     try {
       db.exec(m.sql);
+      if (m.rebuildsTables) {
+        const broken = db.prepare('PRAGMA foreign_key_check').all();
+        if (broken.length > 0)
+          throw new Error(`foreign key check failed: ${JSON.stringify(broken.slice(0, 3))}`);
+      }
       db.exec(`PRAGMA user_version = ${m.version}`);
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');
       throw new AniError('internal', `Migration ${m.version} (${m.name}) failed`, { cause: error });
+    } finally {
+      if (m.rebuildsTables) db.exec('PRAGMA foreign_keys = ON');
     }
   }
   return { from, to: schemaVersion(db) };

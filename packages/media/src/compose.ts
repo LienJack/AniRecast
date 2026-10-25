@@ -163,6 +163,31 @@ export async function stillClip(
   );
 }
 
+/**
+ * Four frames across one cut in a row: the end of shot A, a red bar where the cut is, the start of shot B.
+ * Frames must share a height (extract them at the same width from one clip).
+ */
+export async function boundarySheet(
+  frames: [string, string, string, string],
+  output: string,
+  opts: FfmpegRunOptions = {},
+): Promise<void> {
+  ensureDir(output);
+  await ffmpeg(
+    [
+      ...frames.flatMap((f) => ['-i', f]),
+      '-filter_complex',
+      '[0][1]hstack=inputs=2[a];[2][3]hstack=inputs=2[b];[a]pad=iw+16:ih:0:0:color=red[ap];[ap][b]hstack=inputs=2',
+      '-frames:v',
+      '1',
+      '-q:v',
+      '3',
+      output,
+    ],
+    opts,
+  );
+}
+
 export interface RenderSegment {
   file: string;
   frames: number;

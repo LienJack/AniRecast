@@ -9,9 +9,12 @@ import {
   findActiveClip,
   type GenerationTier,
   getActiveClip,
+  getBoundary,
   getProject,
   getShot,
   getSource,
+  isHumanActor,
+  listBoundaries,
   listKeyframes,
   listProjects,
   listShots,
@@ -19,6 +22,7 @@ import {
   mergeShots,
   projectOfShot,
   recomputeShotModes,
+  recordBoundary,
   type ShotMode,
   setGenerationTier,
   splitShot,
@@ -266,6 +270,91 @@ export function registerMedia(program: Command): void {
             requestedBy: actorFromEnv(),
           });
           return [a, b];
+        }),
+      ),
+    );
+  shots
+    .command('continuity <project>')
+    .description(
+      'Judge every cut with the continuity model and find cuts inside one continuous moment (suggestions only by default)',
+    )
+    .option('--apply', 'merge confident runs (only shots without boards or takes)')
+    .option('--review', 'hand unsure cuts and the merges made to Codex as a shot_review task')
+    .option('--rejudge', 'judge cuts again even when this model already did')
+    .option('--wait', 'wait for the result')
+    .action(
+      command(
+        (
+          projectRef: string,
+          opts: { apply?: boolean; review?: boolean; rejudge?: boolean; wait?: boolean },
+        ) =>
+          withWorkspace(globals(), async (ws) => {
+            const project = getProject(ws.db, projectRef);
+            const clip = findActiveClip(ws.db, project.id);
+            if (!clip) throw new AniError('conflict', 'Project has no clip');
+            const job = enqueueJob(ws.db, {
+              type: 'shots.continuity',
+              lane: 'generate',
+              projectId: project.id,
+              payload: {
+                clipId: clip.id,
+                apply: opts.apply === true,
+                review: opts.review === true,
+                rejudge: opts.rejudge === true,
+                chain: false,
+              },
+              requestedBy: actorFromEnv(),
+            });
+            return maybeWait(ws, job.id, opts.wait);
+          }),
+      ),
+    );
+  shots
+    .command('boundaries <project>')
+    .description('Every recorded decision about a cut: same moment or cut, by whom, how sure')
+    .action(
+      command((projectRef: string) =>
+        withWorkspace(globals(), (ws) => {
+          const clip = findActiveClip(ws.db, getProject(ws.db, projectRef).id);
+          if (!clip) throw new AniError('conflict', 'Project has no clip');
+          const starts = new Map(listShots(ws.db, clip.id).map((s, i) => [s.startFrame, i + 1]));
+          return listBoundaries(ws.db, clip.id).map((b) => ({
+            ...b,
+            // Still a cut today, and which shot starts there; a merged boundary has no shot.
+            startsShot: starts.get(b.atFrame) ?? null,
+            sheetAbsPath: b.sheetPath ? ws.abs(b.sheetPath) : null,
+          }));
+        }),
+      ),
+    );
+  shots
+    .command('boundary <project>')
+    .description('Record a decision about a cut without merging or splitting (yours are locked)')
+    .requiredOption('--at <frame>', 'first frame of the later shot (clip numbering)')
+    .option('--cut', 'the two sides are different moments: keep the cut')
+    .option('--same', 'the two sides are one moment (use `shots merge` to merge them)')
+    .option('--reason <text>', 'why')
+    .action(
+      command((projectRef: string, opts: { at: string; cut?: boolean; same?: boolean; reason?: string }) =>
+        withWorkspace(globals(), (ws) => {
+          if (Boolean(opts.cut) === Boolean(opts.same))
+            throw new AniError('usage', 'Pass exactly one of --cut or --same');
+          const clip = findActiveClip(ws.db, getProject(ws.db, projectRef).id);
+          if (!clip) throw new AniError('conflict', 'Project has no clip');
+          const actor = actorFromEnv();
+          const stored = recordBoundary(ws.db, {
+            clipId: clip.id,
+            atFrame: Number(opts.at),
+            verdict: opts.cut ? 'cut' : 'same_moment',
+            decidedBy: actor,
+            locked: isHumanActor(actor),
+            ...(opts.reason ? { reason: opts.reason } : {}),
+          });
+          if (!stored)
+            throw new AniError('conflict', 'A person already decided this cut; it is locked', {
+              hint: 'Leave it, or ask the human.',
+            });
+          return getBoundary(ws.db, clip.id, Number(opts.at));
         }),
       ),
     );

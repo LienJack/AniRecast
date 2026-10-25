@@ -1,6 +1,7 @@
 import { AniError, newId } from '@anirecast/shared';
 import { all, type Db, fromJson, one, run, toJson, tx } from '../db.ts';
 import { appendEvent } from '../events.ts';
+import { isHumanActor, recordBoundary } from './boundaries.ts';
 import { clipHasGeneration, getClip } from './clips.ts';
 import { getProject, type Project, projectDir } from './projects.ts';
 
@@ -276,6 +277,11 @@ export function splitShot(
     run(db, 'DELETE FROM keyframes WHERE shot_id = :id', { id: shotId });
     const newIdValue = insertShot(db, shot.clipId, atFrame, shot.endFrame, shot.orderIndex + 1, now);
     const movedTracklets = splitTrackletsAt(db, shotId, newIdValue, atFrame, now);
+    recordBoundary(
+      db,
+      { clipId: shot.clipId, atFrame, verdict: 'cut', decidedBy: actor, locked: isHumanActor(actor) },
+      now,
+    );
     renumber(db, shot.clipId);
     const clip = getClip(db, shot.clipId);
     assertCoverage(listShots(db, shot.clipId), clip.frameCount);
@@ -356,6 +362,18 @@ export function mergeShots(
       { a: first.id, b: second.id },
     );
     run(db, 'UPDATE agent_tasks SET shot_id = :a WHERE shot_id = :b', { a: first.id, b: second.id });
+    recordBoundary(
+      db,
+      {
+        clipId: first.clipId,
+        atFrame: second.startFrame,
+        verdict: 'same_moment',
+        decidedBy: actor,
+        locked: isHumanActor(actor),
+        ...(opts.reason ? { reason: opts.reason } : {}),
+      },
+      now,
+    );
     run(db, 'DELETE FROM shots WHERE id = :id', { id: second.id });
     run(db, 'DELETE FROM keyframes WHERE shot_id = :id', { id: first.id });
     run(

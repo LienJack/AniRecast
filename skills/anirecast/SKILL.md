@@ -60,6 +60,25 @@ Two people in the same frame are never the same person — except in collages, c
 layouts, split screens and multi-panel frames, where one character can appear several times (front, side,
 back). Judge those by appearance and merge them.
 
+## Shot boundaries (`shot_review` tasks)
+
+Shots come from fast cut detection; a judge model (JEV) then decided, cut by cut, whether both sides are one
+continuous moment. One shot = one moment: the same place, the same characters, continuous action. Cuts between
+framings of that action (wide to close-up, another angle, a focus pull, a flash, a quick zoom) stay inside one
+shot. A new place, time, subject or action, or a title / logo / graphic card, is a real cut. A shot may not be
+longer than `maxShotSeconds` (10 s) in the payload.
+
+The payload has `unsure` cuts (the judge's verdict, confidence and reason) and `merged` runs the judge already
+merged. Each comes with a sheet: two frames before the cut, a red bar, two frames after it. Look at every sheet.
+
+- An unsure cut that is one moment: `anirecast shots merge <first> <second> --reason "…"` (shot ids from
+  `anirecast shots list <project>`; the frame is the second shot's `startFrame`).
+- An unsure cut that is a real cut: `anirecast shots boundary <project> --at <frame> --cut --reason "…"`.
+- A merge that was wrong: `anirecast shots split <shot> --at <frame>` at the original cut frame.
+- Never add `--force` to a merge or split (it discards boards and takes); ask instead.
+- A cut someone already decided by hand is locked (`anirecast shots boundaries <project>` shows `locked`); leave it.
+- Finish with `anirecast tasks done <task> --note "…"` listing what you merged, kept and split.
+
 ## Writing prompt revisions
 
 - Short and concrete; prompts that describe too much change too much. End with "Keep everything else the same."
@@ -79,4 +98,5 @@ anirecast take sheet <take>                 # contact sheet image of a take vs t
 anirecast jobs list --status running        # what the daemon is doing
 anirecast cost <project>                    # spend so far
 anirecast quota                             # requests left today per model (Omni: 100/day on API tier 2)
+anirecast shots boundaries <project>        # every cut: same moment or cut, who decided, how sure
 ```

@@ -1,7 +1,7 @@
 import { newId } from '@anirecast/shared';
 import { all, type Db, one, run, toJson } from '../db.ts';
 
-export type ThreadScope = 'shot' | 'project_cast';
+export type ThreadScope = 'shot' | 'project_cast' | 'project_shots';
 
 export function findCodexThread(db: Db, scope: ThreadScope, scopeId: string): string | undefined {
   return one<{ thread_id: string }>(

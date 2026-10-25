@@ -189,6 +189,7 @@ export class AgentDispatcher {
 
   private threadName(task: AgentTask): string {
     const project = getProject(this.opts.workspace.db, task.projectId);
+    if (task.kind === 'shot_review') return `AniRecast · ${project.name} · 分鏡判斷`;
     if (task.kind === 'cast_review' || !task.shotId) return `AniRecast · ${project.name} · 角色辨識`;
     return `AniRecast · ${project.name} · 分鏡 ${getShot(this.opts.workspace.db, task.shotId).orderIndex + 1}`;
   }
@@ -196,7 +197,12 @@ export class AgentDispatcher {
   private async threadFor(client: AppServerClient, task: AgentTask): Promise<string> {
     const db = this.opts.workspace.db;
     const root = this.opts.workspace.root;
-    const scope: ThreadScope = task.kind === 'cast_review' || !task.shotId ? 'project_cast' : 'shot';
+    const scope: ThreadScope =
+      task.kind === 'shot_review'
+        ? 'project_shots'
+        : task.kind === 'cast_review' || !task.shotId
+          ? 'project_cast'
+          : 'shot';
     const scopeId = scope === 'shot' ? (task.shotId as string) : task.projectId;
     const projectId = await this.resolveProjectId(client);
     const common = { cwd: root, approvalPolicy: 'never', sandbox: 'workspace-write' };
@@ -229,7 +235,21 @@ export class AgentDispatcher {
   /** Images worth showing Codex up front; it can open anything else from the paths in `tasks show`. */
   private images(task: AgentTask): string[] {
     const ws = this.opts.workspace;
-    const payload = task.payload as { targetType?: string; targetId?: string; contactSheets?: string[] };
+    const payload = task.payload as {
+      targetType?: string;
+      targetId?: string;
+      contactSheets?: string[];
+      unsure?: Array<{ sheet?: string | null }>;
+      merged?: Array<{ sheets?: Array<string | null> }>;
+    };
+    // Shot review: the cut sheets (already absolute), unsure ones first.
+    if (task.kind === 'shot_review') {
+      const sheets = [
+        ...(payload.unsure ?? []).map((u) => u.sheet),
+        ...(payload.merged ?? []).flatMap((m) => m.sheets ?? []),
+      ].filter((p): p is string => Boolean(p));
+      return sheets.slice(0, 8);
+    }
     const out: string[] = [];
     if (payload.contactSheets) out.push(...payload.contactSheets.map((p) => ws.abs(p)));
     if (task.shotId) {
@@ -258,7 +278,7 @@ export class AgentDispatcher {
 
   private instructions(task: AgentTask): string {
     return [
-      `AniRecast 任務 ${task.id}（${task.kind === 'cast_review' ? '同一人識別判斷' : '評審意見'}），已經替你領取。`,
+      `AniRecast 任務 ${task.id}（${task.kind === 'cast_review' ? '同一人識別判斷' : task.kind === 'shot_review' ? '分鏡切點判斷與最終檢查' : '評審意見'}），已經替你領取。`,
       `1. 先執行 \`anirecast tasks show ${task.id}\` 讀取完整內容（意見、目前版本、輸入檔路徑、建議步驟）。`,
       `2. 依 anirecast skill（${SKILL_PATH}）處理。只透過 anirecast CLI 操作，不要直接改 Workspace 裡的檔案；你沒有網路，模型呼叫由 AniRecast 服務代勞。用 --from 修正版本時會沿用原版本的檔位。`,
       `3. 完成時執行 \`anirecast tasks done ${task.id} --note "<一句話說明改了什麼>"${task.kind === 'review_feedback' ? ' --result <新版本 id>' : ''}\`。`,

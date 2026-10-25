@@ -6,8 +6,12 @@ import { DEFAULT_CONFIG, initWorkspace } from '@anirecast/core';
 import { afterEach } from 'vitest';
 import { type DaemonHandle, startDaemon } from '../src/index.ts';
 
-/** Tests never chain the slow identity pass or dispatch to Codex unless they ask for it. */
-export const TEST_CONFIG = { ...DEFAULT_CONFIG, pipeline: { autoAnalyze: false } };
+/** Tests never chain the slow identity pass, judge cuts or dispatch to Codex unless they ask for it. */
+export const TEST_CONFIG = {
+  ...DEFAULT_CONFIG,
+  pipeline: { autoAnalyze: false },
+  continuity: { ...DEFAULT_CONFIG.continuity, enabled: false },
+};
 
 const CLI = path.resolve(import.meta.dirname, '../../../packages/cli/src/main.ts');
 const cleanups: Array<() => Promise<void> | void> = [];
