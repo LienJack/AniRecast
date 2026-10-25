@@ -29,6 +29,7 @@ import {
   setOverlayRemoval,
   shotCast,
   splitCast,
+  splitShot,
   updateShot,
   updateSource,
   type Workspace,
@@ -121,6 +122,38 @@ describe('shot modes', () => {
     );
     expect(markShotGenerationStale(ws.db, shotId, 'mapping changed', 'user')).toBe(2);
     expect(markShotGenerationStale(ws.db, shotId, 'again', 'user')).toBe(0);
+    ws.close();
+  });
+
+  it('force-splits a generated shot: versions turn stale and late appearances follow the cut', () => {
+    const { ws, projectId, shotIds } = fixture();
+    const shotId = shotIds[0]!;
+    const girl = createCastMember(ws.db, { projectId, label: 'girl' }, 'daemon');
+    const early = createTracklet(ws.db, { shotId, castMemberId: girl.id });
+    const late = createTracklet(ws.db, { shotId, castMemberId: girl.id });
+    for (const [id, frame] of [
+      [early.id, 4],
+      [late.id, 18],
+    ] as const)
+      run(ws.db, `INSERT INTO detections (id, tracklet_id, frame) VALUES (:d, :id, :frame)`, {
+        d: `det_${id}`,
+        id,
+        frame,
+      });
+    mapCast(ws.db, girl.id, createPersona(ws, { name: 'P' }, 'user').id, 'user');
+    recomputeShotModes(ws.db, projectId);
+    run(
+      ws.db,
+      `INSERT INTO boards (id, shot_id, version, status, prompt, model, created_by, created_at) VALUES ('b1', :shotId, 1, 'approved', 'p', 'm', 'user', 1)`,
+      { shotId },
+    );
+    expect(() => splitShot(ws.db, shotId, 12, 'user')).toThrow(/already has generated versions/);
+    const [a, b] = splitShot(ws.db, shotId, 12, 'user', Date.now(), { force: true });
+    expect(getBoard(ws.db, 'b1').status).toBe('stale');
+    expect(shotCast(ws.db, a.id).map((e) => e.tracklet.id)).toEqual([early.id]);
+    expect(shotCast(ws.db, b.id).map((e) => e.tracklet.id)).toEqual([late.id]);
+    recomputeShotModes(ws.db, projectId);
+    expect(getShot(ws.db, b.id).mode).toBe('replace');
     ws.close();
   });
 

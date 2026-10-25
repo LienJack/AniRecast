@@ -18,6 +18,7 @@ import {
   listSources,
   mergeShots,
   projectOfShot,
+  recomputeShotModes,
   type ShotMode,
   setGenerationTier,
   splitShot,
@@ -243,11 +244,15 @@ export function registerMedia(program: Command): void {
   shots
     .command('split <shot>')
     .requiredOption('--at <frame>', 'first frame (clip numbering) of the new second shot')
+    .option('--force', 'split a shot that already has boards or takes (they turn stale)')
     .action(
-      command((id: string, opts: { at: string }) =>
+      command((id: string, opts: { at: string; force?: boolean }) =>
         withWorkspace(globals(), (ws) => {
-          const [a, b] = splitShot(ws.db, id, Number(opts.at), actorFromEnv());
+          const [a, b] = splitShot(ws.db, id, Number(opts.at), actorFromEnv(), Date.now(), {
+            force: opts.force === true,
+          });
           const project = projectOfShot(ws.db, a.id);
+          recomputeShotModes(ws.db, project.id);
           enqueueJob(ws.db, {
             type: 'shots.prepare',
             lane: 'media',

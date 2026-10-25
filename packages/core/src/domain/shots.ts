@@ -183,20 +183,47 @@ export function replaceShots(
   });
 }
 
+/**
+ * Splits a shot at `atFrame`. Appearances first seen at or after the cut move to the new second shot. A shot
+ * with generated versions splits only with `force`: its ready and approved boards and takes turn stale, since
+ * they were made for the old frame range.
+ */
 export function splitShot(
   db: Db,
   shotId: string,
   atFrame: number,
   actor: string,
   now: number = Date.now(),
+  opts: { force?: boolean } = {},
 ): [Shot, Shot] {
   return tx(db, () => {
     const shot = getShot(db, shotId);
     if (atFrame <= shot.startFrame || atFrame > shot.endFrame) {
       throw new AniError('usage', `Split frame must be in (${shot.startFrame}, ${shot.endFrame}]`);
     }
-    if (shotHasGeneration(db, shotId))
-      throw new AniError('conflict', 'Cannot split a shot that already has generated versions');
+    let staleVersions = 0;
+    if (shotHasGeneration(db, shotId)) {
+      if (!opts.force)
+        throw new AniError('conflict', 'Cannot split a shot that already has generated versions', {
+          hint: 'Use --force to split anyway; its boards and takes turn stale.',
+        });
+      const busy = one<{ n: number }>(
+        db,
+        `SELECT (SELECT COUNT(*) FROM boards WHERE shot_id = :id AND status IN ('queued', 'generating'))
+              + (SELECT COUNT(*) FROM takes WHERE shot_id = :id AND status IN ('queued', 'generating')) AS n`,
+        { id: shotId },
+      );
+      if ((busy?.n ?? 0) > 0)
+        throw new AniError('conflict', 'A board or take of this shot is still generating', {
+          hint: 'Wait for it or cancel its job first.',
+        });
+      for (const table of ['boards', 'takes'] as const)
+        staleVersions += run(
+          db,
+          `UPDATE ${table} SET status = 'stale' WHERE shot_id = :id AND status IN ('ready', 'approved')`,
+          { id: shotId },
+        ).changes;
+    }
     run(db, 'UPDATE shots SET end_frame = :end, rep_frame = :rep, updated_at = :now WHERE id = :id', {
       id: shotId,
       end: atFrame - 1,
@@ -205,6 +232,12 @@ export function splitShot(
     });
     run(db, 'DELETE FROM keyframes WHERE shot_id = :id', { id: shotId });
     const newIdValue = insertShot(db, shot.clipId, atFrame, shot.endFrame, shot.orderIndex + 1, now);
+    const movedTracklets = run(
+      db,
+      `UPDATE tracklets SET shot_id = :newId WHERE shot_id = :id
+         AND (SELECT MIN(frame) FROM detections d WHERE d.tracklet_id = tracklets.id) >= :atFrame`,
+      { id: shotId, newId: newIdValue, atFrame },
+    ).changes;
     renumber(db, shot.clipId);
     const clip = getClip(db, shot.clipId);
     assertCoverage(listShots(db, shot.clipId), clip.frameCount);
@@ -214,7 +247,7 @@ export function splitShot(
       entityType: 'shot',
       entityId: shotId,
       projectId: clip.projectId,
-      payload: { atFrame, newShotId: newIdValue },
+      payload: { atFrame, newShotId: newIdValue, movedTracklets, staleVersions },
     });
     return [getShot(db, shotId), getShot(db, newIdValue)];
   });

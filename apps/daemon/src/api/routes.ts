@@ -47,6 +47,7 @@ import {
   queueBoard,
   queueTake,
   readLock,
+  recomputeShotModes,
   rememberWorkspace,
   renameCast,
   requestCancel,
@@ -292,7 +293,11 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
   );
   app.post('/api/shots/:id/split', async (c) =>
     handle(c, async () => {
-      const [a, b] = splitShot(ws.db, c.req.param('id'), (await body<{ at: number }>(c)).at, USER);
+      const req = await body<{ at: number; force?: boolean }>(c);
+      const [a, b] = splitShot(ws.db, c.req.param('id'), req.at, USER, Date.now(), {
+        force: req.force === true,
+      });
+      recomputeShotModes(ws.db, projectOfShot(ws.db, a.id).id);
       enqueueJob(ws.db, {
         type: 'shots.prepare',
         lane: 'media',
