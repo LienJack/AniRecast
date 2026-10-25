@@ -1,6 +1,7 @@
 # AniRecast PRD：動漫 OP 角色替換系統
 
-- 狀態：草稿 v0.2，待你審閱（§11 還有 6 個問題待決定；Q5 已定案為自動派發）
+- 狀態：草稿 v0.3，待你審閱（§11 還有 5 個問題待決定；Q3、Q5 已定案）
+- 平台：macOS 先做（MVP）；Windows 列為 M7。Workspace 格式從第一天起就跨平台。
 - 日期：2026-10-24
 - 相關文件：[design.md](design.md)（技術設計）、[research/gemini-api-spike.md](research/gemini-api-spike.md)（模型實測）、[research/codex-dispatch-visibility.md](research/codex-dispatch-visibility.md)（Codex 派發實測）
 
@@ -86,11 +87,16 @@ flowchart LR
 - 另一台電腦打開匯出的 Workspace 後，可以繼續評審、生成、合成，不需要重新下載或重新生成。
 - API key 等密鑰**永遠不寫進 Workspace**，各台電腦自己設定。
 - 同一個 Workspace 同一時間只能被一個 AniRecast 開啟，以鎖檔防止兩台電腦同時寫入。
+- **Workspace 也是 Codex 的工作專案**：
+  - 建立 Workspace 時，系統在根目錄寫一份 `AGENTS.md`，告訴 Codex 如何用 `anirecast` 操作這個 Workspace。
+  - 每台電腦第一次使用時，要在 Codex 桌面端把 Workspace 資料夾加為專案（只需一次），系統會提示這一步。加入之後，你在桌面端跟 Codex 說「下載這個連結」就能直接操作，自動派發的 thread 也會出現在這個專案底下。
+- **檔名跨平台**（因為資料夾會在 Mac 和 Windows 之間搬）：Workspace 內系統產生的檔名與資料夾名一律使用 ASCII slug 或 ULID；避開 Windows 保留名稱（CON、NUL、COM1…），不以點或空白結尾，不會有只差大小寫的兩個名稱；不使用符號連結。中文名稱只存在資料庫裡。
 
 驗收：
 - [ ] 新建 → 加一部影片 → 建項目 → 關閉；把整個資料夾複製到另一個路徑（模擬另一台電腦）打開，所有項目、版本、評審記錄都在，播放和合成正常。
 - [ ] 打開一個缺少 manifest 或結構不符的資料夾時，系統拒絕並指出原因，不修改任何檔案。
 - [ ] Workspace 內搜不到 API key。
+- [ ] 在 Mac 建立的 Workspace 複製到 Windows（M7）後可以直接打開，不需要改名或修路徑。
 
 ### F2 萬能下載器（P0）
 
@@ -187,6 +193,8 @@ flowchart LR
 - **自動派發**：系統透過本機 Codex 的 app-server 介面，把任務交給 Codex，不需要你另外開 Codex 下指令。
   - 不用 `codex exec`：它產生的 session 不會出現在 Codex 桌面端的清單裡（實測）。
   - 每個分鏡對應一個 Codex thread，命名為「AniRecast · <項目> · <分鏡>」。同一分鏡的每一輪意見都接在同一個 thread 裡，你在 **Codex 桌面端**可以看到這個分鏡從頭到尾的處理過程，也可以接著跟 Codex 對話。
+  - thread 的工作目錄是 Workspace 根目錄，所以會出現在 F1 提到的 Workspace 專案底下。
+- **安全邊界**：派發出去的 Codex 在沙箱裡執行，關閉網路，只能寫 Workspace。所有模型呼叫和下載都由 AniRecast 系統執行，Codex 拿不到 API key，也無法自己打 API。
   - 一次只處理一筆任務，其餘排隊。
 - Codex 收到任務後：理解意見 → 修改提示詞或參考圖 → 透過 CLI 觸發重新生成 → 自己先看一遍結果 → 回報一句說明（例如「頭髮改成銀色，並加強逆光描述」）。這句說明顯示在 Web 的版本歷史上，並且**存在 Workspace 裡**，換電腦也看得到。
 - Codex 認為意見不明確時，把任務標為「需要你回覆」，在 Web 上提出問題。你回答之後，任務自動繼續。
@@ -239,7 +247,13 @@ flowchart LR
 ### F15 設定與環境檢查（P0）
 
 - 每台電腦各自的設定（API key、預設模型、併發數、Codex 自動派發開關）存在本機使用者設定目錄，不在 Workspace 裡。
-- `anirecast doctor` 檢查：Node、ffmpeg、Python 環境、yt-dlp、deno、API key 是否有效、模型是否可用。缺什麼就給出修正方式。
+- **AniRecast 服務開機自動啟動**：Mac 用 launchd，Windows 在 M7 處理。CLI 發現服務沒在跑時，直接回報「AniRecast 沒在執行」並說明怎麼啟動。CLI 不會自己在背景啟動服務：從 Codex 沙箱裡啟動的服務會被沙箱限制，連不到模型 API。
+- `anirecast doctor` 檢查以下項目，缺什麼就給出修正方式：
+  - Node、ffmpeg、Python 環境、yt-dlp、deno；
+  - API key 是否有效、模型是否可用；
+  - AniRecast 服務是否在執行；
+  - 找到哪個 codex、版本多少，並實際跑一輪探測、顯示錯誤原文；
+  - Workspace 根目錄有沒有 `AGENTS.md`；是否已加入 Codex 桌面端專案（盡力檢查，檢查不到時提示手動確認）。
 
 ## 7. 非功能需求
 
@@ -284,14 +298,13 @@ flowchart LR
 | M4 分鏡視頻 | Omni 編輯、對齊、評審、單鏡滑塊對比 | F9、F12（單鏡部分） |
 | M5 成片 | 合成、成片對比、對比影片匯出、Workspace 匯出 | F11、F12 |
 | M6 強化 | 圖上框選意見、人設表生成與畫風轉換、MCP 轉接層 | 依使用回饋排序 |
+| M7 Windows | 在 Windows 上安裝與執行：ffmpeg、Python、yt-dlp、deno 的安裝方式；服務開機啟動；桌面版內建 codex 的路徑；Windows 的 Codex 沙箱行為（SQLite 通訊是否仍可用）；`codex://` 連結能否打開；從 Mac 搬來的 Workspace 能否直接打開 | Mac 與 Windows 互相搬 Workspace 都能繼續工作 |
 
 ## 11. 需要你決定的問題
 
 1. **Q1「關鍵分鏡」的定義**：我理解成「有要替換角色的分鏡」，其餘沿用原片。還是你指的是「從所有分鏡裡挑幾個重點分鏡來做」？
 2. **Q2 人設來源**：素材庫只放動漫風格的人設，還是也要放真人照片，再由系統先轉成跟原片一致的畫風？Omni 對「可辨識的真人」有限制，如果要用真人照片，這一步幾乎是必要的。
-3. **Q3 其他電腦的作業系統（現在是關鍵問題）**：只有 Mac，還是也要支援 Windows？這會影響 ffmpeg、Python、yt-dlp 的安裝方式與路徑處理，也會影響 Codex 自動派發：
-   - 要用哪個路徑的 Codex：Windows 桌面版內建的 codex 路徑未知。
-   - 「在 Codex 打開」的連結在 Windows 上能不能用，也還沒驗證。
+3. ~~Q3 其他電腦的作業系統~~ **已定案（2026-10-24）**：Mac 和 Windows 都要。先做 Mac；Windows 列為 M7。Workspace 格式從第一天起就跨平台（見 F1）。
 4. **Q4 成片解析度**：Omni 原生輸出 720p，1080p 是官方放大。原片多半是 1080p，選 720p 時成片統一 720p；選 1080p 時換過的分鏡會比沒換的略軟。你要哪一種？
 5. ~~Q5 Codex 交接模式~~ **已定案（2026-10-24）**：MVP 就做自動派發，透過 Codex app-server，讓 session 出現在桌面端。手動模式保留作為備用。見 F10。
 6. **Q6 Workspace 預設位置**：例如 `~/AniRecast-Workspace/`。專案原始碼在 `~/Documents/lien/AniRecast/`，兩者會分開。

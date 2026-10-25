@@ -1,40 +1,52 @@
-# AniRecast 技術設計（草稿 v0.1）
+# AniRecast 技術設計（草稿 v0.3）
 
-搭配 [prd.md](prd.md) 閱讀。這份文件記錄「怎麼做」；需求、驗收標準和待決問題以 PRD 為準。
+搭配 [prd.md](prd.md) 閱讀。這份文件記錄「怎麼做」；需求、驗收標準和待決問題以 PRD 為準。平台：macOS 先做，Windows 在 M7；Workspace 格式從第一天起就跨平台。
 
 ## 1. 架構總覽
 
 ```mermaid
 flowchart TB
-  subgraph Clients
-    W[Web UI<br/>React SPA]
-    C[anirecast CLI<br/>給 Codex 和人用]
+  subgraph Sandbox[Codex 沙箱：關閉網路，只能寫 Workspace]
+    CX[Codex agent]
+    C[anirecast CLI<br/>在行程內使用 core]
   end
-  subgraph Daemon[AniRecast daemon（本機 Node 服務，只聽 127.0.0.1）]
-    API[HTTP API + SSE 事件流]
-    CORE[Core：領域邏輯 / 狀態機]
-    JOB[Job runner：SQLite 佇列]
+  subgraph Daemon[AniRecast daemon（launchd 常駐，在沙箱外）]
+    API[HTTP API + SSE<br/>只給 Web，只聽 127.0.0.1]
+    TAIL[events 追蹤器]
+    JOB[Job runner<br/>生成通道 / agent 通道]
     PROV[Provider 轉接層<br/>Gemini Interactions / Files API]
     MEDIA[Media：ffmpeg / ffprobe / sharp]
     PY[Python sidecar<br/>分鏡偵測]
     DL[yt-dlp + deno]
+    DISP[Codex 派發器<br/>codex app-server JSON-RPC stdio]
   end
-  WS[(Workspace 資料夾<br/>anirecast.db + 媒體檔)]
-  CFG[(~/.config/anirecast<br/>金鑰與本機設定)]
-  CX[Codex] -- shell --> C
-  W -- HTTP / SSE --> API
-  C -- HTTP --> API
-  API --> CORE --> JOB
+  W[Web UI<br/>React SPA] -- HTTP / SSE --> API
+  CX -- shell --> C
+  C -- SQLite 交易：狀態變更、排 job、寫 events --> WS
+  API -- core --> WS
+  WS[(Workspace 資料夾<br/>anirecast.db（WAL）+ 媒體檔 + AGENTS.md)]
+  TAIL -- 每 250ms 讀新 events --> WS
+  TAIL --> API
+  JOB -- 撈 queued job --> WS
   JOB --> PROV & MEDIA & PY & DL
-  CORE --> WS
-  PROV -.讀金鑰.-> CFG
-  JOB -- 自動派發：codex app-server（JSON-RPC stdio）--> CX
+  PROV -.讀金鑰.-> CFG[(~/.config/anirecast<br/>金鑰與本機設定)]
+  DISP -- thread/start、turn/start --> CX
 ```
 
 **原則**
 
-- **Daemon 是唯一的寫入者和唯一的 job runner。** Web 和 CLI 都是它的客戶端。CLI 呼叫時如果 daemon 沒有在跑，就自動在背景啟動。這樣可以避免兩個行程同時跑生成任務，Web 也能即時看到 Codex 觸發的變化。
-- **所有模型呼叫都由系統執行，不由 Codex 直接打 API。** 金鑰集中管理，成本帳本、重試、併發限制都在同一個地方；Web 不需要經過 Codex 也能直接按「重生」。Codex 的角色是理解意見、修改提示詞與參考、觸發任務、檢查結果。
+- **只有 `packages/core` 會直接碰資料庫。** CLI 和 daemon 都在自己的行程內呼叫 core，用短交易寫入；兩邊都設 `busy_timeout`。
+  - Schema 遷移只由 daemon 執行；CLI 發現 schema 版本不符時拒絕操作，並提示更新。
+  - CLI 不經過網路，也不經過 daemon。實測在 Codex 沙箱裡（關閉網路）連 localhost HTTP 或 Unix socket 都會失敗，寫 Workspace 裡的 SQLite 則可以（research/codex-dispatch-visibility.md）。
+- **Daemon 是唯一的 job runner，也是唯一會連網路的行程。** 模型呼叫、下載、上傳都只在 daemon 裡做。CLI 只負責排 job（`jobs` 表），用 `--wait` 時輪詢 job 狀態。
+  - 所以 Codex 在沙箱裡**實際上就無法**打 Gemini，金鑰集中管理也就真的被強制執行了。
+- **CLI 絕不自己啟動 daemon。**
+  - 原因：在沙箱裡啟動的 daemon 會繼承沙箱，連不到 Gemini。
+  - 做法：daemon 每 2 秒寫一次心跳。CLI 發現心跳過期時回傳錯誤 `daemon_not_running`，並附上啟動方式。CLI 可以用 `CODEX_SANDBOX` 環境變數判斷自己在不在沙箱裡。
+  - Mac 上由 `anirecast setup` 安裝 launchd LaunchAgent，登入後自動啟動、掛掉自動重啟。
+- **所有狀態變更都寫一筆 `events`**：與變更寫在同一個交易裡，不論是 CLI 還是 daemon 寫的。daemon 每 250ms 讀新的 events，推給 Web 的 SSE。這同時是稽核紀錄；CLI 的 `jobs watch` 也讀這張表。
+- **Codex 的工作目錄 = Workspace 根目錄。** 建立 Workspace 時寫入 `AGENTS.md`；每台電腦把 Workspace 加為 Codex 桌面端專案一次。這一步同時解決兩件事：手動模式下 CLI 有權限寫入，自動派發的 thread 也會出現在側邊欄。
+- **所有模型呼叫都由系統執行**：成本帳本、重試、併發限制都在同一個地方；Web 不需要經過 Codex 也能直接按「重生」。Codex 的角色是理解意見、修改提示詞與參考、排 job、檢查結果。
 - **Workspace 是唯一的資料真相。** Daemon 一次開一個 Workspace，切換時重新載入。
 
 ## 2. 技術棧
@@ -43,12 +55,13 @@ flowchart TB
 | --- | --- | --- |
 | 語言／執行環境 | TypeScript、Node.js ≥ 24 LTS（本機目前是 26） | 你偏好 Node/TS；daemon、CLI、Web 共用型別 |
 | Monorepo | pnpm workspaces | 本機已有 pnpm 11 |
-| HTTP 服務 | Hono + `@hono/node-server`，用 zod 驗證，SSE 推事件 | 輕、型別好，請求與回應 schema 可以和 CLI 共用 |
-| 資料庫 | SQLite（WAL）+ `better-sqlite3` + Drizzle ORM / drizzle-kit 遷移 | 本機單檔，可以跟著 Workspace 搬走；Drizzle 有型別安全的遷移 |
-| 背景任務 | 自製 SQLite job 表 + daemon 內 worker（依資源設併發上限） | 不需要 Redis 等外部服務；daemon 重啟後任務還在 |
+| HTTP 服務（只給 Web） | Hono + `@hono/node-server`，用 zod 驗證，SSE 推事件 | 輕、型別好；請求與回應 schema 和 core 共用 |
+| 資料庫 | SQLite（WAL）+ Drizzle ORM / drizzle-kit 遷移。Driver 在 M1 決定：`better-sqlite3`（成熟，但需要原生模組），或 Node 內建的 `node:sqlite`（實測可用，Windows 不用編譯；Drizzle 0.45 沒有官方 driver，要接 sqlite-proxy） | 本機單檔，可以跟著 Workspace 搬走；CLI 和 daemon 兩個行程同時存取，WAL 支援 |
+| 背景任務 | 自製 SQLite `jobs` 表 + daemon 內 worker，分通道：生成通道（Gemini 依模型限流）、媒體通道（ffmpeg）、agent 通道（Codex 一次一輪） | 不需要 Redis；daemon 重啟後任務還在。分通道是為了避免死鎖：agent 那一輪會用 `--wait` 等生成 job 完成，兩者不能共用同一個併發名額 |
+| 服務常駐 | macOS：launchd LaunchAgent（`setup` 安裝，KeepAlive）；Windows：M7 | daemon 必須在沙箱外、開機就在 |
 | Web | React 19 + Vite + TanStack Router + TanStack Query + shadcn/ui（Radix + Tailwind CSS v4）+ lucide 圖示；本機 UI 狀態用 Zustand | 目前 React 生態的主流組合；這是本機 SPA，不需要 Next.js 的伺服器端功能 |
 | 影片播放／時間軸 | 原生 `<video>` + `requestVideoFrameCallback` 自製逐幀控制和時間軸；對比用 canvas（見 §7.6）；P1 圖上框選用 Konva | 需要逐幀精度，現成播放器很難做到 |
-| CLI | `commander` + 共用的 zod schema；stdout 輸出 JSON | 和 `rvfx`、`plate` 的 CLI 慣例一致 |
+| CLI | `commander` + 在行程內使用 `packages/core`（直接讀寫 Workspace 的 SQLite，不經網路）；stdout 輸出 JSON | 在 Codex 沙箱關閉網路時也能用；和 `rvfx`、`plate` 的 CLI 慣例一致 |
 | 媒體處理 | 系統的 ffmpeg/ffprobe（本機 9.0.2）；圖片縮圖用 `sharp` | ffmpeg 是逐幀裁切、轉碼、合成的唯一可靠選擇 |
 | 分鏡偵測 | Python sidecar（uv 管理）：PySceneDetect `AdaptiveDetector`；P1 加 TransNetV2 | 偵測的成熟函式庫在 Python 生態；sidecar 用 JSON 進出，換演算法不影響 TS 端 |
 | 下載 | yt-dlp（`uv tool` 安裝）+ deno（YouTube 的 JS 驗證需要） | 支援網站最多；由 `doctor` 管理版本 |
@@ -76,14 +89,22 @@ AniRecast/
 └── AGENTS.md
 ```
 
-安裝：從主 checkout 執行 `pnpm install && pnpm anirecast setup`。`setup` 會建 Python 環境、檢查 ffmpeg、yt-dlp 和 deno、把 CLI 連到 `~/.local/bin/anirecast`、把 skill 連到 `~/.codex/skills/anirecast`。之後直接用 `anirecast doctor` 檢查。
+安裝（macOS）：從主 checkout 執行 `pnpm install && pnpm anirecast setup`。`setup` 會：
+
+- 建 Python 環境；
+- 檢查 ffmpeg（Homebrew）、yt-dlp（`uv tool`）和 deno；
+- 把 CLI 連到 `~/.local/bin/anirecast`、把 skill 連到 `~/.codex/skills/anirecast`；
+- 安裝並載入 launchd LaunchAgent（`~/Library/LaunchAgents/`，日誌寫到 `~/Library/Logs/AniRecast/`）。
+
+之後直接用 `anirecast doctor` 檢查。Windows 的安裝方式在 M7 定。
 
 ## 4. Workspace 資料夾規範
 
 ```text
 <任意名稱>/                         # 例如 ~/AniRecast-Workspace
 ├── anirecast.workspace.json        # manifest：格式版本、workspaceId、建立時間、最低系統版本
-├── anirecast.db                    # SQLite，所有索引與狀態（路徑一律相對 Workspace 根目錄）
+├── anirecast.db                    # SQLite（WAL），所有索引與狀態（路徑一律相對 Workspace 根目錄）
+├── AGENTS.md                       # 給 Codex：用 anirecast CLI 操作、評審規則、禁止直接改媒體檔（系統產生，可更新）
 ├── library/
 │   └── personas/<persona-slug>/
 │       ├── persona.json            # 名稱、描述、標籤（DB 的鏡像，可讀、可重建）
@@ -112,7 +133,13 @@ AniRecast/
 規則：
 
 - **Manifest 是「這是 AniRecast Workspace」的唯一判斷依據。** 打開時驗證 manifest 與 `anirecast.db` 的 schema 版本：舊版本先備份成 `anirecast.db.bak-<ts>` 再遷移；版本比系統新則拒絕開啟。
-- **所有 DB 路徑都相對於 Workspace 根目錄**；資料夾名稱用 slug 或 ULID，避免中文和空白造成跨平台問題，顯示名稱存在 DB。
+- **所有 DB 路徑都相對於 Workspace 根目錄，一律用 `/` 分隔**。
+- **檔名跨平台規則**：Mac 和 Windows 之間會互搬，所以從第一天起就執行，core 寫檔前統一檢查。
+  - 系統產生的名稱只用小寫 ASCII slug 或 ULID，中文和其他顯示名稱存在 DB；
+  - 避開 Windows 保留名稱（CON、PRN、AUX、NUL、COM1–9、LPT1–9），不以 `.` 或空白結尾，不使用 `<>:"\|?*`；
+  - 同一資料夾內不會有只差大小寫的兩個名稱；
+  - 不使用符號連結，也不依賴 macOS 擴充屬性；
+  - 單一路徑控制在 200 字元以內。
 - **Provenance JSON 一旦寫入就不再修改**（版本只增不改）。DB 損毀時可以用 `anirecast workspace reindex` 從這些 JSON 重建大部分索引。
 - **鎖檔** `.anirecast.lock`（記錄主機名稱、pid、時間）：發現另一台主機的鎖時唯讀開啟，並提示對方先關閉。
 - **匯出**：`anirecast workspace export --to <dir|zip>` 先用 `VACUUM INTO` 產生一致的 DB 快照，再複製檔案、排除 `cache/`。直接複製資料夾也可以，但必須先在 AniRecast 裡關閉 Workspace（會做 WAL checkpoint）。
@@ -137,7 +164,9 @@ AniRecast/
 | `agent_tasks` | id、review_id、shot_id、status（open／claimed／done／needs_user／cancelled）、claimed_by、result_note、result_target_id、agent_final_message |
 | `codex_threads` | shot_id、machine_id、thread_id、created_at（thread 只在該台電腦有效） |
 | `codex_usage` | task_id、machine_id、thread_id、tokens_json、at |
-| `jobs` | id、type、payload_json、status、progress、error、attempts、cost_estimate、cost_actual、timestamps |
+| `jobs` | id、type、lane（generate／media／agent）、payload_json、status、progress、error、attempts、cost_estimate、cost_actual、requested_by（user／codex:<thread_id>／system）、timestamps |
+| `events` | seq（自增）、at、actor、kind、entity_type、entity_id、payload_json。與狀態變更寫在同一個交易，daemon 追蹤後推給 SSE |
+| `daemon_heartbeat` | machine_id、pid、version、at（每 2 秒更新；CLI 據此判斷 daemon 是否在跑） |
 | `renders` | id、project_id、version、kind（draft／final）、path、compare_path、shots_snapshot_json |
 | `cost_ledger` | id、job_id、model、usage_json、usd、at |
 
@@ -242,12 +271,13 @@ anirecast cost <p> [--shot <id>]
 
 **自動派發（MVP 預設）**：daemon 監聽新的 `agent_tasks`，透過 `codex app-server` 交給 Codex。
 
-1. **找 codex 執行檔**：依序看設定檔指定的路徑 → 桌面版內建的 codex（macOS：`/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`；Windows 待 Q3）→ PATH，取版本最新的那個。
+1. **找 codex 執行檔**：依序看設定檔指定的路徑 → 桌面版內建的 codex（macOS：`/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`；Windows 在 M7 確認）→ PATH，取版本最新的那個。
    - 實測 PATH 上的 0.156 會因為 `config.toml` 的模型被拒絕，所以不能直接用 PATH。
    - `doctor` 和設定頁會用選到的執行檔真的跑一輪探測，把錯誤原文顯示出來。
 2. **啟動**：daemon 常駐一個 `codex app-server` 子程序（`initialize` 時 `clientInfo.name = "anirecast"`）；程序掛掉就重啟。
 3. **一個分鏡對應一個 thread**：資料表 `codex_threads(shot_id, machine_id, thread_id, created_at)`。
    - 這台電腦沒有該分鏡的 thread 時：`thread/start`（cwd 是 Workspace 根目錄、`sandbox: workspace-write`、`approvalPolicy: never`），再用 `thread/name/set` 命名為「AniRecast · <項目> · <分鏡序號>」。
+   - 每一輪的 `turn/start` 都明確帶上 `sandboxPolicy: { type: workspaceWrite, networkAccess: false, writableRoots: [<Workspace 根目錄>] }`。Codex 只能寫 Workspace、不能連網，靠 CLI 寫 SQLite 和 daemon 溝通（已實測可行）。
    - 已經有 thread 時：`thread/resume`。
    - 換到另一台電腦時（`machine_id` 不同）一律開新 thread。第一則訊息附上從 DB 整理的「前幾輪意見與處理摘要」。
 4. **一輪處理**：`turn/start` 的輸入包含：
@@ -258,11 +288,20 @@ anirecast cost <p> [--shot <id>]
    - `item/*` 事件（包括 `item/agentMessage/delta`）透過 SSE 轉給 Web 即時顯示。
    - `thread/tokenUsage/updated` 寫進 Codex 用量帳本；`account/rateLimits/updated` 用來判斷額度、必要時暫停派發。
    - 一輪結束時，把 Codex 的最後訊息和 `tasks done --note` 的說明存進 DB。**Codex thread 只是「這台電腦上的檢視」，Workspace 裡的紀錄才是真相。**
-6. **併發**：一次只跑一輪；同一分鏡處理中時，新的意見排在後面。
+6. **併發**：agent 通道一次只跑一輪；同一分鏡處理中時，新的意見排在後面。
+   - agent 通道與生成通道分開：Codex 那一輪會執行 `board generate --wait` 等生成完成，兩者共用名額會互相卡死。
+   - CLI 從環境變數 `CODEX_THREAD_ID` 取得 thread id，記進 `jobs.requested_by` 和版本的 `created_by`，Web 就能從版本連回 Codex thread。
 7. **「在 Codex 打開」**：連結是 `codex://threads/<thread_id>`。這是從桌面版 app bundle 找到的路由，官方沒有文件，目前只在 macOS 桌面版 26.1013 確認存在。連結打不開時，改為提供可複製的 thread id 和 `codex resume <id>` 指令。
 8. **處理中**：Web 顯示鎖定提示，提醒不要在桌面端對同一個 thread 發訊息，避免兩個程序同時寫入。
 
-**手動模式（備用）**：在任何 Codex 對話中說「處理評審」，Codex 依 skill 用 `anirecast tasks next --claim` 處理。設定裡可以暫停自動派發。
+**手動模式（備用）**：在 Codex 桌面端打開 **Workspace 專案**，說「處理評審」，Codex 依照 Workspace 的 `AGENTS.md` 和 skill，用 `anirecast tasks next --claim` 處理。設定裡可以暫停自動派發。
+- 必須在 Workspace 專案裡操作：如果在 repo 專案裡開對話，Workspace 不在可寫範圍內（除非該 thread 關閉沙箱），CLI 會寫不進 DB。CLI 遇到這種情況要回報明確的錯誤。
+
+**每台電腦一次性設定**：在 Codex 桌面端把 Workspace 資料夾加為專案。
+
+- 理由：桌面端的專案存在內部資料庫，app-server 沒有新增專案的 API，所以只能由你手動加入。
+- 效果：派發出去的 thread 會出現在這個專案底下，手動模式也有寫入權限。
+- `doctor` 以唯讀方式盡力檢查（讀桌面端的內部資料，格式可能變動）；檢查不到時就提示你手動確認。
 
 ## 9. Web 頁面
 
@@ -295,3 +334,12 @@ anirecast cost <p> [--shot <id>]
 - 視覺模型的位置框精度是否足以支撐「多人同框只換一人」。
 - 每次請求可以放幾張參考圖、參考圖順序與 `<IMAGE_REF_n>` 的對應關係。
 - PySceneDetect 對閃白和快速剪輯的漏判率；是否需要 M1 就加入 TransNetV2。
+
+## 12. 留給 M7（Windows）確認的技術點
+
+- Windows 桌面版內建 codex 的路徑與版本取得方式。
+- Windows 上 Codex 沙箱的行為：關閉網路時，CLI 能不能寫 Workspace 的 SQLite（Mac 已實測可行）。
+- `codex://threads/<id>` 連結：Mac 版的程式在 `win32` 平台會跳過 `setAsDefaultProtocolClient`，可能改由安裝程式註冊，需要實測。
+- 服務常駐方式：工作排程器、啟動資料夾，或 Windows 服務。
+- ffmpeg、deno、uv、yt-dlp 用 winget 安裝；SQLite driver 的原生模組要不要在 Windows 上編譯（若 M1 選 `node:sqlite` 就不用）。
+- 從 Mac 搬來的 Workspace 直接打開（路徑分隔、大小寫、保留名稱等規則已在 §4 從第一天起執行）。

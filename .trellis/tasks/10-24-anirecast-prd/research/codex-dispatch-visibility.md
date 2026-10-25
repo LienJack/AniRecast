@@ -36,6 +36,24 @@
 3. **`codex://threads/<id>` 深層連結**是從 app bundle 找到的，官方沒有文件；只在 macOS 桌面版 26.1013 確認存在。Bundle 裡在 `win32` 平台會跳過 `setAsDefaultProtocolClient`，Windows 可能改由安裝程式註冊，**未驗證**。
 4. **Thread 只存在各台電腦自己的 `~/.codex`。** A 電腦的 thread id 在 B 電腦不存在。所以 AniRecast 必須自己保存 Codex 的回報（最後訊息、改動摘要），Codex thread 只是「這台電腦上的檢視」。
 
+## 沙箱與 CLI 通訊（Mac，Codex 0.163 seatbelt 沙箱）
+
+每一輪對話都透過 app-server 執行：`approvalPolicy: never`、`sandboxPolicy.type = workspaceWrite`、`writableRoots = [cwd]`。測試結束後，測試 thread 都已刪除。
+
+| 連線方式 | network off | network on |
+| --- | --- | --- |
+| HTTP 連 `127.0.0.1:<port>` | **失敗**（curl exit 7，伺服器收不到請求） | 成功 |
+| HTTP over Unix socket（socket 在可寫目錄內，或在 `~/.config`） | **失敗**（兩種位置都是 exit 7） | 未測 |
+| 沙箱內的 Node 程序寫入可寫目錄裡的 SQLite（WAL），沙箱外的程序同時開著這個 DB | **成功**，外部程序立刻讀到新的那筆資料 | — |
+
+- 結論：**CLI 不走網路，直接讀寫 Workspace 裡的 SQLite**，就能在最嚴格的沙箱（network off、never approve）下運作。前提是 Workspace 在 Codex 的可寫範圍內，也就是 thread 的工作目錄等於 Workspace 根目錄。
+- 沙箱內可以看到的環境變數有 `CODEX_SANDBOX=seatbelt`、`CODEX_SANDBOX_NETWORK_DISABLED=1`、`CODEX_THREAD_ID`、`CODEX_SESSION_ID`、`CODEX_VERSION`。
+  - CLI 可以據此判斷自己在沙箱內，不要在沙箱裡啟動 daemon：沙箱裡啟動的 daemon 會繼承沙箱，連不到 Gemini。
+  - CLI 也可以把 `CODEX_THREAD_ID` 記進版本的 `created_by`。
+- 你的桌面端 thread 實際用的設定：81 個裡有 75 個是 `sandbox: disabled` + `approval: never`，5 個是 managed restricted + never，1 個是 managed restricted + on-request。所以**在你這台電腦上，手動模式本來就不會被擋**。改用 SQLite 是為了換電腦、限制較嚴的設定，以及刻意保持沙箱的自動派發都能穩定運作，不是只為了繞過這台電腦的設定。
+- 桌面端的專案記錄在 `~/.codex/state_5.sqlite` 的 `projects` / `project_roots`（內部格式），app-server 沒有新增專案的 API。目前 AniRecast 的路徑不在任何專案底下。推測桌面端只在側邊欄顯示工作目錄落在已知專案底下的 thread，**這點待你確認**。
+- Drizzle 0.45.4 沒有 `node:sqlite` driver（有 better-sqlite3 和 sqlite-proxy）。實測用的是 Node 內建的 `node:sqlite`。
+
 ## 測試 thread
 
 - `01a171cb-6289-79f3-beab-28c95832600d`，名稱「AniRecast 自動派發測試（可刪除）」，cwd 是 AniRecast repo。保留到你在桌面端確認看得到為止，之後刪除。
