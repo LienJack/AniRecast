@@ -89,7 +89,7 @@
   - Workspace `AGENTS.md`；`skills/anirecast/SKILL.md`。
 - 驗證：用假的 app-server 做單元測試；手動整合腳本跑一次真 Codex（耗用 Codex 額度），確認 thread 出現在桌面端的 Workspace 專案底下。
 
-### S9 Web — done:
+### S9 Web — done: 0d217da（API）、45e9fc7（UI）
 - 產出（Vite、React 19、TanStack Router 與 Query、shadcn/ui、Tailwind v4）：
   - Workspace 選擇、下載合集、項目總覽；
   - 原片與節選播放器（逐幀、入點與出點）、分鏡格狀列表；
@@ -97,6 +97,7 @@
   - 評審台（vstack 加 canvas 滑塊、版本歷史、Codex 說明與「在 Codex 打開」）；
   - 成片頁、任務中心；以 SSE 即時更新。
 - 驗證：Vitest 元件測試；Playwright 測主要流程（fake provider）；用瀏覽器實際操作一遍並截圖。
+- 實際完成：daemon API 有測試（apps/daemon/test/api.test.ts）；UI 在 headless Chrome 實際操作並截圖（總覽、評審台、角色表，console 沒有錯誤、圖片都載入）。**Vitest 元件測試和 Playwright 還沒做**，留作後續。
 
 ### S10 分析：字幕、描述、同一人識別 — done: 9233d50（真實 Flash 分析在 S11 驗證）
 - 產出：
@@ -106,7 +107,7 @@
   - 人工鎖定作為硬約束。
 - 驗證：單元測試涵蓋同框互斥、鎖定決定不被推翻；用 fixture 量測準確度。
 
-### S11 Fixture 與真實接口端到端（付費，記帳）— done: (S11 commit；結果見 research/s11-real-run.md，花費 USD 2.82)
+### S11 Fixture 與真實接口端到端（付費，記帳）— done: 9f3cbcd（結果見 research/s11-real-run.md，花費 USD 2.82）
 - 產出：
   - 測試人設 2–3 個（Nano Banana）；
   - 自製測試 OP：
@@ -115,12 +116,13 @@
   - 用真實 Gemini 跑完整流程一次；比較 1080p 做法；自動派發 Codex 一次。
 - 驗證：成片、對比影片、同一人識別準確度；花費寫進帳本。預估 USD 10–15。
 
-### S12 安裝、doctor、文件 — done:
+### S12 安裝、doctor、文件 — done: f159195、6244554，README 隨本次進度更新一起提交
 - 產出：
   - `anirecast setup`：Python 環境、CLI 連結、skill 連結、launchd LaunchAgent（安裝時會告知你）；
   - `doctor` 補齊所有檢查；
   - README。
 - 驗證：在乾淨的 `./workspaces/` 從頭跑一次 doctor 和 setup。
+- 實際完成：先跑 `setup --dry-run`，再在這台 Mac 上實際安裝到 mediaHub（launchd `dev.anirecast.daemon`、鑰匙圈 key、`~/.local/bin/anirecast`、`~/.codex/skills/anirecast`、Codex 專案 mediaHub）。`doctor` 15 項全部 OK。README 的開發用 daemon 步驟（workspace init → fake daemon → health／index）也在全新的暫存目錄實際跑過一次。
 
 ## 委派
 
