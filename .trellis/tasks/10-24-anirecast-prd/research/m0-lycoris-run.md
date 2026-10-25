@@ -66,6 +66,12 @@
 
 「用分鏡圖做靜態鏡頭」已實作（90a0c3b）：`anirecast take still <project> <shot...>` 或評審台上的按鈕。這是那 17 個被擋鏡頭的選項 2，不呼叫模型、不收費。要不要用、用在哪些鏡頭，由使用者決定，還沒套用到任何鏡頭。
 
+## 安全擋下的真正原因、fal 與切點判斷（2026-10-25 下午）
+
+- fal 的 Omni `edit` 會回傳 Google 原本的拒絕理由：「The output contains sexual content」。Google 直連只顯示 harmful content；連在 Google 直連通過的 #8 也被擋。被擋的是輸出結果：拿 DeepSeek（露肩、強調胸型的設計）替換穿制服的少女。這解釋了為什麼 DeepSeek 的分鏡被擋得比 Claude 多。建議做一版「影片用」DeepSeek（遮肩、寬鬆），等使用者決定。
+- fal Omni `reference-to-video` 是重新生成，不是編輯：視角和動作都變了（#8 的牆變成正面），不能拿來逐幀替換。fal Omni `edit` 保留原片，但不能放參考圖。Seedance 2.5 的 editing 每段至少 4 秒、約 USD 1 起。所以 fal 只當備援，主要路線仍是 Google Omni 直連。
+- 切點判斷（JEV）：73 個切點都判斷過，建議合併 10 組，包含使用者指出的 11–13、14–16。檢查切點圖後確認：咖啡廳 23–38 其實是一段連續運鏡，被分鏡偵測切得太細。這幾組都已經有生成版本，所以只給建議，等使用者確認再用 `shots merge --force` 合併。
+
 ## 暫存檔
 
 `~/.cache/ranolabs/sessions/2026-10-25-nas-anime-recast/`：只留評審拼圖（boards_sheet.py、takes_sheet.py），以及探測和比對用的 omni_probe.ts、plan_diff.ts。重試腳本已被系統的保護取代，刪除；原片和參考圖副本都已在 workspace 裡，也已刪除。NAS 已卸載。M0 跑完 final 合成後，整個資料夾刪除。
