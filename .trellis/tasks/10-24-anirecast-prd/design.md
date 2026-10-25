@@ -157,7 +157,7 @@ AniRecast/
 | `text_overlays` | id、shot_id、keyframe_id、bbox、text、category（`staff_credit`／`title_or_other`／`in_scene`）、remove（依類別預設，可以逐筆修改） |
 | `keyframes` | id、shot_id、frame、role、path |
 | `cast_members` | id、project_id、label、description、thumb_path、persona_id（null = 不替換）、status（active／not_a_character） |
-| `looks` | id、cast_member_id、label、description、representative_tracklet_id、look_policy（`follow_source` 跟原片造型／`persona` 用人設造型；預設值依 Q8） |
+| `looks` | id、cast_member_id、label、description、representative_tracklet_id、look_policy（`persona` 穿人設的衣服、留人設的髮型，為預設，Q8 已定案／`follow_source` 只換臉和特徵，保留原片服裝與髮型） |
 | `tracklets` | id、shot_id、cast_member_id、look_id、identity_vec（頭部 CCIP 合成向量）、appearance_vec（全身）、confidence、assigned_by（auto／codex／user） |
 | `detections` | id、tracklet_id、keyframe_id、head_bbox、body_bbox、attrs_json（Flash 外觀描述）、head_crop_path、body_crop_path |
 | `cast_decisions` | id、kind（must_link／cannot_link／assign／not_a_character）、tracklet_a、tracklet_b 或 cast_member_id、source（codex／user）、locked、reason、confidence、at |
@@ -272,8 +272,8 @@ Codex 用 CLI 做決定：`anirecast cast merge|split|assign --reason "…" --co
 - 提示詞模板：「Image 1 是原分鏡；Image N 是角色 X 的參考。把 <位置／外觀描述> 的人換成 X，其他保持不變：構圖、姿勢、光線、背景、畫風」，再加上你和 Codex 的修改意見。
 - 有要去掉的疊加字幕時，加上：「去掉位於 <bbox> 的疊加文字（<文字內容>），補上原本被遮住的背景；場景裡的文字保持不變」。
 - 依該出場片段所屬造型的 `look_policy` 調整提示詞：
-  - `follow_source`：「只換人物身份（臉、髮色、眼睛、特徵），服裝與髮型保持 Image 1 的樣子」；
-  - `persona`：「服裝與髮型用參考圖的樣子」。
+  - `persona`（預設）：「服裝與髮型用參考圖的樣子」。人設圖要有清楚的全身服裝，每次請求都附上全身主圖，讓所有分鏡的服裝一致。
+  - `follow_source`：「只換人物身份（臉、髮色、眼睛、特徵），服裝與髮型保持 Image 1 的樣子」。
 - 只有 `replace` 分鏡生成分鏡圖。
 - 預設輸出 16:9、2K。
 - 你要求修改時，Codex 可以選擇用 `previous_interaction_id` 做多輪修改（便宜、穩定），或從頭生成。兩種方式都會在 provenance 裡留下可以完整重放的輸入。
