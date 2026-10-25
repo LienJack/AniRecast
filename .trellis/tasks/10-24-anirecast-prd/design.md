@@ -28,7 +28,7 @@ flowchart TB
   JOB --> PROV & MEDIA & PY & DL
   CORE --> WS
   PROV -.讀金鑰.-> CFG
-  JOB -. 自動派發（可選）.-> CX
+  JOB -- 自動派發：codex app-server（JSON-RPC stdio）--> CX
 ```
 
 **原則**
@@ -53,6 +53,7 @@ flowchart TB
 | 分鏡偵測 | Python sidecar（uv 管理）：PySceneDetect `AdaptiveDetector`；P1 加 TransNetV2 | 偵測的成熟函式庫在 Python 生態；sidecar 用 JSON 進出，換演算法不影響 TS 端 |
 | 下載 | yt-dlp（`uv tool` 安裝）+ deno（YouTube 的 JS 驗證需要） | 支援網站最多；由 `doctor` 管理版本 |
 | 模型 SDK | `@google/genai`（Interactions API、Files API），包在 Provider 介面後面 | 實測過的路徑；之後換模型或換供應商只需要改轉接層 |
+| Codex 派發 | 直接以 JSON-RPC 透過 stdio 驅動 `codex app-server`（約 40 行，已實測），不用 `codex exec`，也不用沒驗證過 thread 來源標記的包裝 SDK | 只有 app-server 建立的 thread 會被標成互動型、出現在桌面端；見 research/codex-dispatch-visibility.md |
 | 視覺分析 | Gemini Flash 系列（M0 時選定並固定一個版本，例如 `gemini-3.8-flash`），設定檔可以改 | 角色偵測、位置框、分鏡描述 |
 | 測試 | Vitest（單元／整合）、Playwright（Web 端到端） | |
 
@@ -133,7 +134,9 @@ AniRecast/
 | `boards` | id、shot_id、version、status、path、prompt、model、params_json、inputs_json（路徑 + sha256）、parent_id、remote_json、cost_usd、created_by |
 | `takes` | 同 boards，另加 board_id、segment_index、frames_in、frames_out、conform_json |
 | `reviews` | id、target_type（board／take／render）、target_id、verdict（approve／changes／regenerate／keep_original）、comment、annotations_json |
-| `agent_tasks` | id、review_id、shot_id、status（open／claimed／done／needs_user／cancelled）、claimed_by、result_note、result_target_id |
+| `agent_tasks` | id、review_id、shot_id、status（open／claimed／done／needs_user／cancelled）、claimed_by、result_note、result_target_id、agent_final_message |
+| `codex_threads` | shot_id、machine_id、thread_id、created_at（thread 只在該台電腦有效） |
+| `codex_usage` | task_id、machine_id、thread_id、tokens_json、at |
 | `jobs` | id、type、payload_json、status、progress、error、attempts、cost_estimate、cost_actual、timestamps |
 | `renders` | id、project_id、version、kind（draft／final）、path、compare_path、shots_snapshot_json |
 | `cost_ledger` | id、job_id、model、usage_json、usd、at |
@@ -236,10 +239,30 @@ anirecast cost <p> [--shot <id>]
 - 邊界：不能代替你按「通過」；成本超過預算時停下來問；被內容過濾擋下時最多改寫 2 次，仍然失敗就用 `tasks ask` 回報。
 
 ### 8.4 交接模式
-- **拉取（MVP）**：如上，由你在 Codex 對話中觸發。
-- **自動派發（M6，設定開關）**：daemon 監聽新的 `agent_tasks`，執行
-  `codex exec --cd <AniRecast repo> --sandbox workspace-write -i <原代表幀> -i <目前版本> "使用 anirecast skill 處理任務 <id>"`。
-  同一時間只跑一個；stdout 寫進任務記錄，Web 即時顯示。
+
+**自動派發（MVP 預設）**：daemon 監聽新的 `agent_tasks`，透過 `codex app-server` 交給 Codex。
+
+1. **找 codex 執行檔**：依序看設定檔指定的路徑 → 桌面版內建的 codex（macOS：`/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`；Windows 待 Q3）→ PATH，取版本最新的那個。
+   - 實測 PATH 上的 0.156 會因為 `config.toml` 的模型被拒絕，所以不能直接用 PATH。
+   - `doctor` 和設定頁會用選到的執行檔真的跑一輪探測，把錯誤原文顯示出來。
+2. **啟動**：daemon 常駐一個 `codex app-server` 子程序（`initialize` 時 `clientInfo.name = "anirecast"`）；程序掛掉就重啟。
+3. **一個分鏡對應一個 thread**：資料表 `codex_threads(shot_id, machine_id, thread_id, created_at)`。
+   - 這台電腦沒有該分鏡的 thread 時：`thread/start`（cwd 是 Workspace 根目錄、`sandbox: workspace-write`、`approvalPolicy: never`），再用 `thread/name/set` 命名為「AniRecast · <項目> · <分鏡序號>」。
+   - 已經有 thread 時：`thread/resume`。
+   - 換到另一台電腦時（`machine_id` 不同）一律開新 thread。第一則訊息附上從 DB 整理的「前幾輪意見與處理摘要」。
+4. **一輪處理**：`turn/start` 的輸入包含：
+   - `skill`：指向 repo 內 `skills/anirecast` 的路徑。明確指定，不依賴每台電腦都裝好 skill。
+   - `localImage`：原代表幀、目前版本，以及你框選的區域截圖。
+   - `text`：任務 id、分鏡資訊、你的意見。
+5. **進度與紀錄**：
+   - `item/*` 事件（包括 `item/agentMessage/delta`）透過 SSE 轉給 Web 即時顯示。
+   - `thread/tokenUsage/updated` 寫進 Codex 用量帳本；`account/rateLimits/updated` 用來判斷額度、必要時暫停派發。
+   - 一輪結束時，把 Codex 的最後訊息和 `tasks done --note` 的說明存進 DB。**Codex thread 只是「這台電腦上的檢視」，Workspace 裡的紀錄才是真相。**
+6. **併發**：一次只跑一輪；同一分鏡處理中時，新的意見排在後面。
+7. **「在 Codex 打開」**：連結是 `codex://threads/<thread_id>`。這是從桌面版 app bundle 找到的路由，官方沒有文件，目前只在 macOS 桌面版 26.1013 確認存在。連結打不開時，改為提供可複製的 thread id 和 `codex resume <id>` 指令。
+8. **處理中**：Web 顯示鎖定提示，提醒不要在桌面端對同一個 thread 發訊息，避免兩個程序同時寫入。
+
+**手動模式（備用）**：在任何 Codex 對話中說「處理評審」，Codex 依 skill 用 `anirecast tasks next --claim` 處理。設定裡可以暫停自動派發。
 
 ## 9. Web 頁面
 
@@ -258,7 +281,10 @@ anirecast cost <p> [--shot <id>]
 
 ## 10. 設定與密鑰
 
-- 本機設定：`~/.config/anirecast/config.json`，內容包含預設模型 ID、併發數、自動派發開關、最近使用的 Workspace。
+- 本機設定：`~/.config/anirecast/config.json`，內容包含：
+  - 預設模型 ID、併發數、最近使用的 Workspace；
+  - 自動派發開關、`codex.binPath`（不設定時自動尋找）、`codex.model`（不設定時沿用該電腦 `~/.codex/config.toml` 的設定）；
+  - `machineId`：首次啟動時產生，用來區分各台電腦的 Codex thread。
 - 金鑰：環境變數 `GEMINI_API_KEY`（也接受 `GEMINI_OMNI_API_KEY`），或 `anirecast auth set-key` 寫進 macOS 鑰匙圈。repo 裡的 `.env` 只給開發用，已經加進 `.gitignore`。
 - 模型 ID 不寫死在程式碼裡：`models.image = gemini-nano-banana-2.1`、`models.video = gemini-omni-1.1-flash`、`models.vision = <M0 選定>`。
 

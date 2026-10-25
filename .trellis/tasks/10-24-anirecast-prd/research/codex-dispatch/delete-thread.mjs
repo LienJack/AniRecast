@@ -1,0 +1,11 @@
+import { spawn } from 'node:child_process';
+setTimeout(() => process.exit(2), 30000).unref();
+const p = spawn(process.env.CODEX_BIN || 'codex', ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'] });
+let buf = '', id = 0; const waits = new Map();
+p.stdout.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); try { const m = JSON.parse(l); if (m.id != null && waits.has(m.id)) { waits.get(m.id)(m); waits.delete(m.id); } } catch {} } });
+const req = (method, params) => new Promise(r => { const i = ++id; waits.set(i, r); p.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: i, method, params }) + '\n'); });
+await req('initialize', { clientInfo: { name: 'anirecast', title: 'AniRecast', version: '0.0.1' } });
+p.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'initialized' }) + '\n');
+const r = await req('thread/delete', { threadId: process.argv[2] });
+console.log('delete', process.argv[2], r.error ? 'ERROR ' + JSON.stringify(r.error) : 'ok');
+p.kill(); process.exit(0);

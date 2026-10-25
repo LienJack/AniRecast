@@ -1,0 +1,23 @@
+import { spawn } from 'node:child_process';
+setTimeout(() => { console.log('timeout'); process.exit(2); }, 180000).unref();
+const p = spawn(process.env.CODEX_BIN || 'codex', ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'] });
+let buf = '', id = 0; const waits = new Map(); const events = [];
+let onNotify = () => {};
+p.stdout.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); let m; try { m = JSON.parse(line); } catch { continue; }
+  if (m.id != null && waits.has(m.id)) { waits.get(m.id)(m); waits.delete(m.id); } else if (m.method) { events.push(m.method); onNotify(m); } } });
+const req = (method, params) => new Promise(r => { const i = ++id; waits.set(i, r); p.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: i, method, params }) + '\n'); });
+const must = r => { if (r.error) { console.log('ERROR', JSON.stringify(r.error)); process.exit(1); } return r.result; };
+must(await req('initialize', { clientInfo: { name: 'anirecast', title: 'AniRecast', version: '0.0.1' } }));
+p.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'initialized' }) + '\n');
+const st = must(await req('thread/start', { cwd: process.argv[2], approvalPolicy: 'never', sandbox: 'read-only', serviceName: 'anirecast' }));
+const threadId = st.thread.id;
+console.log('thread', threadId, 'source(start):', JSON.stringify(st.thread.source));
+must(await req('thread/name/set', { threadId, name: 'AniRecast 自動派發測試（可刪除）' }));
+const done = new Promise(r => { onNotify = m => { if (m.method === 'turn/completed') r(m.params); }; });
+must(await req('turn/start', { threadId, input: [{ type: 'text', text: '這是 AniRecast 自動派發的可見性測試。不要執行任何指令，只回覆一行：「AniRecast 派發測試 OK」。' }] }));
+const t = await done;
+console.log('turn status:', t.turn?.status, '| notifications seen:', [...new Set(events)].slice(0, 12).join(', '));
+const list = must(await req('thread/list', { limit: 20, archived: false, useStateDbOnly: true, sortKey: 'created_at' }));
+const mine = list.data.find(x => x.id === threadId);
+console.log('in default (interactive) list:', !!mine, '| source:', JSON.stringify(mine?.source), '| name:', mine?.name ?? mine?.title, '| path:', mine?.path);
+p.kill(); process.exit(0);
