@@ -123,7 +123,7 @@ export function WorkspacePage() {
     <div className="flex flex-col">
       <PageHeader
         title="Workspace"
-        description="一個 Workspace 是一整包可以搬到別台電腦的資料夾：素材庫、下載合集、項目與資料庫。"
+        description="一個 Workspace 是一整包可以搬到別台電腦的資料夾：物料庫、下載合集、項目與資料庫。"
       />
       <div className="grid gap-4 p-5 xl:grid-cols-2">
         <Card>

@@ -340,7 +340,11 @@ export function OverviewPage() {
             <Card>
               <CardHeader>
                 <CardTitle>進行中的 Agent 任務</CardTitle>
-                <Link to="/tasks" className="ml-auto text-primary text-xs hover:underline">
+                <Link
+                  to="/projects/$ref/tasks"
+                  params={{ ref }}
+                  className="ml-auto text-primary text-xs hover:underline"
+                >
                   任務中心
                 </Link>
               </CardHeader>

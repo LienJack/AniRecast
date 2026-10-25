@@ -20,7 +20,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { api, fileUrl } from '@/lib/api';
 import { MAX_PERSONA_IMAGES, PERSONA_VIEW_LABEL, PERSONA_VIEWS } from '@/lib/labels';
 import { useAction, usePersonas } from '@/lib/queries';
-import type { Persona, PersonaImage, PersonaView } from '@/lib/types';
+import type { AssetKind, Persona, PersonaImage, PersonaView } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 const INVALIDATE = [['personas'], ['shot'], ['project']];
@@ -29,6 +29,28 @@ const parseTags = (s: string) =>
     .split(/[,，、]/)
     .map((t) => t.trim())
     .filter(Boolean);
+
+/** Wording per library section. */
+export const KIND_TEXT: Record<AssetKind, { noun: string; tab: string; hint: string; refs: string }> = {
+  character: {
+    noun: '人物',
+    tab: '人物',
+    hint: '可以換進片中的人設（只放動漫風格）。在角色表把片中角色對應到這裡。',
+    refs: '建議包含正面全身和臉部特寫',
+  },
+  item: {
+    noun: '物品',
+    tab: '物品',
+    hint: '道具、武器、小物件等物品設定。',
+    refs: '建議包含正面、側面和細節',
+  },
+  scene: {
+    noun: '場景',
+    tab: '場景',
+    hint: '地點與背景設定。',
+    refs: '建議包含全景和幾個重點角度',
+  },
+};
 
 const primaryImage = (p: Persona): PersonaImage | undefined =>
   p.images.find((i) => i.isPrimary) ?? p.images[0];
@@ -68,19 +90,29 @@ function PersonaFields({
   );
 }
 
-function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Persona) => void }) {
+function CreateDialog({
+  kind,
+  onClose,
+  onCreated,
+}: {
+  kind: AssetKind;
+  onClose: () => void;
+  onCreated: (p: Persona) => void;
+}) {
+  const text = KIND_TEXT[kind];
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [tags, setTags] = useState('');
   const create = useAction(
     () =>
       api.post<Persona>('/api/personas', {
+        kind,
         name: name.trim(),
         description: description.trim(),
         tags: parseTags(tags),
       }),
     {
-      success: (p) => `已新增人設「${p.name}」，接著上傳參考圖`,
+      success: (p) => `已新增${text.noun}「${p.name}」，接著上傳參考圖`,
       invalidate: INVALIDATE,
       onSuccess: onCreated,
     },
@@ -89,9 +121,9 @@ function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>新增人設</DialogTitle>
+          <DialogTitle>新增{text.noun}</DialogTitle>
           <DialogDescription>
-            只放動漫風格的人設。建立後上傳 1–5 張參考圖（建議包含正面全身和臉部特寫）。
+            {text.hint} 建立後上傳 1–5 張參考圖（{text.refs}）。
           </DialogDescription>
         </DialogHeader>
         <PersonaFields
@@ -286,11 +318,19 @@ function EditDialog({ persona, onClose }: { persona: Persona; onClose: () => voi
   );
 }
 
-export function PersonasPage() {
+/** One section of the library (characters, items or scenes); `embedded` drops the page header. */
+export function PersonasPage({
+  kind = 'character',
+  embedded = false,
+}: {
+  kind?: AssetKind;
+  embedded?: boolean;
+}) {
+  const text = KIND_TEXT[kind];
   const [showArchived, setShowArchived] = useState(false);
-  const personas = usePersonas(showArchived);
-  // The editor looks personas up including archived ones, so archiving keeps the dialog open.
-  const everyone = usePersonas(true);
+  const personas = usePersonas(showArchived, kind);
+  // The editor looks entries up including archived ones, so archiving keeps the dialog open.
+  const everyone = usePersonas(true, kind);
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const switchId = useId();
@@ -299,20 +339,26 @@ export function PersonasPage() {
   const editing = (everyone.data ?? personas.data).find((p) => p.id === editingId);
   return (
     <div className="flex flex-col">
-      <PageHeader
-        title="素材庫"
-        description="Workspace 共用的人設（只放動漫風格）。在角色表把片中角色對應到這裡的人設。"
-        actions={
+      {(() => {
+        const actions = (
           <>
             <Switch id={switchId} checked={showArchived} onCheckedChange={setShowArchived} />
             <Label htmlFor={switchId}>顯示已封存</Label>
             <Button size="sm" onClick={() => setCreating(true)}>
               <PlusIcon />
-              新增人設
+              新增{text.noun}
             </Button>
           </>
-        }
-      />
+        );
+        return embedded ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-4">
+            <span className="text-muted-foreground text-xs">{text.hint}</span>
+            <div className="flex items-center gap-2">{actions}</div>
+          </div>
+        ) : (
+          <PageHeader title={`物料庫 · ${text.tab}`} description={text.hint} actions={actions} />
+        );
+      })()}
       <div className="p-5">
         {personas.data.length ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
@@ -347,11 +393,14 @@ export function PersonasPage() {
             ))}
           </div>
         ) : (
-          <EmptyState>還沒有人設。按「新增人設」建立第一個。</EmptyState>
+          <EmptyState>
+            還沒有{text.noun}。按「新增{text.noun}」建立第一個。
+          </EmptyState>
         )}
       </div>
       {creating ? (
         <CreateDialog
+          kind={kind}
           onClose={() => setCreating(false)}
           onCreated={(p) => {
             setCreating(false);

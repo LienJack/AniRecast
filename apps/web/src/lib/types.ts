@@ -10,6 +10,7 @@ import type {
   LockInfo,
   Manifest,
   projectOverview,
+  projectSummaries,
   Review,
   shotDetail,
   Take,
@@ -19,6 +20,7 @@ export type {
   AgentTask,
   AgentTaskStatus,
   AniEvent,
+  AssetKind,
   AssignedBy,
   Board,
   CastMember,
@@ -27,6 +29,7 @@ export type {
   InspectResult,
   Job,
   JobStatus,
+  KeyedProvider,
   Keyframe,
   Look,
   LookPolicy,
@@ -35,6 +38,7 @@ export type {
   PersonaImage,
   PersonaView,
   Project,
+  ProjectStep,
   Render,
   Review,
   Shot,
@@ -49,6 +53,7 @@ export type {
 } from '@anirecast/core';
 
 export type ProjectOverview = ReturnType<typeof projectOverview>;
+export type ProjectSummary = ReturnType<typeof projectSummaries>[number];
 export type OverviewShot = ProjectOverview['shots'][number];
 export type ShotDetail = ReturnType<typeof shotDetail>;
 export type ShotCastEntry = ShotDetail['cast'][number];
@@ -120,3 +125,15 @@ export type ReviewResult = {
   task?: AgentTask;
   queued?: { board?: Board; take?: Take; jobId: string };
 };
+
+/** `/api/settings`: what is configured; key values never leave the daemon. */
+export interface SettingsInfo {
+  keys: Array<{ provider: 'gemini' | 'fal' | 'jev'; label: string; source: 'env' | 'keychain' | 'missing' }>;
+  jevBaseUrl: string;
+  models: LocalConfig['models'];
+  limits: LocalConfig['limits'];
+  continuity: LocalConfig['continuity'];
+  budget: LocalConfig['budget'];
+  codex: { autoDispatch: boolean };
+  quota: QuotaStatus[];
+}

@@ -10,10 +10,13 @@ import { Loading } from '@/components/common';
 
 // Pages load on demand so the first paint only needs the shell.
 const page = {
-  workspace: lazyRouteComponent(() => import('@/pages/WorkspacePage'), 'WorkspacePage'),
+  projects: lazyRouteComponent(() => import('@/pages/ProjectsPage'), 'ProjectsPage'),
+  newProject: lazyRouteComponent(() => import('@/pages/NewProjectPage'), 'NewProjectPage'),
+  projectSource: lazyRouteComponent(() => import('@/pages/NewProjectPage'), 'ProjectSourcePage'),
+  library: lazyRouteComponent(() => import('@/pages/LibraryPage'), 'LibraryPage'),
+  settings: lazyRouteComponent(() => import('@/pages/SettingsPage'), 'SettingsPage'),
   sources: lazyRouteComponent(() => import('@/pages/SourcesPage'), 'SourcesPage'),
-  personas: lazyRouteComponent(() => import('@/pages/PersonasPage'), 'PersonasPage'),
-  tasks: lazyRouteComponent(() => import('@/pages/TasksPage'), 'TasksPage'),
+  projectTasks: lazyRouteComponent(() => import('@/pages/TasksPage'), 'ProjectTasksPage'),
   overview: lazyRouteComponent(() => import('@/pages/OverviewPage'), 'OverviewPage'),
   clip: lazyRouteComponent(() => import('@/pages/ClipPage'), 'ClipPage'),
   shots: lazyRouteComponent(() => import('@/pages/ShotsPage'), 'ShotsPage'),
@@ -26,23 +29,47 @@ const page = {
 
 const rootRoute = createRootRoute({ component: AppShell, notFoundComponent: NotFound });
 
-const workspaceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: page.workspace });
+// Projects are the core; the library, the download collection and settings sit beside them.
+const projectsHomeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/',
+  component: page.projects,
+});
+const newProjectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'projects/new',
+  component: page.newProject,
+});
+const libraryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'library',
+  component: page.library,
+});
 const sourcesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'sources',
   component: page.sources,
 });
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings',
+  component: page.settings,
+});
+// Old addresses from before the project-first layout.
 const personasRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'personas',
-  component: page.personas,
+  component: () => <Navigate to="/library" />,
 });
-const tasksRoute = createRoute({ getParentRoute: () => rootRoute, path: 'tasks', component: page.tasks });
-
+const tasksRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'tasks',
+  component: () => <Navigate to="/" />,
+});
 const projectsIndexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'projects',
-  component: () => <Navigate to="/sources" />,
+  component: () => <Navigate to="/" />,
 });
 const projectRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -53,6 +80,16 @@ const overviewRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: '/',
   component: page.overview,
+});
+const sourceRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'source',
+  component: page.projectSource,
+});
+const projectTasksRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'tasks',
+  component: page.projectTasks,
 });
 const clipRoute = createRoute({ getParentRoute: () => projectRoute, path: 'clip', component: page.clip });
 const shotsRoute = createRoute({ getParentRoute: () => projectRoute, path: 'shots', component: page.shots });
@@ -79,13 +116,17 @@ const rendersRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
-  workspaceRoute,
+  projectsHomeRoute,
+  newProjectRoute,
+  libraryRoute,
   sourcesRoute,
+  settingsRoute,
   personasRoute,
   tasksRoute,
   projectsIndexRoute,
   projectRoute.addChildren([
     overviewRoute,
+    sourceRoute,
     clipRoute,
     shotsRoute,
     castRoute,
@@ -93,6 +134,7 @@ const routeTree = rootRoute.addChildren([
     reviewIndexRoute,
     reviewRoute,
     rendersRoute,
+    projectTasksRoute,
   ]),
 ]);
 

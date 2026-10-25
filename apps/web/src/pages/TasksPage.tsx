@@ -1,4 +1,4 @@
-import { Link } from '@tanstack/react-router';
+import { Link, useParams } from '@tanstack/react-router';
 import { RotateCcwIcon, SquareIcon } from 'lucide-react';
 import { useState } from 'react';
 import { EmptyState, ErrorState, Loading, PageHeader, Tag } from '@/components/common';
@@ -10,7 +10,16 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api } from '@/lib/api';
 import { formatAgo, formatTime, formatUsd } from '@/lib/format';
 import { JOB_STATUS_LABEL, JOB_STATUS_TONE, jobTypeLabel, LANE_LABEL, TIER_LABEL } from '@/lib/labels';
-import { qk, useAction, useCost, useHealth, useJobs, useProjects, useTasks } from '@/lib/queries';
+import {
+  qk,
+  useAction,
+  useCost,
+  useHealth,
+  useJobs,
+  useOverview,
+  useProjects,
+  useTasks,
+} from '@/lib/queries';
 import type { GenerationTier, Job } from '@/lib/types';
 
 type JobFilter = 'active' | 'failed' | 'all';
@@ -186,10 +195,24 @@ function CostCard() {
   );
 }
 
-export function TasksPage() {
-  const jobs = useJobs();
-  const tasks = useTasks();
+/** The task centre of one project: its background jobs, its Codex tasks, Codex status and its cost. */
+export function ProjectTasksPage() {
+  const { ref } = useParams({ from: '/projects/$ref' });
+  const overview = useOverview(ref);
+  if (overview.isPending) return <Loading />;
+  if (overview.isError) return <ErrorState error={overview.error} />;
+  return <TasksPage projectId={overview.data.project.id} projectName={overview.data.project.name} />;
+}
+
+export function TasksPage({ projectId, projectName }: { projectId?: string; projectName?: string } = {}) {
+  const allJobs = useJobs();
+  const allTasks = useTasks();
   const projects = useProjects();
+  // Scoped to a project when opened from one; jobs without a project (downloads, imports) stay global.
+  const scope = <T extends { projectId: string | null }>(list: T[] | undefined) =>
+    projectId ? list?.filter((x) => x.projectId === projectId) : list;
+  const jobs = { ...allJobs, data: scope(allJobs.data) };
+  const tasks = { ...allTasks, data: scope(allTasks.data) };
   const [filter, setFilter] = useState<JobFilter>('all');
   const [showDone, setShowDone] = useState(false);
   const slugOf = (id: string | null) => (id ? projects.data?.find((p) => p.id === id)?.slug : undefined);
@@ -210,8 +233,8 @@ export function TasksPage() {
   return (
     <div className="flex flex-col">
       <PageHeader
-        title="任務中心"
-        description="背景任務（下載、偵測、生成、合成）、Codex Agent 任務和成本。"
+        title={projectName ? `任務中心 · ${projectName}` : '任務中心'}
+        description="這個項目的背景任務（偵測、生成、合成）、Codex Agent 任務和成本。"
       />
       <div className="grid gap-4 p-5 xl:grid-cols-[minmax(0,1fr)_380px]">
         <Card className="min-w-0">

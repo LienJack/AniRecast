@@ -526,7 +526,7 @@ export function CastPage() {
   const { ref } = useParams({ from: '/projects/$ref' });
   const cast = useCast(ref);
   const overview = useOverview(ref);
-  const personas = usePersonas();
+  const personas = usePersonas(false, 'character');
   const [identifyOpen, setIdentifyOpen] = useState(false);
   const [redetect, setRedetect] = useState(false);
   const identify = useAction(
@@ -562,9 +562,9 @@ export function CastPage() {
               重新識別角色
             </Button>
             <Button asChild size="sm" variant="outline">
-              <Link to="/personas">
+              <Link to="/library">
                 <UsersRoundIcon />
-                素材庫
+                物料庫
               </Link>
             </Button>
           </>
@@ -624,7 +624,7 @@ export function CastDetailPage() {
   const { ref, castId } = useParams({ from: '/projects/$ref/cast/$castId' });
   const cast = useCast(ref);
   const overview = useOverview(ref);
-  const personas = usePersonas();
+  const personas = usePersonas(false, 'character');
   if (cast.isPending || overview.isPending) return <Loading />;
   if (cast.isError) return <ErrorState error={cast.error} />;
   if (overview.isError) return <ErrorState error={overview.error} />;

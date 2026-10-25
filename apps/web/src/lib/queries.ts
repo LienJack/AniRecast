@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { api, errorText } from './api';
 import type {
   AgentTask,
+  AssetKind,
   CastMember,
   CostSummary,
   Health,
@@ -10,7 +11,9 @@ import type {
   Persona,
   Project,
   ProjectOverview,
+  ProjectSummary,
   Render,
+  SettingsInfo,
   ShotDetail,
   Source,
   WorkspaceInfo,
@@ -25,14 +28,17 @@ export const qk = {
   workspace: ['workspace'] as const,
   sources: ['sources'] as const,
   projects: ['projects'] as const,
+  projectSummaries: ['projects', 'summary'] as const,
+  settings: ['settings'] as const,
   overview: (ref: string) => ['project', ref, 'overview'] as const,
   cast: (ref: string) => ['project', ref, 'cast'] as const,
   renders: (ref: string) => ['project', ref, 'renders'] as const,
   projectCost: (ref: string) => ['project', ref, 'cost'] as const,
   shot: (id: string) => ['shot', id] as const,
-  personas: (archived: boolean) => ['personas', archived] as const,
+  personas: (archived: boolean, kind?: AssetKind) => ['personas', archived, kind ?? 'all'] as const,
   jobs: ['jobs'] as const,
   tasks: ['tasks'] as const,
+  projectTasks: (ref: string) => ['project', ref, 'tasks'] as const,
   cost: ['cost'] as const,
 };
 
@@ -72,10 +78,25 @@ export const useShot = (id: string | undefined) =>
     queryFn: () => api.get<ShotDetail>(`/api/shots/${encodeURIComponent(id ?? '')}`),
     enabled: Boolean(id),
   });
-export const usePersonas = (archived = false) =>
+export const usePersonas = (archived = false, kind?: AssetKind) =>
   useQuery({
-    queryKey: qk.personas(archived),
-    queryFn: () => api.get<Persona[]>(`/api/personas${archived ? '?archived=1' : ''}`),
+    queryKey: qk.personas(archived, kind),
+    queryFn: () => {
+      const q = new URLSearchParams({ ...(archived ? { archived: '1' } : {}), ...(kind ? { kind } : {}) });
+      return api.get<Persona[]>(`/api/personas${q.size ? `?${q}` : ''}`);
+    },
+  });
+export const useProjectSummaries = () =>
+  useQuery({
+    queryKey: qk.projectSummaries,
+    queryFn: () => api.get<ProjectSummary[]>('/api/projects?summary=1'),
+  });
+export const useSettings = () =>
+  useQuery({ queryKey: qk.settings, queryFn: () => api.get<SettingsInfo>('/api/settings') });
+export const useProjectTasks = (ref: string) =>
+  useQuery({
+    queryKey: qk.projectTasks(ref),
+    queryFn: () => api.get<AgentTask[]>(`/api/tasks?project=${encodeURIComponent(ref)}`),
   });
 export const useJobs = () =>
   useQuery({ queryKey: qk.jobs, queryFn: () => api.get<Job[]>('/api/jobs?limit=200') });
