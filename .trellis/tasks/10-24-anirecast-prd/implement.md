@@ -30,7 +30,7 @@
   - 根目錄 scripts：`typecheck`、`test`、`lint`、`anirecast`。
 - 驗證：`pnpm install && pnpm typecheck && pnpm test && pnpm lint`。
 
-### S2 Core：Workspace、DB、jobs、events — done:
+### S2 Core：Workspace、DB、jobs、events — done: (S2 commit)
 - 產出：
   - Workspace：manifest、跨平台命名檢查、鎖檔、`AGENTS.md` 產生、開啟時的版本與遷移檢查；
   - 資料庫：`node:sqlite` 連線（WAL、busy_timeout）、遷移執行器、全部資料表（design §5）；
