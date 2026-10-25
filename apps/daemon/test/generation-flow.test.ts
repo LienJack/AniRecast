@@ -47,6 +47,7 @@ describe('board → take → render with the fake provider', () => {
       port: 0,
       config: { ...DEFAULT_CONFIG, provider: 'fake' },
       provider: new FakeProvider(),
+      dispatch: false,
       log: () => {},
     });
     const t = { root, env: { ...process.env, ANIRECAST_CONFIG_DIR: path.join(tmp, 'cfg') } };

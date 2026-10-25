@@ -210,3 +210,32 @@ export async function stackCompare(
     opts,
   );
 }
+
+/**
+ * A still contact sheet of a stacked (original over edited) clip: `count` evenly spaced frames in a row,
+ * so an agent that cannot watch video can still judge motion and identity.
+ */
+export async function contactSheet(
+  stacked: string,
+  output: string,
+  frames: number,
+  count = 5,
+  opts: FfmpegRunOptions = {},
+): Promise<void> {
+  ensureDir(output);
+  const step = Math.max(1, Math.floor(frames / count));
+  await ffmpeg(
+    [
+      '-i',
+      stacked,
+      '-vf',
+      `select='not(mod(n\\,${step}))',scale=-2:360,tile=${count}x1`,
+      '-frames:v',
+      '1',
+      '-q:v',
+      '3',
+      output,
+    ],
+    opts,
+  );
+}

@@ -1,6 +1,7 @@
 import { type AniEvent, APP_VERSION, listJobs, type Workspace } from '@anirecast/core';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import type { AgentDispatcher } from './codex/dispatcher.ts';
 import type { EventsHub } from './events-hub.ts';
 import type { JobRunner } from './runner.ts';
 
@@ -9,10 +10,11 @@ export interface ServerDeps {
   hub: EventsHub;
   runner: JobRunner;
   startedAt: number;
+  dispatcher?: AgentDispatcher | undefined;
 }
 
 /** HTTP API for the Web UI only. The CLI talks to the workspace database directly. */
-export function createApp({ workspace, hub, runner, startedAt }: ServerDeps): Hono {
+export function createApp({ workspace, hub, runner, startedAt, dispatcher }: ServerDeps): Hono {
   const app = new Hono();
 
   app.get('/api/health', (c) =>
@@ -28,6 +30,7 @@ export function createApp({ workspace, hub, runner, startedAt }: ServerDeps): Ho
           name: workspace.manifest.name,
         },
         activeJobs: runner.activeJobs.map((j) => ({ id: j.id, type: j.type, lane: j.lane })),
+        codex: dispatcher?.status ?? { enabled: false },
       },
     }),
   );

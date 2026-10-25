@@ -26,7 +26,7 @@ export async function setupWorkspace(): Promise<TestEnv> {
   cleanups.push(() => rmSync(tmp, { recursive: true, force: true }));
   const root = path.join(tmp, 'ws');
   initWorkspace(root).close();
-  const daemon = await startDaemon({ root, port: 0, config: DEFAULT_CONFIG, log: () => {} });
+  const daemon = await startDaemon({ root, port: 0, config: DEFAULT_CONFIG, dispatch: false, log: () => {} });
   cleanups.push(() => daemon.stop());
   return { tmp, root, daemon, env: { ...process.env, ANIRECAST_CONFIG_DIR: path.join(tmp, 'cfg') } };
 }

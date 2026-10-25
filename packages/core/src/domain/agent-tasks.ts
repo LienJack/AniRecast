@@ -271,3 +271,17 @@ export function releaseStaleClaims(db: Db, now: number = Date.now()): number {
     },
   ).changes;
 }
+
+/** Gives a claimed task back to the queue (dispatcher failure before Codex could act). */
+export function releaseAgentTask(db: Db, id: string, actor: string, now: number = Date.now()): AgentTask {
+  return tx(db, () => {
+    run(
+      db,
+      `UPDATE agent_tasks SET status = 'open', claimed_by = NULL, claimed_at = NULL, updated_at = :now WHERE id = :id AND status = 'claimed'`,
+      { id, now },
+    );
+    const task = getAgentTask(db, id);
+    event(db, task, 'agent_task.released', actor);
+    return task;
+  });
+}

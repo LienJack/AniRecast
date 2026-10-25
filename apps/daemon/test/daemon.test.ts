@@ -58,8 +58,8 @@ describe('daemon + CLI', () => {
 
   it('refuses a second daemon on the same workspace', async () => {
     const { root } = await setup();
-    await expect(startDaemon({ root, port: 0, config: DEFAULT_CONFIG, log: () => {} })).rejects.toThrow(
-      /already serving/,
-    );
+    await expect(
+      startDaemon({ root, port: 0, config: DEFAULT_CONFIG, dispatch: false, log: () => {} }),
+    ).rejects.toThrow(/already serving/);
   });
 });

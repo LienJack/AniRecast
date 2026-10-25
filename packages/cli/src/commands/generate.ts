@@ -32,6 +32,7 @@ import {
   loadConfig,
   planBoard,
   planTake,
+  projectCacheDir,
   projectOfShot,
   shotStage,
   spendBreakdown,
@@ -39,6 +40,7 @@ import {
   totalSpend,
   type Workspace,
 } from '@anirecast/core';
+import { contactSheet } from '@anirecast/media';
 import { AniError } from '@anirecast/shared';
 import type { Command } from 'commander';
 import { type GlobalOptions, withWorkspace } from '../context.ts';

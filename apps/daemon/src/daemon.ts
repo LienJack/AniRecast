@@ -18,6 +18,8 @@ import {
 import { createProvider, type Provider, unavailableProvider } from '@anirecast/providers';
 import { AniError } from '@anirecast/shared';
 import { type ServerType, serve } from '@hono/node-server';
+import type { CodexCommand } from './codex/binary.ts';
+import { AgentDispatcher } from './codex/dispatcher.ts';
 import { EventsHub } from './events-hub.ts';
 import { createHandlers } from './handlers/index.ts';
 import { type JobHandler, JobRunner } from './runner.ts';
@@ -32,6 +34,8 @@ export interface StartOptions {
   handlers?: Map<string, JobHandler>;
   /** Overrides config/env provider selection (tests inject a configured fake). */
   provider?: Provider;
+  /** Codex auto-dispatch: defaults to config.codex.autoDispatch; tests pass false or a mock command. */
+  dispatch?: boolean | { command: CodexCommand };
   log?: (message: string) => void;
 }
 
@@ -113,7 +117,20 @@ export async function startDaemon(options: StartOptions): Promise<DaemonHandle> 
   hub.start();
   runner.start();
 
-  const app = createApp({ workspace, hub, runner, startedAt });
+  const dispatchEnabled =
+    options.dispatch === undefined ? config.codex.autoDispatch : options.dispatch !== false;
+  const dispatcher = dispatchEnabled
+    ? new AgentDispatcher({
+        workspace,
+        config,
+        log,
+        ...(typeof options.dispatch === 'object' ? { command: options.dispatch.command, pollMs: 200 } : {}),
+      })
+    : undefined;
+  dispatcher?.start();
+  log(`codex auto-dispatch: ${dispatcher ? 'on' : 'off'}`);
+
+  const app = createApp({ workspace, hub, runner, startedAt, dispatcher });
   const host = options.host ?? config.daemon.host;
   const server: ServerType = await new Promise((resolve) => {
     const s = serve({ fetch: app.fetch, hostname: host, port: options.port ?? config.daemon.port }, () =>
@@ -135,6 +152,7 @@ export async function startDaemon(options: StartOptions): Promise<DaemonHandle> 
     if (stopped) return;
     stopped = true;
     clearInterval(heartbeatTimer);
+    dispatcher?.stop();
     await runner.stop();
     hub.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));

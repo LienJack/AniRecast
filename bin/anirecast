@@ -1,0 +1,11 @@
+#!/bin/sh
+# Launcher for the anirecast CLI. Resolves symlinks so ~/.local/bin/anirecast can point here.
+set -eu
+entry="$0"
+while [ -L "$entry" ]; do
+  dir=$(CDPATH= cd -P -- "$(dirname -- "$entry")" && pwd)
+  entry=$(readlink "$entry")
+  case "$entry" in /*) ;; *) entry="$dir/$entry" ;; esac
+done
+root=$(CDPATH= cd -P -- "$(dirname -- "$entry")/.." && pwd)
+exec node --disable-warning=ExperimentalWarning "$root/packages/cli/src/main.ts" "$@"
