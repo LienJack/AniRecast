@@ -1,4 +1,4 @@
-# AniRecast 技術設計（草稿 v0.4）
+# AniRecast 技術設計（草稿 v0.5）
 
 搭配 [prd.md](prd.md) 閱讀。這份文件記錄「怎麼做」；需求、驗收標準和待決問題以 PRD 為準。平台：macOS 先做，Windows 在 M7；Workspace 格式從第一天起就跨平台。
 
@@ -64,6 +64,7 @@ flowchart TB
 | CLI | `commander` + 在行程內使用 `packages/core`（直接讀寫 Workspace 的 SQLite，不經網路）；stdout 輸出 JSON | 在 Codex 沙箱關閉網路時也能用；和 `rvfx`、`plate` 的 CLI 慣例一致 |
 | 媒體處理 | 系統的 ffmpeg/ffprobe（本機 9.0.2）；圖片縮圖用 `sharp` | ffmpeg 是逐幀裁切、轉碼、合成的唯一可靠選擇 |
 | 分鏡偵測 | Python sidecar（uv 管理）：PySceneDetect `AdaptiveDetector`；P1 加 TransNetV2 | 偵測的成熟函式庫在 Python 生態；sidecar 用 JSON 進出，換演算法不影響 TS 端 |
+| 同一人識別 | 同一個 Python sidecar：`dghs-imgutils`（MIT）的動漫頭部／人物偵測與 CCIP 角色相似度（ONNX、CPU 可跑）；scikit-learn 做帶約束的聚合式分群 | CCIP 是專門比對「是不是同一個動漫角色」的模型；用頭部特徵降低換裝的影響。Python 版本固定在 onnxruntime 有提供 wheel 的版本（本機預設的 3.14 不一定有），由 uv 管理 |
 | 下載 | yt-dlp（`uv tool` 安裝）+ deno（YouTube 的 JS 驗證需要） | 支援網站最多；由 `doctor` 管理版本 |
 | 模型 SDK | `@google/genai`（Interactions API、Files API），包在 Provider 介面後面 | 實測過的路徑；之後換模型或換供應商只需要改轉接層 |
 | Codex 派發 | 直接以 JSON-RPC 透過 stdio 驅動 `codex app-server`（約 40 行，已實測），不用 `codex exec`，也不用沒驗證過 thread 來源標記的包裝 SDK | 只有 app-server 建立的 thread 會被標成互動型、出現在桌面端；見 research/codex-dispatch-visibility.md |
@@ -83,7 +84,7 @@ AniRecast/
 │   ├── cli/             # anirecast CLI
 │   ├── media/           # ffmpeg 封裝：probe、clip、conform、concat、hstack
 │   └── providers/       # Gemini 轉接層：ImageGen、VideoEdit、VisionAnalyze、成本計算
-├── python/              # uv 專案：anirecast-py（分鏡偵測）
+├── python/              # uv 專案：anirecast-py（分鏡偵測、角色偵測、CCIP 特徵與分群）
 ├── skills/anirecast/    # Codex skill 原始碼（SKILL.md + reference.md）
 ├── .trellis/            # 開發流程（tasks / spec / workflow）
 └── AGENTS.md
@@ -155,15 +156,18 @@ AniRecast/
 | `shots` | id、clip_id、order_index、start_frame、end_frame、mode（`replace` 換角／`clean` 去字／`keep` 沿用原片／`exclude` 排除）、mode_source（auto／user）、remove_other_overlays（是否連片名與其他疊字一起去掉）、status、rep_frame、description、camera_json |
 | `text_overlays` | id、shot_id、keyframe_id、bbox、text、category（`staff_credit`／`title_or_other`／`in_scene`）、remove（依類別預設，可以逐筆修改） |
 | `keyframes` | id、shot_id、frame、role、path |
-| `cast_members` | id、project_id、label、description、thumb_path、persona_id（null = 不替換） |
-| `detections` | id、shot_id、keyframe_id、cast_member_id、bbox、attrs_json、confidence |
+| `cast_members` | id、project_id、label、description、thumb_path、persona_id（null = 不替換）、status（active／not_a_character） |
+| `looks` | id、cast_member_id、label、description、representative_tracklet_id、look_policy（`follow_source` 跟原片造型／`persona` 用人設造型；預設值依 Q8） |
+| `tracklets` | id、shot_id、cast_member_id、look_id、identity_vec（頭部 CCIP 合成向量）、appearance_vec（全身）、confidence、assigned_by（auto／codex／user） |
+| `detections` | id、tracklet_id、keyframe_id、head_bbox、body_bbox、attrs_json（Flash 外觀描述）、head_crop_path、body_crop_path |
+| `cast_decisions` | id、kind（must_link／cannot_link／assign／not_a_character）、tracklet_a、tracklet_b 或 cast_member_id、source（codex／user）、locked、reason、confidence、at |
 | `shot_cast_overrides` | shot_id、cast_member_id、persona_id 或 `keep` |
 | `personas`／`persona_images` | 名稱、描述、標籤；圖片路徑、視角、是否為主圖 |
 | `boards` | id、shot_id、version、status、path、prompt、model、params_json、inputs_json（路徑 + sha256）、parent_id、remote_json、cost_usd、created_by |
 | `takes` | 同 boards，另加 board_id、segment_index、frames_in、frames_out、conform_json |
 | `reviews` | id、target_type（board／take／render）、target_id、verdict（approve／changes／regenerate／keep_original）、comment、annotations_json |
-| `agent_tasks` | id、review_id、shot_id、status（open／claimed／done／needs_user／cancelled）、claimed_by、result_note、result_target_id |
-| `codex_threads` | shot_id、thread_id、created_at |
+| `agent_tasks` | id、kind（`review_feedback`／`cast_review`）、review_id、shot_id 或 project_id、payload_json（cast_review 的待判定項目與對照圖路徑）、status（open／claimed／done／needs_user／cancelled）、claimed_by、result_note、result_target_id |
+| `codex_threads` | scope（`shot`／`project_cast`）、scope_id、thread_id、created_at |
 | `codex_usage` | task_id、thread_id、tokens_json、at |
 | `jobs` | id、type、lane（generate／media／agent）、payload_json、status、progress、error、attempts、cost_estimate、cost_actual、requested_by（user／codex:<thread_id>／system）、timestamps |
 | `events` | seq（自增）、at、actor、kind、entity_type、entity_id、payload_json。與狀態變更寫在同一個交易，daemon 追蹤後推給 SSE |
@@ -211,18 +215,65 @@ stateDiagram-v2
 ### 7.1 分鏡偵測
 `clip.mp4` 交給 Python sidecar，用 AdaptiveDetector 產生剪接點（以幀號表示）。之後用 ffmpeg 輸出每個分鏡的 `source.mp4` 和關鍵幀，並把長度超過 10 秒的分鏡標示出來。
 
-### 7.2 角色與字幕辨識
+### 7.2 字幕辨識與分鏡描述
 每個分鏡的 first、mid、last 三幀交給 Flash 視覺模型，輸出結構化 JSON，包含：
-- 人物清單：外觀、位置框、顯眼程度；
-- **疊加字幕清單**：文字、位置框、類別。工作人員字幕的 `remove` 預設為 true；片名與其他疊字預設為 false；場景內文字固定為 false。三幀的結果合併：任何一幀出現就算這個分鏡有。
+- **疊加字幕清單**：文字、位置框、類別。
+  - `remove` 預設：工作人員字幕為 true，片名與其他疊字為 false，場景內文字固定為 false。
+  - 三幀的結果合併：任何一幀出現就算這個分鏡有。
+- 每個人物的外觀描述（髮色、髮型、眼睛、服裝、配件），以位置框對應到 §7.2a 偵測到的人物。
 - 分鏡描述。
 
-接著把所有分鏡的人物裁切圖和描述一次交給模型歸併成角色表。最後由你在 Web 上確認、合併、拆分。字幕類別判錯時，可以在 Web 上逐筆修改。
+字幕類別判錯時，可以在 Web 上逐筆修改。
+
+### 7.2a 同一人識別（程式 → Codex → 人）
+
+目標：同一個人就算換了服裝或髮型，也歸到同一個 `cast_member`；兩個長得像的不同角色不能被併在一起。
+
+**第 1 層：程式（Python sidecar，`imgutils`，MIT 授權，ONNX 在 CPU 上跑）**
+
+1. **取樣**：每個分鏡取 first、mid、last 三幀，超過 3 秒的分鏡每秒多取 1 幀。
+2. **偵測**：用 imgutils 的動漫**頭部**偵測（官方說最穩定）和**人物**偵測，得到頭部框和全身框，並以位置把頭部對應到所屬的人物。
+3. **串成出場片段**：同一分鏡內相鄰取樣幀之間，用框的重疊度加 CCIP 相似度做匹配，把同一個人串成一個出場片段 `tracklet`。同一出場片段內的偵測必定是同一人。
+4. **特徵**：
+   - 身份特徵：頭部裁切的 CCIP 向量，再用 `ccip_merge` 合成出場片段的代表向量。用頭部而不用全身，是為了降低服裝的影響。
+   - 外觀特徵：全身裁切的 CCIP 向量，只用來分造型。
+   - CCIP 一次只能處理單一角色的圖，所以都先裁切再算。
+5. **約束**：
+   - 不可連結：同一分鏡中同時出現的兩個出場片段，一定不是同一人。
+   - 必須連結／不可連結：你鎖定過的人工決定（§5 `cast_decisions`）。
+6. **分群**：在約束下做聚合式分群。距離是 CCIP difference，門檻起點是模型預設值（`ccip_default_threshold()`，預設模型約 0.178），M0 再校正。
+   - 每個歸屬的信心，取「到所屬群的距離」與「到最近的其他群的距離」之間的差距。
+7. **分造型**：在每個 `cast_member` 底下，用全身特徵加 Flash 的服裝與髮型描述，再分一次群，得到 `looks`。
+
+**第 2 層：Codex 判斷（agent 通道，自動派發）**
+
+程式分完群之後，把需要判斷的項目整理成一筆 `cast_review` Agent 任務：
+- 兩群距離接近門檻：可能是同一人換了裝；
+- 群內差異大：可能混了兩個人；
+- 只出現一次的出場片段；
+- 信心低於門檻的歸屬。
+
+每個項目附一張**對照圖**（daemon 用 sharp 拼好：各群的頭部和全身裁切、分鏡序號）和 Flash 的外觀描述，以 `localImage` 交給 Codex。
+
+Codex 用 CLI 做決定：`anirecast cast merge|split|assign --reason "…" --confidence 0.x`。決定記為 `source = codex`。
+- CLI 判斷操作者的方式：環境變數裡有 `CODEX_THREAD_ID` 就是 Codex，不會鎖定；沒有就是你，自動鎖定。在 Web 上的操作一律算你的。
+
+- 派發到每個項目一個 thread：「AniRecast · <項目> · 角色辨識」。
+- 每批最多 N 個項目，避免一輪太長。
+
+**第 3 層：人工矯正（Web 角色表）**
+- 你的修改記為 `source = user`，並且 `locked = true`。
+- 之後重跑第 1、2 層時，這些決定是硬約束：不會被程式或 Codex 推翻，也不會再送給 Codex 判斷。
+
+**重算的影響**：任何歸屬變動都寫進 `events`，觸發 §6 的處理方式重算；受影響、已通過的分鏡圖和分鏡視頻標為 `stale`。
 
 ### 7.3 分鏡圖（Nano Banana 2.1）
 - 輸入：代表幀、對應人設的參考圖（每次請求的角色圖合計 ≤5 張，所以一個分鏡兩個人設時，每個人設最多 2 張）。
 - 提示詞模板：「Image 1 是原分鏡；Image N 是角色 X 的參考。把 <位置／外觀描述> 的人換成 X，其他保持不變：構圖、姿勢、光線、背景、畫風」，再加上你和 Codex 的修改意見。
 - 有要去掉的疊加字幕時，加上：「去掉位於 <bbox> 的疊加文字（<文字內容>），補上原本被遮住的背景；場景裡的文字保持不變」。
+- 依該出場片段所屬造型的 `look_policy` 調整提示詞：
+  - `follow_source`：「只換人物身份（臉、髮色、眼睛、特徵），服裝與髮型保持 Image 1 的樣子」；
+  - `persona`：「服裝與髮型用參考圖的樣子」。
 - 只有 `replace` 分鏡生成分鏡圖。
 - 預設輸出 16:9、2K。
 - 你要求修改時，Codex 可以選擇用 `previous_interaction_id` 做多輪修改（便宜、穩定），或從頭生成。兩種方式都會在 provenance 裡留下可以完整重放的輸入。
@@ -268,7 +319,8 @@ anirecast source add <url> [--wait] | list | show <id> | rm <id>
 anirecast project create --source <id> --name <name> | list | show <p>
 anirecast clip set <p> --in 00:01:23.500 --out 00:01:53.000 [--confirm]
 anirecast shots detect <p> [--threshold n] | list <p> | split <p> <shot> --at <frame> | merge <p> <a> <b> | set <p> <shot> --mode keep|replace|exclude --rep-frame <n>
-anirecast cast analyze <p> | list <p> | rename|merge|split … | map <p> <cast> --persona <id>|--keep
+anirecast cast analyze <p> | list <p> [--looks] | assign <tracklet> --to <cast> | merge <a> <b> | split <cast> --tracklets … | not-character <tracklet> | rename <cast> <name>  (共用 --reason "…" --confidence 0.x；人工操作自動 lock)
+anirecast cast map <p> <cast> --persona <id>|--keep | look-policy <look> follow_source|persona
 anirecast persona add --name … --ref a.png --ref b.png | list | show | edit | archive
 anirecast board generate <p> [<shot>…|--all] [--prompt-file f] [--from <boardId>] [--budget 5] [--wait]
 anirecast take generate <p> [<shot>…|--all] [--prompt-file f] [--wait]
@@ -298,7 +350,10 @@ anirecast cost <p> [--shot <id>]
    - **啟動自我檢查**：`project/list` 能呼叫，而且找得到根目錄等於 Workspace 根目錄的專案 → 記下該專案的 `projectId`。
      - 找不到專案時：Web 和 `doctor` 提示「請在 Codex 桌面端把 Workspace 資料夾加為專案」。
      - `project/list` 不能用（例如 Codex 改版）：降級，thread 不指派專案，會出現在桌面端的「最近項目」，Web 的「在 Codex 打開」照常可用，並顯示降級警告。
-3. **一個分鏡對應一個 thread**：資料表 `codex_threads(shot_id, thread_id, created_at)`。Codex 紀錄只要求在本機桌面端看得到，不處理跨電腦遷移。
+3. **thread 對應**：資料表 `codex_threads(scope, scope_id, thread_id, created_at)`。
+   - 評審意見：一個分鏡一個 thread。
+   - 同一人識別的 Codex 判斷：一個項目一個 thread，命名為「AniRecast · <項目> · 角色辨識」。
+   - Codex 紀錄只要求在本機桌面端看得到，不處理跨電腦遷移。
    - 該分鏡還沒有 thread 時：
      - `thread/start`：cwd 是 Workspace 根目錄、`projectId` 是第 2 步找到的專案、`sandbox: workspace-write`、`approvalPolicy: never`。
      - 用 `thread/name/set` 命名為「AniRecast · <項目> · <分鏡序號>」。
@@ -370,6 +425,12 @@ anirecast cost <p> [--shot <id>]
   - Omni `720p` 輸出加動漫超解析模型放大。
   - 比較項目：與原片相鄰分鏡的清晰度差異、價格、耗時。同時確認上傳 1080p 原片會不會改善結果。
 - Flash 視覺模型分辨「疊加字幕」和「場景內文字」的準確度。
+- **同一人識別**：用一段角色有換裝、換髮型的節選，人工標好正確答案，量測：
+  - 只用程式分群（頭部 CCIP、全身 CCIP、兩者加權各一次）各歸對多少；
+  - 加上 Codex 判斷之後歸對多少；
+  - 校正分群門檻、送交 Codex 的信心門檻和每批數量；
+  - 確認 imgutils 頭部偵測在 OP 常見的側臉、背影、遠景、動態模糊下的漏判率。
+- imgutils 的實際套件版本、可用的 Python 版本，以及在 Apple Silicon 上用 CPU 跑一段 90 秒 OP 的耗時。
 
 ## 12. 留給 M7（Windows）確認的技術點
 
