@@ -94,7 +94,16 @@ describe('codex dispatcher (mock app-server)', () => {
       });
       expect(turn.params.input[0]).toMatchObject({ type: 'skill', name: 'anirecast' });
       expect(turn.params.input[0].path).toMatch(/skills\/anirecast\/SKILL\.md$/);
-      expect(calls.find((c) => c.cli)?.cli).toMatchObject({ ok: true, data: { status: 'done' } });
+      // The task turns done inside the CLI call; the mock logs that call's output only after it returns.
+      const cli = await waitFor(
+        () =>
+          readFileSync(mockLog, 'utf8')
+            .trim()
+            .split('\n')
+            .map((l) => JSON.parse(l))
+            .find((c) => c.cli)?.cli,
+      );
+      expect(cli).toMatchObject({ ok: true, data: { status: 'done' } });
 
       const threads = all<{ thread_id: string }>(ws.db, 'SELECT thread_id FROM codex_threads');
       expect(threads).toEqual([{ thread_id: 'thr_mock_1' }]);
