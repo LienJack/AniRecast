@@ -161,12 +161,12 @@ AniRecast/
 | `boards` | id、shot_id、version、status、path、prompt、model、params_json、inputs_json（路徑 + sha256）、parent_id、remote_json、cost_usd、created_by |
 | `takes` | 同 boards，另加 board_id、segment_index、frames_in、frames_out、conform_json |
 | `reviews` | id、target_type（board／take／render）、target_id、verdict（approve／changes／regenerate／keep_original）、comment、annotations_json |
-| `agent_tasks` | id、review_id、shot_id、status（open／claimed／done／needs_user／cancelled）、claimed_by、result_note、result_target_id、agent_final_message |
-| `codex_threads` | shot_id、machine_id、thread_id、created_at（thread 只在該台電腦有效） |
-| `codex_usage` | task_id、machine_id、thread_id、tokens_json、at |
+| `agent_tasks` | id、review_id、shot_id、status（open／claimed／done／needs_user／cancelled）、claimed_by、result_note、result_target_id |
+| `codex_threads` | shot_id、thread_id、created_at |
+| `codex_usage` | task_id、thread_id、tokens_json、at |
 | `jobs` | id、type、lane（generate／media／agent）、payload_json、status、progress、error、attempts、cost_estimate、cost_actual、requested_by（user／codex:<thread_id>／system）、timestamps |
 | `events` | seq（自增）、at、actor、kind、entity_type、entity_id、payload_json。與狀態變更寫在同一個交易，daemon 追蹤後推給 SSE |
-| `daemon_heartbeat` | machine_id、pid、version、at（每 2 秒更新；CLI 據此判斷 daemon 是否在跑） |
+| `daemon_heartbeat` | host、pid、version、at（每 2 秒更新；CLI 據此判斷 daemon 是否在跑） |
 | `renders` | id、project_id、version、kind（draft／final）、path、compare_path、shots_snapshot_json |
 | `cost_ledger` | id、job_id、model、usage_json、usd、at |
 
@@ -275,11 +275,11 @@ anirecast cost <p> [--shot <id>]
    - 實測 PATH 上的 0.156 會因為 `config.toml` 的模型被拒絕，所以不能直接用 PATH。
    - `doctor` 和設定頁會用選到的執行檔真的跑一輪探測，把錯誤原文顯示出來。
 2. **啟動**：daemon 常駐一個 `codex app-server` 子程序（`initialize` 時 `clientInfo.name = "anirecast"`）；程序掛掉就重啟。
-3. **一個分鏡對應一個 thread**：資料表 `codex_threads(shot_id, machine_id, thread_id, created_at)`。
+3. **一個分鏡對應一個 thread**：資料表 `codex_threads(shot_id, thread_id, created_at)`。Codex 紀錄只要求在本機桌面端看得到，不處理跨電腦遷移。
    - 這台電腦沒有該分鏡的 thread 時：`thread/start`（cwd 是 Workspace 根目錄、`sandbox: workspace-write`、`approvalPolicy: never`），再用 `thread/name/set` 命名為「AniRecast · <項目> · <分鏡序號>」。
    - 每一輪的 `turn/start` 都明確帶上 `sandboxPolicy: { type: workspaceWrite, networkAccess: false, writableRoots: [<Workspace 根目錄>] }`。Codex 只能寫 Workspace、不能連網，靠 CLI 寫 SQLite 和 daemon 溝通（已實測可行）。
    - 已經有 thread 時：`thread/resume`。
-   - 換到另一台電腦時（`machine_id` 不同）一律開新 thread。第一則訊息附上從 DB 整理的「前幾輪意見與處理摘要」。
+   - `thread/resume` 失敗時（例如 thread 被刪掉），直接開一個新 thread，不另外補前幾輪的內容。
 4. **一輪處理**：`turn/start` 的輸入包含：
    - `skill`：指向 repo 內 `skills/anirecast` 的路徑。明確指定，不依賴每台電腦都裝好 skill。
    - `localImage`：原代表幀、目前版本，以及你框選的區域截圖。
@@ -287,7 +287,7 @@ anirecast cost <p> [--shot <id>]
 5. **進度與紀錄**：
    - `item/*` 事件（包括 `item/agentMessage/delta`）透過 SSE 轉給 Web 即時顯示。
    - `thread/tokenUsage/updated` 寫進 Codex 用量帳本；`account/rateLimits/updated` 用來判斷額度、必要時暫停派發。
-   - 一輪結束時，把 Codex 的最後訊息和 `tasks done --note` 的說明存進 DB。**Codex thread 只是「這台電腦上的檢視」，Workspace 裡的紀錄才是真相。**
+   - 一輪結束時，只把 `tasks done --note` 的一句說明和 thread id 存進 DB，給 Web 的版本歷史顯示和連結；完整過程留在 Codex 桌面端。
 6. **併發**：agent 通道一次只跑一輪；同一分鏡處理中時，新的意見排在後面。
    - agent 通道與生成通道分開：Codex 那一輪會執行 `board generate --wait` 等生成完成，兩者共用名額會互相卡死。
    - CLI 從環境變數 `CODEX_THREAD_ID` 取得 thread id，記進 `jobs.requested_by` 和版本的 `created_by`，Web 就能從版本連回 Codex thread。
@@ -322,8 +322,7 @@ anirecast cost <p> [--shot <id>]
 
 - 本機設定：`~/.config/anirecast/config.json`，內容包含：
   - 預設模型 ID、併發數、最近使用的 Workspace；
-  - 自動派發開關、`codex.binPath`（不設定時自動尋找）、`codex.model`（不設定時沿用該電腦 `~/.codex/config.toml` 的設定）；
-  - `machineId`：首次啟動時產生，用來區分各台電腦的 Codex thread。
+  - 自動派發開關、`codex.binPath`（不設定時自動尋找）、`codex.model`（不設定時沿用該電腦 `~/.codex/config.toml` 的設定）。
 - 金鑰：環境變數 `GEMINI_API_KEY`（也接受 `GEMINI_OMNI_API_KEY`），或 `anirecast auth set-key` 寫進 macOS 鑰匙圈。repo 裡的 `.env` 只給開發用，已經加進 `.gitignore`。
 - 模型 ID 不寫死在程式碼裡：`models.image = gemini-nano-banana-2.1`、`models.video = gemini-omni-1.1-flash`、`models.vision = <M0 選定>`。
 
