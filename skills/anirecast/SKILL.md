@@ -52,7 +52,9 @@ For each case decide, then act with a reason and a confidence:
 - Not a character (background figure, false detection): `anirecast cast not-character <tracklet> --reason "…"`
 - Unsure: leave it; mention it in the done note so the human checks it in the cast page.
 
-Two people in the same frame are never the same person.
+Two people in the same frame are never the same person — except in collages, character-sheet or file-card
+layouts, split screens and multi-panel frames, where one character can appear several times (front, side,
+back). Judge those by appearance and merge them.
 
 ## Writing prompt revisions
 
