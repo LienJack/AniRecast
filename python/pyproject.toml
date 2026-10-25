@@ -1,0 +1,22 @@
+[project]
+name = "anirecast-py"
+version = "0.1.0"
+description = "AniRecast Python sidecar: shot detection, anime character detection and CCIP identity clustering"
+readme = "README.md"
+authors = [
+    { name = "LienJack", email = "lienjoe96@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "dghs-imgutils>=0.19.0",
+    "onnxruntime>=1.31.0",
+    "scenedetect[opencv-headless]>=0.7.2",
+    "scikit-learn>=1.9.1",
+]
+
+[project.scripts]
+anirecast-py = "anirecast_py:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"

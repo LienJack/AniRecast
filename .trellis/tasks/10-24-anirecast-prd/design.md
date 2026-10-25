@@ -56,7 +56,7 @@ flowchart TB
 | 語言／執行環境 | TypeScript、Node.js ≥ 24 LTS（本機目前是 26） | 你偏好 Node/TS；daemon、CLI、Web 共用型別 |
 | Monorepo | pnpm workspaces | 本機已有 pnpm 11 |
 | HTTP 服務（只給 Web） | Hono + `@hono/node-server`，用 zod 驗證，SSE 推事件 | 輕、型別好；請求與回應 schema 和 core 共用 |
-| 資料庫 | SQLite（WAL）+ Drizzle ORM / drizzle-kit 遷移。Driver 在 M1 決定：`better-sqlite3`（成熟，但需要原生模組），或 Node 內建的 `node:sqlite`（實測可用，Windows 不用編譯；Drizzle 0.45 沒有官方 driver，要接 sqlite-proxy） | 本機單檔，可以跟著 Workspace 搬走；CLI 和 daemon 兩個行程同時存取，WAL 支援 |
+| 資料庫 | **SQLite（WAL）+ Node 內建 `node:sqlite` + 手寫 SQL 遷移檔，不用 ORM**（S1 定案） | 本機單檔，跟著 Workspace 搬走；CLI 和 daemon 兩個行程同時存取，WAL 支援。實測在 Codex 沙箱內可以寫入；沒有原生模組，Windows（M7）不用編譯；資料表約 20 張，不需要 ORM |
 | 背景任務 | 自製 SQLite `jobs` 表 + daemon 內 worker，分通道：生成通道（Gemini 依模型限流）、媒體通道（ffmpeg）、agent 通道（Codex 一次一輪） | 不需要 Redis；daemon 重啟後任務還在。分通道是為了避免死鎖：agent 那一輪會用 `--wait` 等生成 job 完成，兩者不能共用同一個併發名額 |
 | 服務常駐 | macOS：launchd LaunchAgent（`setup` 安裝，KeepAlive）；Windows：M7 | daemon 必須在沙箱外、開機就在 |
 | Web | React 19 + Vite + TanStack Router + TanStack Query + shadcn/ui（Radix + Tailwind CSS v4）+ lucide 圖示；本機 UI 狀態用 Zustand | 目前 React 生態的主流組合；這是本機 SPA，不需要 Next.js 的伺服器端功能 |
