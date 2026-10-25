@@ -5,6 +5,7 @@ import {
   answerAgentTask,
   approvedTake,
   askUser,
+  assertQuota,
   cancelAgentTask,
   claimAgentTask,
   claimNextAgentTask,
@@ -28,6 +29,8 @@ import {
   projectOfShot,
   queueBoard,
   queueTake,
+  quotaOverview,
+  safetyBlockCount,
   shotStage,
   spendBreakdown,
   submitReview,
@@ -133,6 +136,10 @@ export function registerGenerate(program: Command): void {
     .option('--prompt-file <file>', 'extra instructions from a file')
     .option('--from <takeId>', 'revise this take (same inputs, plus --extra)')
     .option('--force', 'generate a replace shot without an approved board')
+    .option(
+      '--retry-blocked',
+      'send a shot the safety filter has already blocked limits.maxSafetyBlocks times',
+    )
     .option('--wait', 'wait for generation')
     .action(
       command(
@@ -146,6 +153,7 @@ export function registerGenerate(program: Command): void {
             promptFile?: string;
             from?: string;
             force?: boolean;
+            retryBlocked?: boolean;
             wait?: boolean;
           },
         ) =>
@@ -157,21 +165,33 @@ export function registerGenerate(program: Command): void {
             const ids = opts.from
               ? [getTake(ws.db, opts.from).shotId]
               : targetShots(ws, projectRef, shotIds, Boolean(opts.all), ['replace', 'clean']);
-            const ready =
+            const config = loadConfig();
+            const staged =
               opts.all && !opts.force
                 ? ids.filter((id) => ['take_pending', 'stale', 'failed'].includes(shotStage(ws.db, id, tier)))
                 : ids;
+            // With --all, shots the safety filter keeps refusing are left out instead of failing the batch.
+            const blockedOut =
+              opts.all && !opts.retryBlocked
+                ? staged.filter((id) => safetyBlockCount(ws.db, id) >= config.limits.maxSafetyBlocks)
+                : [];
+            const ready = staged.filter((id) => !blockedOut.includes(id));
+            // Check the whole batch against today's quota before queueing any of it.
+            if (config.provider !== 'fake' && process.env.ANIRECAST_PROVIDER !== 'fake')
+              assertQuota(ws.db, config, config.models.video, ready.length, { includePending: true });
             const extra = extraText(opts);
             const queued = ready.map((id) =>
               queueTake(ws, id, tier, actorFromEnv(), {
                 ...(extra ? { extra } : {}),
                 ...(opts.from ? { fromTakeId: opts.from } : {}),
                 force: Boolean(opts.force),
+                retryBlocked: Boolean(opts.retryBlocked),
               }),
             );
             return {
               takes: queued.map((q) => q.take),
-              skipped: ids.filter((id) => !ready.includes(id)),
+              skipped: ids.filter((id) => !staged.includes(id)),
+              blockedOut,
               ...(await waitAll(
                 ws,
                 queued.map((q) => q.job.id),
@@ -186,15 +206,19 @@ export function registerGenerate(program: Command): void {
     .description(
       'Regenerate the approved take at the next tier (draft → preview → final) with the same inputs',
     )
+    .option('--retry-blocked', 'send even if the safety filter keeps blocking this shot')
     .option('--wait')
     .action(
-      command((shotId: string, opts: { wait?: boolean }) =>
+      command((shotId: string, opts: { retryBlocked?: boolean; wait?: boolean }) =>
         withWorkspace(globals(), async (ws) => {
           const approved = approvedTake(ws.db, shotId);
           if (!approved) throw new AniError('conflict', 'This shot has no approved take to promote');
           const next = TIERS[TIERS.indexOf(approved.tier) + 1];
           if (!next) throw new AniError('conflict', 'Already at the final tier');
-          const q = queueTake(ws, shotId, next, actorFromEnv(), { fromTakeId: approved.id });
+          const q = queueTake(ws, shotId, next, actorFromEnv(), {
+            fromTakeId: approved.id,
+            retryBlocked: Boolean(opts.retryBlocked),
+          });
           return { take: q.take, ...(await waitAll(ws, [q.job.id], opts.wait)) };
         }),
       ),
@@ -350,6 +374,24 @@ export function registerGenerate(program: Command): void {
             capUsd: loadConfig().budget.capUsd,
             breakdown: spendBreakdown(ws.db, projectId),
           };
+        }),
+      ),
+    );
+
+  program
+    .command('quota')
+    .description("Today's provider requests per model against the daily quota (blocked requests count)")
+    .action(
+      command(() =>
+        withWorkspace(globals(), (ws) => {
+          const local = (at: number) => new Date(at).toLocaleString('sv-SE').slice(0, 16);
+          return quotaOverview(ws.db, loadConfig()).map((q) => ({
+            ...q,
+            limit: Number.isFinite(q.limit) ? q.limit : null,
+            remaining: Number.isFinite(q.remaining) ? q.remaining : null,
+            dayStartLocal: local(q.dayStart),
+            resetsAtLocal: local(q.resetsAt),
+          }));
         }),
       ),
     );

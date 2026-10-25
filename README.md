@@ -79,6 +79,15 @@ anirecast cost my-op
 `anirecast project tier <project> draft|preview|final` 設定項目預設檔位。預算上限在
 `~/.config/anirecast/config.json` 的 `budget.capUsd`，超過就停止生成。
 
+Omni 有每日請求次數上限（API Tier 2 每天 100 次，太平洋時間午夜重置）。被安全過濾擋下的請求不收費，但也算次數。
+`anirecast quota` 會列出今天每個模型已用、排隊中和剩下的次數；項目總覽的成本卡也會顯示。上限設在
+`config.json` 的 `limits.perDay`，升級 API 等級後再調高。
+
+系統的保護方式：
+- 排入的分鏡視頻超過剩餘次數時，整批都不會排入。
+- 同一個鏡頭被安全過濾擋下 `limits.maxSafetyBlocks`（預設 2）次後，就不會再自動送出。`--all` 會跳過它，並在
+  `blockedOut` 列出；確定要再試時加上 `--retry-blocked`。只要這個鏡頭之後有一次成功，計數就會歸零。
+
 ### Codex 自動派發
 
 評審時按「要求修改」，或角色識別有不確定的地方，就會建立 agent 任務。Daemon 透過 `codex app-server` 開一個 thread，

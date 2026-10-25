@@ -16,6 +16,14 @@ export interface LocalConfig {
   codex: { autoDispatch: boolean; binPath: string | null; model: string | null };
   /** After shot detection, queue the Flash analysis and same-person identification automatically. */
   pipeline: { autoAnalyze: boolean };
+  limits: {
+    /** Requests per model per quota day; blocked requests count too. Models not listed are not limited. */
+    perDay: Record<string, number>;
+    /** Google resets daily quotas at midnight Pacific time. */
+    quotaTimeZone: string;
+    /** After this many safety-filter blocks a shot is not sent again without `--retry-blocked`. */
+    maxSafetyBlocks: number;
+  };
 }
 
 export const DEFAULT_CONFIG: LocalConfig = {
@@ -28,6 +36,12 @@ export const DEFAULT_CONFIG: LocalConfig = {
   concurrency: { generate: 2, media: 2, io: 2 },
   codex: { autoDispatch: true, binPath: null, model: null },
   pipeline: { autoAnalyze: true },
+  // Omni allows 100 requests a day on API tier 2 (measured 2026-10-25); raise it after upgrading the tier.
+  limits: {
+    perDay: { 'gemini-omni-1.1-flash': 100 },
+    quotaTimeZone: 'America/Los_Angeles',
+    maxSafetyBlocks: 2,
+  },
 };
 
 /** Per-machine settings live outside the workspace; `ANIRECAST_CONFIG_DIR` overrides for tests. */

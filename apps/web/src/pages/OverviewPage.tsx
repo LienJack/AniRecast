@@ -316,6 +316,18 @@ export function OverviewPage() {
                         還沒有付費呼叫（fake 供應器不計費）。
                       </span>
                     )}
+                    {(cost.data.quota ?? [])
+                      .filter((q) => q.limit !== null)
+                      .map((q) => (
+                        <div
+                          key={q.model}
+                          className={`text-xs ${q.exhausted || q.remaining === 0 ? 'text-red-300' : 'text-muted-foreground'}`}
+                          title="整個 Workspace 今天送出的請求；被安全過濾擋下的也算"
+                        >
+                          {q.model} 今日 {q.used}/{q.limit} 次{q.pending ? ` · 排隊 ${q.pending}` : ''}
+                          {q.exhausted ? ' · 配額已用完' : ''} · {formatTime(q.resetsAt)} 重置
+                        </div>
+                      ))}
                   </>
                 ) : cost.isError ? (
                   <ErrorState error={cost.error} className="m-0" />

@@ -1,5 +1,6 @@
 import { loadConfig } from '../config.ts';
 import { enqueueJob } from '../jobs.ts';
+import { assertNotBlockedOut, assertQuota } from '../quota.ts';
 import type { Workspace } from '../workspace.ts';
 import { createAgentTask, getAgentTask, listAgentTasks } from './agent-tasks.ts';
 import { listCast, shotCast } from './cast.ts';
@@ -60,8 +61,12 @@ export function queueTake(
   shotId: string,
   tier: GenerationTier,
   actor: string,
-  opts: { extra?: string; fromTakeId?: string; force?: boolean } = {},
+  opts: { extra?: string; fromTakeId?: string; force?: boolean; retryBlocked?: boolean } = {},
 ) {
+  const config = loadConfig();
+  assertNotBlockedOut(ws.db, config, shotId, opts.retryBlocked);
+  if (config.provider !== 'fake' && process.env.ANIRECAST_PROVIDER !== 'fake')
+    assertQuota(ws.db, config, config.models.video, 1, { includePending: true });
   const plan = planTake(ws, shotId, tier, opts);
   const take = createTake(
     ws.db,
@@ -70,7 +75,7 @@ export function queueTake(
       tier,
       boardId: plan.boardId,
       prompt: plan.prompt,
-      model: loadConfig().models.video,
+      model: config.models.video,
       params: plan.params,
       inputs: plan.inputs,
       parentId: opts.fromTakeId ?? null,

@@ -87,10 +87,24 @@ export interface Health {
   codex: CodexStatus;
 }
 
+export interface QuotaStatus {
+  model: string;
+  /** null = this model has no daily limit configured. */
+  limit: number | null;
+  used: number;
+  pending: number;
+  remaining: number | null;
+  exhausted: boolean;
+  dayStart: number;
+  resetsAt: number;
+}
+
 export interface CostSummary {
   totalUsd: number;
   capUsd: number | null;
   breakdown: Array<{ model: string; tier: string | null; calls: number; usd: number }>;
+  /** Today's requests per model, workspace-wide (blocked requests count against the quota). */
+  quota?: QuotaStatus[];
 }
 
 export interface QueueResult<T> {

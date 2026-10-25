@@ -36,6 +36,7 @@ import {
 } from '@anirecast/providers';
 import { AniError, toEnvelopeError } from '@anirecast/shared';
 import type { JobContext, JobHandler } from '../runner.ts';
+import { metered } from './metered.ts';
 import { outPath, span } from './util.ts';
 
 /** Remote uploads expire after ~48 h; reuse one only while it is comfortably fresh. */
@@ -82,14 +83,16 @@ export const generateBoardHandler: JobHandler = async (ctx) => {
     updateBoard(ws.db, boardId, { status: 'generating' }, 'daemon');
     ctx.progress(0.1, 'generating board');
     const params = board.params as { aspectRatio?: '16:9'; imageSize?: '1K' | '2K' };
-    const result = await services.provider.generateImage({
-      model: board.model,
-      prompt: board.prompt,
-      images,
-      aspectRatio: params.aspectRatio ?? '16:9',
-      imageSize: params.imageSize ?? '1K',
-      signal,
-    });
+    const result = await metered(ctx, { model: board.model, kind: 'image', shotId: board.shotId }, () =>
+      services.provider.generateImage({
+        model: board.model,
+        prompt: board.prompt,
+        images,
+        aspectRatio: params.aspectRatio ?? '16:9',
+        imageSize: params.imageSize ?? '1K',
+        signal,
+      }),
+    );
     ledger(ctx, result, project.id, null);
     const ext = result.mimeType === 'image/png' ? 'png' : 'jpg';
     const stem = `${shotDir(project, board.shotId)}/boards/${boardFileStem(board.version)}`;
@@ -184,19 +187,21 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
     const uploadSha = `${video.sha256 ?? ''}:${uploadHeight}:step${OMNI_FRAME_STEP}`;
     const cachedFileUri = reusableUpload(ws, take, uploadSha);
 
-    const result = await services.provider.editVideo({
-      model: take.model,
-      prompt: take.prompt,
-      video: { path: ws.abs(uploadRel), mimeType: 'video/mp4' },
-      inputFrames: shot.frameCount,
-      inputSeconds: seconds,
-      images: refs.map((r) => ({ path: ws.abs(r.path), mimeType: mimeFor(r.path) })),
-      resolution,
-      aspectRatio: '16:9',
-      ...(cachedFileUri ? { cachedFileUri } : {}),
-      signal,
-      onStatus: (m) => progress(0.15, m),
-    });
+    const result = await metered(ctx, { model: take.model, kind: 'video_edit', shotId: shot.id }, () =>
+      services.provider.editVideo({
+        model: take.model,
+        prompt: take.prompt,
+        video: { path: ws.abs(uploadRel), mimeType: 'video/mp4' },
+        inputFrames: shot.frameCount,
+        inputSeconds: seconds,
+        images: refs.map((r) => ({ path: ws.abs(r.path), mimeType: mimeFor(r.path) })),
+        resolution,
+        aspectRatio: '16:9',
+        ...(cachedFileUri ? { cachedFileUri } : {}),
+        signal,
+        onStatus: (m) => progress(0.15, m),
+      }),
+    );
     ledger(ctx, result, project.id, take.tier);
     const remote = { ...result.remote, uploadSha, uploadedAt: cachedFileUri ? undefined : Date.now() };
 

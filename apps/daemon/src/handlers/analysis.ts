@@ -27,6 +27,7 @@ import {
 import { cropGrid, runSidecar } from '@anirecast/media';
 import { estimateVisionCost } from '@anirecast/providers';
 import type { JobContext, JobHandler } from '../runner.ts';
+import { metered } from './metered.ts';
 
 interface DetectOutput {
   shots: Array<{ shotId: string; tracklets: Parameters<typeof replaceAutoTracklets>[2] }>;
@@ -317,23 +318,25 @@ export const analyzeShotsHandler: JobHandler = async (ctx: JobContext) => {
     if (pick.length === 0) continue;
     if (services.provider.name !== 'fake')
       assertWithinBudget(ws.db, services.config.budget.capUsd, estimateVisionCost(model, pick.length));
-    const result = await services.provider.analyzeImages<{
-      description?: string;
-      shotSize?: string;
-      cameraMovement?: string;
-      overlays?: Array<{
-        text?: string;
-        box_2d: number[];
-        category: 'staff_credit' | 'title_or_other' | 'in_scene';
-      }>;
-      characters?: Array<{ box_2d: number[] } & Record<string, unknown>>;
-    }>({
-      model,
-      prompt: SHOT_PROMPT,
-      images: pick.map((k) => ({ path: ws.abs(k.path), mimeType: 'image/jpeg' })),
-      responseSchema: SHOT_SCHEMA,
-      signal,
-    });
+    const result = await metered(ctx, { model, kind: 'vision', shotId: shot.id }, () =>
+      services.provider.analyzeImages<{
+        description?: string;
+        shotSize?: string;
+        cameraMovement?: string;
+        overlays?: Array<{
+          text?: string;
+          box_2d: number[];
+          category: 'staff_credit' | 'title_or_other' | 'in_scene';
+        }>;
+        characters?: Array<{ box_2d: number[] } & Record<string, unknown>>;
+      }>({
+        model,
+        prompt: SHOT_PROMPT,
+        images: pick.map((k) => ({ path: ws.abs(k.path), mimeType: 'image/jpeg' })),
+        responseSchema: SHOT_SCHEMA,
+        signal,
+      }),
+    );
     recordCost(ws.db, {
       jobId: job.id,
       projectId: project.id,

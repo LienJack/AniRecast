@@ -5,6 +5,7 @@ import {
   type AgentTaskStatus,
   addPersonaImage,
   answerAgentTask,
+  assertQuota,
   assignTracklet,
   cancelAgentTask,
   createClip,
@@ -46,6 +47,7 @@ import {
   projectOverview,
   queueBoard,
   queueTake,
+  quotaOverview,
   readLock,
   recomputeShotModes,
   rememberWorkspace,
@@ -514,6 +516,7 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
         extra?: string;
         fromTakeId?: string;
         force?: boolean;
+        retryBlocked?: boolean;
       }>(c);
       const project = getProject(ws.db, c.req.param('ref'));
       const tier = b.tier ?? (b.fromTakeId ? getTake(ws.db, b.fromTakeId).tier : project.generationTier);
@@ -521,22 +524,31 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
       let ids = shotsForMode(ws, project.id, b.shotIds, ['replace', 'clean']);
       if (!b.shotIds?.length && !b.force)
         ids = ids.filter((id) => ['take_pending', 'stale', 'failed'].includes(shotStage(ws.db, id, tier)));
+      const config = loadConfig();
+      // The whole batch must fit in today's quota before any of it is queued.
+      if (config.provider !== 'fake' && process.env.ANIRECAST_PROVIDER !== 'fake')
+        assertQuota(ws.db, config, config.models.video, ids.length, { includePending: true });
       return queueMany(ids, (id) =>
         queueTake(ws, id, tier, USER, {
           ...(b.extra ? { extra: b.extra } : {}),
           ...(b.fromTakeId ? { fromTakeId: b.fromTakeId } : {}),
           force: Boolean(b.force),
+          retryBlocked: Boolean(b.retryBlocked),
         }),
       );
     }),
   );
-  app.post('/api/takes/:id/promote', (c) =>
-    handle(c, () => {
+  app.post('/api/takes/:id/promote', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ retryBlocked?: boolean }>(c);
       const take = getTake(ws.db, c.req.param('id'));
       if (take.status !== 'approved') throw new AniError('conflict', 'Only an approved take can be promoted');
       const next = TIERS[TIERS.indexOf(take.tier) + 1];
       if (!next) throw new AniError('conflict', 'Already at the final tier');
-      return queueTake(ws, take.shotId, next, USER, { fromTakeId: take.id });
+      return queueTake(ws, take.shotId, next, USER, {
+        fromTakeId: take.id,
+        retryBlocked: Boolean(b.retryBlocked),
+      });
     }),
   );
   app.post('/api/reviews', async (c) =>
@@ -606,7 +618,18 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
         totalUsd: totalSpend(ws.db, projectId ? { projectId } : {}),
         capUsd: loadConfig().budget.capUsd,
         breakdown: spendBreakdown(ws.db, projectId),
+        quota: quotaView(ws),
       };
     }),
   );
+  app.get('/api/quota', (c) => handle(c, () => quotaView(ws)));
+}
+
+/** Daily request quota per model; Infinity (no limit) is sent as null. */
+function quotaView(ws: Workspace) {
+  return quotaOverview(ws.db, loadConfig()).map((q) => ({
+    ...q,
+    limit: Number.isFinite(q.limit) ? q.limit : null,
+    remaining: Number.isFinite(q.remaining) ? q.remaining : null,
+  }));
 }

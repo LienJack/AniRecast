@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  all,
   createCastMember,
   createTracklet,
   findActiveClip,
@@ -171,6 +172,21 @@ describe('board → take → render with the fake provider', () => {
       });
       expect(existsSync(path.join(root, render!.comparePath))).toBe(true);
       expect(existsSync(path.join(root, render!.compareProxyPath))).toBe(true);
+
+      // Every provider call is logged for the daily quota; fake requests are logged but never counted.
+      const quota = await cliData<Array<{ model: string; used: number }>>(t, ['quota']);
+      expect(quota.find((q) => q.model === 'gemini-omni-1.1-flash')?.used).toBe(0);
+      const logged = openWorkspace(root, { role: 'cli' });
+      try {
+        const kinds = all<{ kind: string; n: number }>(
+          logged.db,
+          `SELECT kind, COUNT(*) AS n FROM provider_requests WHERE provider = 'fake' AND outcome = 'ok' GROUP BY kind`,
+        );
+        expect(kinds.find((k) => k.kind === 'video_edit')?.n).toBeGreaterThanOrEqual(3);
+        expect(kinds.find((k) => k.kind === 'image')?.n).toBeGreaterThanOrEqual(1);
+      } finally {
+        logged.close();
+      }
 
       const sheet = await cliData<{ absPath: string }>(t, ['take', 'sheet', takes.takes[0]!.id]);
       expect(await probe(sheet.absPath)).toMatchObject({ height: 540 });

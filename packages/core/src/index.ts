@@ -9,5 +9,6 @@ export * from './lock.ts';
 export * from './migrations.ts';
 export * from './naming.ts';
 export * from './paths.ts';
+export * from './quota.ts';
 export * from './secrets.ts';
 export * from './workspace.ts';

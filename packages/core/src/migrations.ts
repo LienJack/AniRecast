@@ -372,6 +372,27 @@ CREATE TABLE cost_ledger (
 );
 `,
   },
+  {
+    version: 2,
+    name: 'provider request log',
+    // Every request sent to a model, paid or not: blocked requests cost nothing but still use the daily quota.
+    sql: `
+CREATE TABLE provider_requests (
+  id TEXT PRIMARY KEY,
+  at INTEGER NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('image', 'video_edit', 'vision')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'blocked', 'rejected', 'rate_limited', 'error')),
+  detail TEXT,
+  job_id TEXT REFERENCES jobs(id),
+  project_id TEXT REFERENCES projects(id),
+  shot_id TEXT REFERENCES shots(id) ON DELETE SET NULL
+);
+CREATE INDEX provider_requests_model_at ON provider_requests(model, at);
+CREATE INDEX provider_requests_shot ON provider_requests(shot_id);
+`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
