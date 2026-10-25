@@ -141,6 +141,7 @@ describe('Codex discussions', () => {
       topic: '設計',
       actor: 'user',
     });
+    expect(readFileSync(ws.abs(`${h.dir}/BRIEF.md`), 'utf8')).toContain('出場的分鏡（2 個');
     const submitted = submitHandoff(
       ws,
       h.id,

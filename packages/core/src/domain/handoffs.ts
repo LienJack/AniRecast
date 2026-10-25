@@ -27,7 +27,7 @@ import {
   getDesign,
   setDesignNote,
 } from './designs.ts';
-import { type Board, getBoard, getTake, type Take } from './generation.ts';
+import { type Board, getBoard, getTake, listTakes, shotStage, type Take } from './generation.ts';
 import { recomputeShotModes } from './modes.ts';
 import { getPersona, type Persona } from './personas.ts';
 import {
@@ -370,6 +370,25 @@ function personaSection(ws: Workspace, projectId: string, personaId: string, foc
     `- 物料庫圖片：${persona.images.map((i) => `${ws.abs(i.path)}（${i.view}）`).join('、') || '無'}`,
     `- 這個項目的改編說明：${designNote(ws.db, projectId, persona.id) || '（沒有）'}`,
   ];
+  // Where the character appears, and why the latest attempts there failed (often the content filter).
+  const tier = getProject(ws.db, projectId).generationTier;
+  const shotIds = all<{ shot_id: string }>(
+    ws.db,
+    `SELECT DISTINCT t.shot_id FROM tracklets t JOIN cast_members c ON c.id = t.cast_member_id
+       JOIN shots s ON s.id = t.shot_id
+     WHERE c.project_id = :projectId AND c.persona_id = :personaId ORDER BY s.order_index`,
+    { projectId, personaId: persona.id },
+  ).map((r) => r.shot_id);
+  if (shotIds.length) {
+    lines.push('', `出場的分鏡（${shotIds.length} 個，檔位 ${TIER_TEXT[tier]}）：`);
+    for (const id of shotIds.slice(0, 40)) {
+      const failed = listTakes(ws.db, id).filter((t) => t.status === 'failed' && t.error);
+      const last = failed.at(-1);
+      lines.push(
+        `- ${shotNo(ws.db, id)}（\`${id}\`）· ${shotStage(ws.db, id, tier)}${failed.length ? ` · 分鏡視頻失敗 ${failed.length} 次，最近一次：${last?.error?.slice(0, 160)}` : ''}`,
+      );
+    }
+  }
   for (const sheet of entry?.sheets ?? []) {
     lines.push('', `${KIND_TEXT[sheet.kind]}：`);
     if (!sheet.versions.length) lines.push('- 還沒有');
