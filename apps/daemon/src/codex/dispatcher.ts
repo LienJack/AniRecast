@@ -260,7 +260,7 @@ export class AgentDispatcher {
     return [
       `AniRecast 任務 ${task.id}（${task.kind === 'cast_review' ? '同一人識別判斷' : '評審意見'}），已經替你領取。`,
       `1. 先執行 \`anirecast tasks show ${task.id}\` 讀取完整內容（意見、目前版本、輸入檔路徑、建議步驟）。`,
-      '2. 依 anirecast skill 處理。只透過 anirecast CLI 操作，不要直接改 Workspace 裡的檔案；你沒有網路，模型呼叫由 AniRecast 服務代勞。',
+      `2. 依 anirecast skill（${SKILL_PATH}）處理。只透過 anirecast CLI 操作，不要直接改 Workspace 裡的檔案；你沒有網路，模型呼叫由 AniRecast 服務代勞。用 --from 修正版本時會沿用原版本的檔位。`,
       `3. 完成時執行 \`anirecast tasks done ${task.id} --note "<一句話說明改了什麼>"${task.kind === 'review_feedback' ? ' --result <新版本 id>' : ''}\`。`,
       `4. 意見不明確或連續兩次被內容過濾擋下時，用 \`anirecast tasks ask ${task.id} --question "…"\` 問人類，然後結束。`,
       '不要替人類按「通過」。',

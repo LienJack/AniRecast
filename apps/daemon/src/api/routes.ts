@@ -509,7 +509,7 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
         force?: boolean;
       }>(c);
       const project = getProject(ws.db, c.req.param('ref'));
-      const tier = b.tier ?? project.generationTier;
+      const tier = b.tier ?? (b.fromTakeId ? getTake(ws.db, b.fromTakeId).tier : project.generationTier);
       if (!TIERS.includes(tier)) throw new AniError('usage', `Tier must be one of ${TIERS.join(', ')}`);
       let ids = shotsForMode(ws, project.id, b.shotIds, ['replace', 'clean']);
       if (!b.shotIds?.length && !b.force)

@@ -15,11 +15,13 @@ import {
   initWorkspace,
   listShots,
   mapCast,
+  markNotCharacter,
   markShotGenerationStale,
   mergeCast,
   recomputeShotModes,
   replaceAutoOverlays,
   replaceShots,
+  replacementSignature,
   run,
   setOverlayRemoval,
   shotCast,
@@ -116,6 +118,32 @@ describe('shot modes', () => {
     );
     expect(markShotGenerationStale(ws.db, shotId, 'mapping changed', 'user')).toBe(2);
     expect(markShotGenerationStale(ws.db, shotId, 'again', 'user')).toBe(0);
+    ws.close();
+  });
+});
+
+describe('replacement signature', () => {
+  it('keeps versions whose signature still matches and stales them when the mapping changes', () => {
+    const { ws, projectId, shotIds } = fixture();
+    const shotId = shotIds[0]!;
+    const hero = createCastMember(ws.db, { projectId, label: 'hero' }, 'daemon');
+    const extra = createCastMember(ws.db, { projectId, label: 'extra' }, 'daemon');
+    createTracklet(ws.db, { shotId, castMemberId: hero.id });
+    const bystander = createTracklet(ws.db, { shotId, castMemberId: extra.id });
+    const persona = createPersona(ws, { name: 'P' }, 'user');
+    mapCast(ws.db, hero.id, persona.id, 'user');
+    const sig = replacementSignature(ws.db, shotId);
+    run(
+      ws.db,
+      `INSERT INTO boards (id, shot_id, version, status, prompt, model, params_json, created_by, created_at) VALUES ('b1', :shotId, 1, 'approved', 'p', 'm', :params, 'user', 1)`,
+      { shotId, params: JSON.stringify({ signature: sig }) },
+    );
+    // Dismissing the unmapped bystander does not touch what was generated.
+    markNotCharacter(ws.db, bystander.id, 'codex:t');
+    expect(markShotGenerationStale(ws.db, shotId, 'extra dismissed', 'codex:t')).toBe(0);
+    // Unmapping the hero does.
+    mapCast(ws.db, hero.id, null, 'user');
+    expect(markShotGenerationStale(ws.db, shotId, 'mapping changed', 'user')).toBe(1);
     ws.close();
   });
 });

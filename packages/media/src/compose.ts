@@ -156,6 +156,8 @@ export async function renderSequence(
       'medium',
       '-crf',
       '17',
+      '-af',
+      'apad',
       '-c:a',
       'aac',
       '-b:a',
@@ -167,7 +169,12 @@ export async function renderSequence(
     ],
     { ...opts, totalFrames: total },
   );
-  return total;
+  // AAC padding used to end the file a frame early under -shortest; count what was actually written.
+  const written = (
+    await probe(output, { countFrames: true, ...(opts.signal ? { signal: opts.signal } : {}) })
+  ).frameCount;
+  if (written !== total) throw new AniError('internal', `Render wrote ${written} frames, expected ${total}`);
+  return written;
 }
 
 /**
@@ -194,7 +201,7 @@ export async function stackCompare(
       `[0:v]scale=-2:${height},setsar=1[a];[1:v]scale=-2:${height},setsar=1[b];[a][b]${stack}=inputs=2,format=yuv420p[v]`,
       '-map',
       '[v]',
-      ...(audioFrom ? ['-map', '2:a', '-c:a', 'aac', '-b:a', '192k', '-shortest'] : ['-an']),
+      ...(audioFrom ? ['-map', '2:a', '-af', 'apad', '-c:a', 'aac', '-b:a', '192k', '-shortest'] : ['-an']),
       '-c:v',
       'libx264',
       '-preset',

@@ -322,8 +322,12 @@ export function addReview(
   return tx(db, () => {
     const target = input.targetType === 'board' ? getBoard(db, input.targetId) : getTake(db, input.targetId);
     if (input.verdict === 'approve') {
-      if (target.status !== 'ready' && target.status !== 'approved')
-        throw new AniError('conflict', `Only a ready version can be approved (this one is ${target.status})`);
+      // A stale version can still be approved: the human decides whether the change actually matters.
+      if (!['ready', 'approved', 'stale'].includes(target.status))
+        throw new AniError(
+          'conflict',
+          `Only a finished version can be approved (this one is ${target.status})`,
+        );
       if (input.createdBy.startsWith('codex:'))
         throw new AniError('conflict', 'Approval is a human decision; Codex can recommend but not approve');
       const table = input.targetType === 'board' ? 'boards' : 'takes';

@@ -151,7 +151,8 @@ export function registerGenerate(program: Command): void {
         ) =>
           withWorkspace(globals(), async (ws) => {
             const project = getProject(ws.db, projectRef);
-            const tier = opts.tier ?? project.generationTier;
+            // Revising a take stays on that take's tier unless told otherwise.
+            const tier = opts.tier ?? (opts.from ? getTake(ws.db, opts.from).tier : project.generationTier);
             if (!TIERS.includes(tier)) throw new AniError('usage', `Tier must be one of ${TIERS.join(', ')}`);
             const ids = opts.from
               ? [getTake(ws.db, opts.from).shotId]

@@ -248,6 +248,12 @@ Return:
 - characters: every person or humanoid character visible in image 2 with a box around the whole visible body and short English attributes (hair colour and style, eye colour, outfit, accessories).
 - description, shotSize and cameraMovement for the whole shot.`;
 
+/** Flash sometimes spells a missing value as the string "null". */
+const cleanText = (t: string | undefined): string | null => {
+  const v = t?.trim();
+  return v && v.toLowerCase() !== 'null' ? v : null;
+};
+
 const toBox = (b: number[]): [number, number, number, number] => {
   const [ymin = 0, xmin = 0, ymax = 0, xmax = 0] = b;
   return [xmin / 1000, ymin / 1000, xmax / 1000, ymax / 1000];
@@ -346,7 +352,7 @@ export const analyzeShotsHandler: JobHandler = async (ctx: JobContext) => {
         .map((o) => ({
           keyframeId: mid.id,
           bbox: toBox(o.box_2d),
-          text: o.text ?? null,
+          text: cleanText(o.text),
           category: o.category,
         })),
     );

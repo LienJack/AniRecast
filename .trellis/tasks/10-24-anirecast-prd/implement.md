@@ -98,7 +98,7 @@
   - 成片頁、任務中心；以 SSE 即時更新。
 - 驗證：Vitest 元件測試；Playwright 測主要流程（fake provider）；用瀏覽器實際操作一遍並截圖。
 
-### S10 分析：字幕、描述、同一人識別 — done: (S10 commit；真實 Flash 分析待 S11)
+### S10 分析：字幕、描述、同一人識別 — done: 9233d50（真實 Flash 分析在 S11 驗證）
 - 產出：
   - Flash 視覺分析：疊加字幕三類、外觀描述、分鏡描述；
   - sidecar：頭部與人物偵測 → 出場片段 → CCIP → 帶約束的分群 → 造型；
@@ -106,7 +106,7 @@
   - 人工鎖定作為硬約束。
 - 驗證：單元測試涵蓋同框互斥、鎖定決定不被推翻；用 fixture 量測準確度。
 
-### S11 Fixture 與真實接口端到端（付費，記帳）— done:
+### S11 Fixture 與真實接口端到端（付費，記帳）— done: (S11 commit；結果見 research/s11-real-run.md，花費 USD 2.82)
 - 產出：
   - 測試人設 2–3 個（Nano Banana）；
   - 自製測試 OP：

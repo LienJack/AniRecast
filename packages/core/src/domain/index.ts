@@ -13,3 +13,4 @@ export * from './plan.ts';
 export * from './projects.ts';
 export * from './shots.ts';
 export * from './sources.ts';
+export * from './signature.ts';

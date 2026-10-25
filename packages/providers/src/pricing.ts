@@ -13,15 +13,15 @@ const TOKEN_PRICES: Record<string, { input: number; output: number }> = {
 export const IMAGE_PRICE: Record<ImageSize, number> = { '1K': 0.0336, '2K': 0.0504, '4K': 0.113 };
 
 /**
- * Omni output tokens per second. 360p and 720p are measured (2026-10-25: 1,931 and 5,792);
- * 1080p and 4k are not published or measured yet, so they reuse 720p as a floor. 480p is rejected by the API.
+ * Omni output tokens per second. 360p, 720p and 1080p are measured (2026-10-25: 1,931, 5,792
+ * and 8,680); 4k is not measured yet and reuses 1080p as a floor. 480p is rejected by the API.
  */
 export const OMNI_OUTPUT_TOKENS_PER_SECOND: Record<VideoResolution, number> = {
   '360p': 1931,
   '480p': 1931,
   '720p': 5792,
-  '1080p': 5792,
-  '4k': 5792,
+  '1080p': 8680,
+  '4k': 8680,
 };
 /** Uploaded video input tokens per second, measured by input height (360p: 1,786; 720p: 5,851). */
 export function omniInputTokensPerSecond(inputHeight: number): number {

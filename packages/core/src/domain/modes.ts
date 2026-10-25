@@ -1,8 +1,9 @@
-import { all, type Db, run, tx } from '../db.ts';
+import { all, type Db, fromJson, run, tx } from '../db.ts';
 import { appendEvent } from '../events.ts';
 import { shotCast } from './cast.ts';
 import { findActiveClip } from './clips.ts';
 import { overlaysToRemove } from './overlays.ts';
+import { replacementSignature } from './signature.ts';
 import { getShot, listShots, type Shot, type ShotMode, updateShot } from './shots.ts';
 
 /** design §6: replace if a mapped persona appears; else clean if overlays must go; else keep. */
@@ -34,20 +35,27 @@ export function recomputeShotModes(
   return changes;
 }
 
-/** Marks a shot's usable boards/takes stale after an input it depended on changed. */
+/**
+ * Marks a shot's usable boards/takes stale after an input they depended on changed. Versions that recorded
+ * a replacement signature equal to the current one are left alone (e.g. dismissing a background extra).
+ */
 export function markShotGenerationStale(db: Db, shotId: string, reason: string, actor: string): number {
   return tx(db, () => {
-    const boards = run(
-      db,
-      `UPDATE boards SET status = 'stale' WHERE shot_id = :shotId AND status IN ('ready', 'approved')`,
-      { shotId },
-    ).changes;
-    const takes = run(
-      db,
-      `UPDATE takes SET status = 'stale' WHERE shot_id = :shotId AND status IN ('ready', 'approved')`,
-      { shotId },
-    ).changes;
-    if (boards + takes > 0) {
+    const current = replacementSignature(db, shotId);
+    let changed = 0;
+    for (const table of ['boards', 'takes'] as const) {
+      const rows = all<{ id: string; params_json: string }>(
+        db,
+        `SELECT id, params_json FROM ${table} WHERE shot_id = :shotId AND status IN ('ready', 'approved')`,
+        { shotId },
+      );
+      for (const r of rows) {
+        const sig = fromJson<{ signature?: string }>(r.params_json, {}).signature;
+        if (sig !== undefined && sig === current) continue;
+        changed += run(db, `UPDATE ${table} SET status = 'stale' WHERE id = :id`, { id: r.id }).changes;
+      }
+    }
+    if (changed > 0) {
       const shot = getShot(db, shotId);
       const projectId =
         all<{ project_id: string }>(db, 'SELECT project_id FROM clips WHERE id = :id', { id: shot.clipId })[0]
@@ -58,9 +66,9 @@ export function markShotGenerationStale(db: Db, shotId: string, reason: string, 
         entityType: 'shot',
         entityId: shotId,
         projectId,
-        payload: { reason, boards, takes },
+        payload: { reason, versions: changed },
       });
     }
-    return boards + takes;
+    return changed;
   });
 }

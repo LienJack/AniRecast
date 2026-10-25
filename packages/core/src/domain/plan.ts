@@ -7,6 +7,7 @@ import { approvedBoard, getBoard, getTake, type InputRef } from './generation.ts
 import { type Bbox, overlaysToRemove, type TextOverlay } from './overlays.ts';
 import { getPersona, type Persona } from './personas.ts';
 import type { GenerationTier } from './projects.ts';
+import { placeTracklet, replacementSignature } from './signature.ts';
 import { getShot, listKeyframes, type Shot } from './shots.ts';
 
 /** Nano Banana 2.1 accepts at most five character reference images per request. */
@@ -40,6 +41,29 @@ function personasInShot(ws: Workspace, shotId: string, perPersonaCap: number): P
     }
     return { persona, entries, imagePaths: persona.images.slice(0, perPersonaCap).map((i) => i.path) };
   });
+}
+
+/** "the person on the left (long black hair; navy sailor uniform)" — position and looks, not just a name. */
+function describeWho(ws: Workspace, shot: Shot, use: PersonaUse): string {
+  const parts = use.entries.map((e) => {
+    const placed = placeTracklet(ws.db, e.tracklet.id, shot.repFrame);
+    const where =
+      placed.position === 'center'
+        ? 'the person in the middle'
+        : placed.position
+          ? `the person on the ${placed.position}`
+          : 'the character';
+    const looks = placed.appearance ?? e.cast?.label ?? null;
+    return looks ? `${where} (${looks})` : where;
+  });
+  return parts.join(' and ') || 'the character';
+}
+
+function layoutInstruction(uses: PersonaUse[]): string | undefined {
+  const people = uses.reduce((n, u) => n + u.entries.length, 0);
+  return people > 1
+    ? `There are ${people} people to replace. Each replacement must stay exactly where the original person is; never swap their positions.`
+    : undefined;
 }
 
 function lookInstruction(use: PersonaUse, imageLabel: string): string {
@@ -101,16 +125,13 @@ export function planBoard(
     const label = imgs.length === 1 ? `Image ${next}` : `Images ${next}-${next + imgs.length - 1}`;
     for (const p of imgs) refs.push({ role: `persona:${use.persona.id}`, path: p });
     next += imgs.length;
-    const who =
-      use.entries
-        .map((e) => e.cast?.label)
-        .filter(Boolean)
-        .join(' / ') || 'the character';
     lines.push(
       `${label} show the character "${use.persona.name}"${use.persona.description ? ` (${use.persona.description})` : ''}.`,
-      `Replace ${who} in Image 1 with this character. ${lookInstruction(use, label)}`,
+      `Replace ${describeWho(ws, shot, use)} in Image 1 with this character. ${lookInstruction(use, label)}`,
     );
   }
+  const layout = layoutInstruction(uses);
+  if (layout) lines.push(layout);
   const overlay = overlayInstruction(overlaysToRemove(ws.db, shotId, shot.removeOtherOverlays));
   if (overlay) lines.push(overlay);
   lines.push(KEEP_FRAME);
@@ -119,7 +140,12 @@ export function planBoard(
   return {
     prompt: lines.join('\n'),
     inputs: withHashes(ws, refs),
-    params: { aspectRatio: '16:9', imageSize: '1K', ...(base ? { fromBoardId: base.id } : {}) },
+    params: {
+      aspectRatio: '16:9',
+      imageSize: '1K',
+      signature: replacementSignature(ws.db, shotId),
+      ...(base ? { fromBoardId: base.id } : {}),
+    },
   };
 }
 
@@ -157,17 +183,14 @@ export function planTake(
     let idx = boardId ? 1 : 0;
     for (const use of uses) {
       refs.push({ role: `persona:${use.persona.id}`, path: use.imagePaths[0]! });
-      const who =
-        use.entries
-          .map((e) => e.cast?.label)
-          .filter(Boolean)
-          .join(' / ') || 'the character';
       const look = lookInstruction(use, `<IMAGE_REF_${idx}>`);
       lines.push(
-        `Replace ${who} with the character "${use.persona.name}" shown in ${boardId ? '<IMAGE_REF_0> and ' : ''}<IMAGE_REF_${idx}>. ${look}`,
+        `Replace ${describeWho(ws, shot, use)} with the character "${use.persona.name}" shown in ${boardId ? '<IMAGE_REF_0> and ' : ''}<IMAGE_REF_${idx}>. ${look}`,
       );
       idx++;
     }
+    const layout = layoutInstruction(uses);
+    if (layout) lines.push(layout);
   } else if (shot.mode !== 'clean') {
     throw new AniError('conflict', `Nothing to generate for a ${shot.mode} shot`);
   }
@@ -179,7 +202,7 @@ export function planTake(
   return {
     prompt: lines.join('\n'),
     inputs: withHashes(ws, refs),
-    params: { tier, aspectRatio: '16:9' },
+    params: { tier, aspectRatio: '16:9', signature: replacementSignature(ws.db, shotId) },
     boardId,
   };
 }

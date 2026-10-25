@@ -290,7 +290,7 @@ Codex 用 CLI 做決定：`anirecast cast merge|split|assign --reason "…" --co
      | --- | --- | --- | --- |
      | `draft` | `360p`（`480p` 已實測被 API 拒絕） | 640×360 | 640×360 |
      | `preview` | `720p` | 1280×720 | 1280×720 |
-     | `final` | `1080p`，或 `720p` 加本機放大（M0 決定；放大方式 ffmpeg lanczos 或動漫超解析，也在 M0 決定） | 1280×720 或 1920×1080（M0 決定） | 1920×1080 |
+     | `final` | `1080p`（**S11 定案**：原生 1080p 比 720p 用 lanczos 放大明顯銳利；每秒約 8,680 token、約為 720p 的 1.45 倍） | 1280×720 | 1920×1080 |
 
    - `takes.tier` 記錄檔位。
    - 「升級」是一個新的 take：沿用上一檔 take 的 `inputs_json` 和提示詞，只換檔位；`parent_id` 指向上一檔的 take，結果需要再次評審。
