@@ -184,7 +184,50 @@ export function replaceShots(
 }
 
 /**
- * Splits a shot at `atFrame`. Appearances first seen at or after the cut move to the new second shot. A shot
+ * Hands the appearances after a cut to the shot that now holds those frames: a tracklet seen only after
+ * `atFrame` moves whole; one seen on both sides is divided, its later detections going to a copy with the same
+ * character, look and vectors. Returns how many tracklets the second shot received.
+ */
+export function splitTrackletsAt(
+  db: Db,
+  fromShot: string,
+  toShot: string,
+  atFrame: number,
+  now: number,
+): number {
+  const rows = all<{ id: string; first: number | null; last: number | null }>(
+    db,
+    `SELECT t.id, MIN(d.frame) AS first, MAX(d.frame) AS last FROM tracklets t
+     LEFT JOIN detections d ON d.tracklet_id = t.id WHERE t.shot_id = :fromShot GROUP BY t.id`,
+    { fromShot },
+  );
+  let received = 0;
+  for (const [i, r] of rows.entries()) {
+    if (r.first === null || r.last === null || r.last < atFrame) continue;
+    if (r.first >= atFrame) {
+      run(db, 'UPDATE tracklets SET shot_id = :toShot WHERE id = :id', { toShot, id: r.id });
+    } else {
+      const copy = newId('trk', now + i);
+      run(
+        db,
+        `INSERT INTO tracklets (id, shot_id, cast_member_id, look_id, identity_vec, appearance_vec, confidence, assigned_by)
+         SELECT :copy, :toShot, cast_member_id, look_id, identity_vec, appearance_vec, confidence, assigned_by
+         FROM tracklets WHERE id = :id`,
+        { copy, toShot, id: r.id },
+      );
+      run(db, 'UPDATE detections SET tracklet_id = :copy WHERE tracklet_id = :id AND frame >= :atFrame', {
+        copy,
+        id: r.id,
+        atFrame,
+      });
+    }
+    received++;
+  }
+  return received;
+}
+
+/**
+ * Splits a shot at `atFrame`; appearances after the cut go to the new second shot (see splitTrackletsAt). A shot
  * with generated versions splits only with `force`: its ready and approved boards and takes turn stale, since
  * they were made for the old frame range.
  */
@@ -232,12 +275,7 @@ export function splitShot(
     });
     run(db, 'DELETE FROM keyframes WHERE shot_id = :id', { id: shotId });
     const newIdValue = insertShot(db, shot.clipId, atFrame, shot.endFrame, shot.orderIndex + 1, now);
-    const movedTracklets = run(
-      db,
-      `UPDATE tracklets SET shot_id = :newId WHERE shot_id = :id
-         AND (SELECT MIN(frame) FROM detections d WHERE d.tracklet_id = tracklets.id) >= :atFrame`,
-      { id: shotId, newId: newIdValue, atFrame },
-    ).changes;
+    const movedTracklets = splitTrackletsAt(db, shotId, newIdValue, atFrame, now);
     renumber(db, shot.clipId);
     const clip = getClip(db, shot.clipId);
     assertCoverage(listShots(db, shot.clipId), clip.frameCount);

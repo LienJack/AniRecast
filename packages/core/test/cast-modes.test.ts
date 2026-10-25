@@ -3,6 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   addPersonaImage,
+  all,
   assignTracklet,
   createCastMember,
   createClip,
@@ -125,18 +126,21 @@ describe('shot modes', () => {
     ws.close();
   });
 
-  it('force-splits a generated shot: versions turn stale and late appearances follow the cut', () => {
+  it('force-splits a generated shot: versions turn stale and appearances follow the cut', () => {
     const { ws, projectId, shotIds } = fixture();
     const shotId = shotIds[0]!;
     const girl = createCastMember(ws.db, { projectId, label: 'girl' }, 'daemon');
     const early = createTracklet(ws.db, { shotId, castMemberId: girl.id });
     const late = createTracklet(ws.db, { shotId, castMemberId: girl.id });
+    const across = createTracklet(ws.db, { shotId, castMemberId: girl.id });
     for (const [id, frame] of [
       [early.id, 4],
       [late.id, 18],
+      [across.id, 6],
+      [across.id, 20],
     ] as const)
       run(ws.db, `INSERT INTO detections (id, tracklet_id, frame) VALUES (:d, :id, :frame)`, {
-        d: `det_${id}`,
+        d: `det_${id}_${frame}`,
         id,
         frame,
       });
@@ -150,8 +154,20 @@ describe('shot modes', () => {
     expect(() => splitShot(ws.db, shotId, 12, 'user')).toThrow(/already has generated versions/);
     const [a, b] = splitShot(ws.db, shotId, 12, 'user', Date.now(), { force: true });
     expect(getBoard(ws.db, 'b1').status).toBe('stale');
-    expect(shotCast(ws.db, a.id).map((e) => e.tracklet.id)).toEqual([early.id]);
-    expect(shotCast(ws.db, b.id).map((e) => e.tracklet.id)).toEqual([late.id]);
+    expect(
+      shotCast(ws.db, a.id)
+        .map((e) => e.tracklet.id)
+        .sort(),
+    ).toEqual([early.id, across.id].sort());
+    const second = shotCast(ws.db, b.id);
+    expect(second).toHaveLength(2);
+    expect(second.every((e) => e.cast?.id === girl.id)).toBe(true);
+    const frames = (id: string) =>
+      all<{ frame: number }>(ws.db, 'SELECT frame FROM detections WHERE tracklet_id = :id', { id }).map(
+        (d) => d.frame,
+      );
+    expect(frames(across.id)).toEqual([6]);
+    expect(second.flatMap((e) => frames(e.tracklet.id)).sort((x, y) => x - y)).toEqual([18, 20]);
     recomputeShotModes(ws.db, projectId);
     expect(getShot(ws.db, b.id).mode).toBe('replace');
     ws.close();
