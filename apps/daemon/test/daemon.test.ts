@@ -1,7 +1,7 @@
-import { DEFAULT_CONFIG, enqueueJob, getJob, openWorkspace, requestCancel } from '@anirecast/core';
+import { enqueueJob, getJob, openWorkspace, requestCancel } from '@anirecast/core';
 import { describe, expect, it } from 'vitest';
 import { startDaemon } from '../src/index.ts';
-import { cli, setupWorkspace as setup } from './helpers.ts';
+import { cli, setupWorkspace as setup, TEST_CONFIG } from './helpers.ts';
 
 describe('daemon + CLI', () => {
   it('runs a job enqueued by a separate CLI process', async () => {
@@ -59,7 +59,7 @@ describe('daemon + CLI', () => {
   it('refuses a second daemon on the same workspace', async () => {
     const { root } = await setup();
     await expect(
-      startDaemon({ root, port: 0, config: DEFAULT_CONFIG, dispatch: false, log: () => {} }),
+      startDaemon({ root, port: 0, config: TEST_CONFIG, dispatch: false, log: () => {} }),
     ).rejects.toThrow(/already serving/);
   });
 });

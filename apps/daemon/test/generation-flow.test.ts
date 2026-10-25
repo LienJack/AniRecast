@@ -4,7 +4,6 @@ import path from 'node:path';
 import {
   createCastMember,
   createTracklet,
-  DEFAULT_CONFIG,
   findActiveClip,
   getProject,
   initWorkspace,
@@ -20,7 +19,7 @@ import { FakeProvider } from '@anirecast/providers';
 import { afterAll, describe, expect, it } from 'vitest';
 import { synthesizeShots } from '../../../packages/media/test/fixtures.ts';
 import { startDaemon } from '../src/index.ts';
-import { cliData } from './helpers.ts';
+import { cliData, TEST_CONFIG } from './helpers.ts';
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'anirecast-gen-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -45,7 +44,7 @@ describe('board → take → render with the fake provider', () => {
     const daemon = await startDaemon({
       root,
       port: 0,
-      config: { ...DEFAULT_CONFIG, provider: 'fake' },
+      config: { ...TEST_CONFIG, provider: 'fake' },
       provider: new FakeProvider(),
       dispatch: false,
       log: () => {},

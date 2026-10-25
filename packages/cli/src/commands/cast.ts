@@ -4,6 +4,7 @@ import {
   addPersonaImage,
   assignTracklet,
   createPersona,
+  enqueueJob,
   getCastMember,
   getPersona,
   getProject,
@@ -33,6 +34,7 @@ import { AniError } from '@anirecast/shared';
 import type { Command } from 'commander';
 import { type GlobalOptions, withWorkspace } from '../context.ts';
 import { command } from '../output.ts';
+import { unwrapJob, waitForJob } from '../wait.ts';
 
 async function imageSize(file: string): Promise<{ width: number | null; height: number | null }> {
   try {
@@ -165,6 +167,26 @@ export function registerCast(program: Command): void {
   cast
     .command('show <cast>')
     .action(command((id: string) => withWorkspace(globals(), (ws) => getCastMember(ws.db, id))));
+  cast
+    .command('analyze <project>')
+    .description('Re-run same-person identification (new shots only; --redetect for every shot)')
+    .option('--redetect', 'detect characters again in every shot (decided appearances are kept)')
+    .option('--wait')
+    .action(
+      command((ref: string, opts: { redetect?: boolean; wait?: boolean }) =>
+        withWorkspace(globals(), async (ws) => {
+          const project = getProject(ws.db, ref);
+          const job = enqueueJob(ws.db, {
+            type: 'cast.identify',
+            lane: 'media',
+            projectId: project.id,
+            payload: { projectId: project.id, redetect: Boolean(opts.redetect) },
+            requestedBy: actorFromEnv(),
+          });
+          return opts.wait ? unwrapJob(await waitForJob(ws, job.id)) : job;
+        }),
+      ),
+    );
   cast
     .command('map <cast>')
     .description('Replace this character with a persona everywhere it appears, or keep the original')
@@ -315,6 +337,25 @@ export function registerCast(program: Command): void {
             overlay: o,
             ...settle(ws, projectOfShot(ws.db, o.shotId).id, [o.shotId], 'overlay decision changed'),
           };
+        }),
+      ),
+    );
+  shots
+    .command('analyze <project>')
+    .description('Flash pass: overlaid text (credits), character attributes and descriptions')
+    .option('--wait')
+    .action(
+      command((ref: string, opts: { wait?: boolean }) =>
+        withWorkspace(globals(), async (ws) => {
+          const project = getProject(ws.db, ref);
+          const job = enqueueJob(ws.db, {
+            type: 'shots.analyze',
+            lane: 'generate',
+            projectId: project.id,
+            payload: { projectId: project.id },
+            requestedBy: actorFromEnv(),
+          });
+          return opts.wait ? unwrapJob(await waitForJob(ws, job.id)) : job;
         }),
       ),
     );

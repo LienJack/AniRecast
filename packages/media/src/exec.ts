@@ -20,10 +20,13 @@ export interface ExecResult {
 export function exec(cmd: string, args: string[], opts: ExecOptions = {}): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
     if (opts.signal?.aborted) return reject(opts.signal.reason);
+    // Own process group, so cancelling also stops grandchildren (`uv run` → python) that would
+    // otherwise keep the pipes open and the job hanging.
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
       env: opts.env ?? process.env,
       stdio: [opts.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     });
     let stdout = '';
     let stderr = '';
@@ -46,7 +49,18 @@ export function exec(cmd: string, args: string[], opts: ExecOptions = {}): Promi
       errBuf = lines(errBuf, d, opts.onStderrLine);
     });
     if (opts.input !== undefined) child.stdin?.end(opts.input);
-    const onAbort = () => child.kill('SIGTERM');
+    const killGroup = (signal: NodeJS.Signals) => {
+      try {
+        if (child.pid && process.platform !== 'win32') process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch {
+        // Already gone.
+      }
+    };
+    const onAbort = () => {
+      killGroup('SIGTERM');
+      setTimeout(() => killGroup('SIGKILL'), 5_000).unref();
+    };
     opts.signal?.addEventListener('abort', onAbort, { once: true });
     child.on('error', (error: NodeJS.ErrnoException) => {
       opts.signal?.removeEventListener('abort', onAbort);

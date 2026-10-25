@@ -14,6 +14,8 @@ export interface LocalConfig {
   budget: { capUsd: number | null };
   concurrency: { generate: number; media: number; io: number };
   codex: { autoDispatch: boolean; binPath: string | null; model: string | null };
+  /** After shot detection, queue the Flash analysis and same-person identification automatically. */
+  pipeline: { autoAnalyze: boolean };
 }
 
 export const DEFAULT_CONFIG: LocalConfig = {
@@ -25,6 +27,7 @@ export const DEFAULT_CONFIG: LocalConfig = {
   budget: { capUsd: null },
   concurrency: { generate: 2, media: 2, io: 2 },
   codex: { autoDispatch: true, binPath: null, model: null },
+  pipeline: { autoAnalyze: true },
 };
 
 /** Per-machine settings live outside the workspace; `ANIRECAST_CONFIG_DIR` overrides for tests. */

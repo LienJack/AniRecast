@@ -352,6 +352,31 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
   app.get('/api/projects/:ref/cast', (c) =>
     handle(c, () => listCast(ws.db, getProject(ws.db, c.req.param('ref')).id)),
   );
+  app.post('/api/projects/:ref/cast/identify', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ redetect?: boolean }>(c);
+      const project = getProject(ws.db, c.req.param('ref'));
+      return enqueueJob(ws.db, {
+        type: 'cast.identify',
+        lane: 'media',
+        projectId: project.id,
+        payload: { projectId: project.id, redetect: Boolean(b.redetect) },
+        requestedBy: USER,
+      });
+    }),
+  );
+  app.post('/api/projects/:ref/shots/analyze', (c) =>
+    handle(c, () => {
+      const project = getProject(ws.db, c.req.param('ref'));
+      return enqueueJob(ws.db, {
+        type: 'shots.analyze',
+        lane: 'generate',
+        projectId: project.id,
+        payload: { projectId: project.id },
+        requestedBy: USER,
+      });
+    }),
+  );
   app.post('/api/cast/:id/map', async (c) =>
     handle(c, async () => {
       const { personaId } = await body<{ personaId: string | null }>(c);

@@ -6,7 +6,6 @@ import {
   createAgentTask,
   createProject,
   createSource,
-  DEFAULT_CONFIG,
   getAgentTask,
   initWorkspace,
   openWorkspace,
@@ -14,6 +13,7 @@ import {
 } from '@anirecast/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { compareVersions, startDaemon } from '../src/index.ts';
+import { TEST_CONFIG } from './helpers.ts';
 
 const MOCK = path.resolve(import.meta.dirname, 'fixtures/mock-app-server.mjs');
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -36,7 +36,7 @@ async function setup() {
   const daemon = await startDaemon({
     root,
     port: 0,
-    config: { ...DEFAULT_CONFIG, provider: 'fake' },
+    config: { ...TEST_CONFIG, provider: 'fake' },
     dispatch: { command: { command: process.execPath, args: [MOCK], version: 'mock', source: 'config' } },
     log: () => {},
   });

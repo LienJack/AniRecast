@@ -155,7 +155,24 @@ export const detectShotsHandler: JobHandler = async (ctx) => {
     0.3,
     1,
   );
-  return { result: { clipId: clip.id, shots: shots.length, cuts: ranges.slice(1).map((r) => r.start) } };
+  const result = { clipId: clip.id, shots: shots.length, cuts: ranges.slice(1).map((r) => r.start) };
+  if (!ctx.services.config.pipeline.autoAnalyze) return { result };
+  // Next steps of the pipeline: overlaid text + descriptions (Flash) and same-person identification.
+  const analyze = enqueueJob(ws.db, {
+    type: 'shots.analyze',
+    lane: 'generate',
+    projectId: clip.projectId,
+    payload: { projectId: clip.projectId },
+    requestedBy: job.requestedBy,
+  });
+  const identify = enqueueJob(ws.db, {
+    type: 'cast.identify',
+    lane: 'media',
+    projectId: clip.projectId,
+    payload: { projectId: clip.projectId, redetect: true },
+    requestedBy: job.requestedBy,
+  });
+  return { result: { ...result, analyzeJobId: analyze.id, identifyJobId: identify.id } };
 };
 
 /** Rebuilds keyframes and source segments after split/merge or a representative-frame change. */

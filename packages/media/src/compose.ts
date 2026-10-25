@@ -239,3 +239,51 @@ export async function contactSheet(
     opts,
   );
 }
+
+/**
+ * Grid of crops for a reviewer: each row is one group (e.g. one cast member), every cell letterboxed to
+ * `cell`×`cell`. Rows are padded with dark cells so they line up.
+ */
+export async function cropGrid(
+  rows: string[][],
+  output: string,
+  { cell = 180, maxPerRow = 6 }: { cell?: number; maxPerRow?: number } = {},
+  opts: FfmpegRunOptions = {},
+): Promise<void> {
+  const trimmed = rows.map((r) => r.slice(0, maxPerRow)).filter((r) => r.length > 0);
+  if (trimmed.length === 0) throw new AniError('usage', 'No crops to lay out');
+  ensureDir(output);
+  const width = Math.max(...trimmed.map((r) => r.length));
+  const inputs: string[] = [];
+  const chains: string[] = [];
+  const rowLabels: string[] = [];
+  let n = 0;
+  for (const [ri, row] of trimmed.entries()) {
+    const cells: string[] = [];
+    for (const file of row) {
+      inputs.push('-i', file);
+      chains.push(
+        `[${n}:v]scale=${cell}:${cell}:force_original_aspect_ratio=decrease,pad=${cell}:${cell}:(ow-iw)/2:(oh-ih)/2:color=0x202020,setsar=1,format=yuv420p[c${n}]`,
+      );
+      cells.push(`[c${n}]`);
+      n++;
+    }
+    for (let k = row.length; k < width; k++) {
+      chains.push(`color=c=0x101010:size=${cell}x${cell}:d=1,format=yuv420p[e${ri}_${k}]`);
+      cells.push(`[e${ri}_${k}]`);
+    }
+    chains.push(
+      cells.length > 1 ? `${cells.join('')}hstack=inputs=${cells.length}[r${ri}]` : `${cells[0]}null[r${ri}]`,
+    );
+    rowLabels.push(`[r${ri}]`);
+  }
+  chains.push(
+    rowLabels.length > 1
+      ? `${rowLabels.join('')}vstack=inputs=${rowLabels.length}[out]`
+      : `${rowLabels[0]}null[out]`,
+  );
+  await ffmpeg(
+    [...inputs, '-filter_complex', chains.join(';'), '-map', '[out]', '-frames:v', '1', '-q:v', '3', output],
+    opts,
+  );
+}

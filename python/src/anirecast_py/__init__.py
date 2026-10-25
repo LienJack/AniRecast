@@ -55,6 +55,12 @@ def detect_shots(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _from_file(args: argparse.Namespace) -> dict[str, Any]:
+    from .identity import run_from_file
+
+    return run_from_file(args.command, args.spec)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="anirecast-py")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -65,6 +71,11 @@ def main() -> None:
     p.add_argument("--threshold", type=float, default=None)
     p.add_argument("--min-scene-len", type=int, default=6)
     p.set_defaults(func=detect_shots)
+
+    for name, text in (("detect-characters", "detect heads/bodies and build tracklets"), ("cluster-identities", "constrained identity clustering")):
+        q = sub.add_parser(name, help=text)
+        q.add_argument("--spec", required=True, help="JSON input file")
+        q.set_defaults(func=_from_file)
 
     args = parser.parse_args()
     try:
