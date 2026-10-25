@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.json && pnpm --filter @anirecast/web typecheck",
     "test": "vitest run",
     "lint": "biome check .",
-    "format": "biome check --write ."
+    "format": "biome check --write .",
+    "check": "pnpm -s typecheck && biome check --error-on-warnings . && vitest run"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.3",
