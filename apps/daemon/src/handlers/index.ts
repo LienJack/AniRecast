@@ -1,5 +1,6 @@
 import type { JobHandler } from '../runner.ts';
 import { analyzeShotsHandler, identifyCastHandler } from './analysis.ts';
+import { tidyCastHandler } from './cast-tidy.ts';
 import { detectShotsHandler, extractClipHandler, prepareShotsHandler } from './clips.ts';
 import { shotContinuityHandler } from './continuity.ts';
 import { analyzeCastHandler } from './design.ts';
@@ -30,5 +31,6 @@ export function createHandlers(): Map<string, JobHandler> {
     ['render.compose', composeRenderHandler],
     ['shots.analyze', analyzeShotsHandler],
     ['cast.identify', identifyCastHandler],
+    ['cast.tidy', tidyCastHandler],
   ]);
 }

@@ -155,6 +155,7 @@ const JOB_TYPE_LABEL: Record<string, string> = {
   'take.still': '分鏡圖轉靜態視頻',
   'design.generate': '生成角色設計',
   'design.analyze': '原片角色分析',
+  'cast.tidy': '整理角色（JEV）',
   'shots.continuity': '切點判斷',
   'render.compose': '合成成片',
   noop: '測試任務',
@@ -205,7 +206,7 @@ export const OVERLAY_LABEL: Record<OverlayCategory, string> = {
 
 export const ASSIGNED_BY_LABEL: Record<AssignedBy, string> = {
   auto: '程式',
-  codex: 'Codex',
+  codex: 'AI（Codex／JEV）',
   user: '你（鎖定）',
 };
 

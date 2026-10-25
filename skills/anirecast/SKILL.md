@@ -66,6 +66,11 @@ For each case decide, then act with a reason and a confidence:
 - Not a character (background figure, false detection): `anirecast cast not-character <tracklet> --reason "…"`
 - Unsure: leave it; mention it in the done note so the human checks it in the cast page.
 
+Cases from the JEV judge (`payload.source: "jev"`, after `anirecast cast tidy`) carry its reason and confidence:
+`maybe_same` lists characters JEV thinks are one person but did not merge (not sure enough, bound to different
+library characters, or blocked by an appearance the human locked); `maybe_mixed` has `trackletIds`, the
+appearances JEV thinks are someone else — assign them to the right character or mark them not a character.
+
 Two people in the same frame are never the same person — except in collages, character-sheet or file-card
 layouts, split screens and multi-panel frames, where one character can appear several times (front, side,
 back). Judge those by appearance and merge them.
@@ -128,6 +133,7 @@ anirecast jobs list --status running        # what the daemon is doing
 anirecast cost <project>                    # spend so far
 anirecast quota                             # requests left today per model (Omni: 100/day on API tier 2)
 anirecast shots boundaries <project>        # every cut: same moment or cut, who decided, how sure
+anirecast cast tidy <project> --wait        # JEV: merge same-person characters and same-outfit looks
 anirecast design list <project>             # bindings: original → library character, analysis, note, sheets
 anirecast design analyze <project> <cast>   # 原片分析 of one original (add --generate to redraw the sheets after)
 anirecast design pick <project> <cast> --expressions 1,3 --poses 2   # which analysed items the sheets use

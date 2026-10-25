@@ -231,6 +231,27 @@ export function registerCast(program: Command): void {
       ),
     );
   cast
+    .command('tidy <project>')
+    .description(
+      'JEV judge: merge characters that are the same person and looks that are the same outfit; doubtful cases go to Codex',
+    )
+    .option('--wait')
+    .action(
+      command((ref: string, opts: { wait?: boolean }) =>
+        withWorkspace(globals(), async (ws) => {
+          const project = getProject(ws.db, ref);
+          const job = enqueueJob(ws.db, {
+            type: 'cast.tidy',
+            lane: 'generate',
+            projectId: project.id,
+            payload: { projectId: project.id },
+            requestedBy: actorFromEnv(),
+          });
+          return opts.wait ? unwrapJob(await waitForJob(ws, job.id)) : job;
+        }),
+      ),
+    );
+  cast
     .command('map <cast>')
     .description('Replace this character with a persona everywhere it appears, or keep the original')
     .option('--persona <persona>', 'persona id or slug')

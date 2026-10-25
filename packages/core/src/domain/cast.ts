@@ -80,8 +80,8 @@ const toTracklet = (r: TrackletRow): Tracklet => ({
 });
 
 /** `codex:<thread>` actors are Codex decisions; everyone else is the human user. */
-export const sourceOfActor = (actor: string): DecisionSource =>
-  actor.startsWith('codex:') ? 'codex' : 'user';
+/** Only a person locks a decision; Codex, the JEV judge and other programs decide as AI (`codex`). */
+export const sourceOfActor = (actor: string): DecisionSource => (actor === 'user' ? 'user' : 'codex');
 
 export function listLooks(db: Db, castMemberId: string): Look[] {
   return all<{
@@ -553,6 +553,48 @@ export function mapCast(
       payload: { personaId },
     });
     return { cast: getCastMember(db, castId), affectedShotIds: c.shotIds };
+  });
+}
+
+/**
+ * Puts the appearances of several looks of one character into one look (the same outfit seen from another
+ * angle or distance). The kept look keeps its policy; `label` renames it (e.g. 制服).
+ */
+export function mergeLooks(
+  db: Db,
+  keepId: string,
+  dropIds: string[],
+  actor: string,
+  opts: { label?: string; reason?: string } = {},
+): Look {
+  return tx(db, () => {
+    const keep = one<{ cast_member_id: string }>(db, 'SELECT cast_member_id FROM looks WHERE id = :id', {
+      id: keepId,
+    });
+    if (!keep) throw new AniError('not_found', `Look not found: ${keepId}`);
+    for (const dropId of dropIds) {
+      if (dropId === keepId) continue;
+      const drop = one<{ cast_member_id: string }>(db, 'SELECT cast_member_id FROM looks WHERE id = :id', {
+        id: dropId,
+      });
+      if (!drop) throw new AniError('not_found', `Look not found: ${dropId}`);
+      if (drop.cast_member_id !== keep.cast_member_id)
+        throw new AniError('usage', 'Only looks of the same character can be merged');
+      run(db, 'UPDATE tracklets SET look_id = :keepId WHERE look_id = :dropId', { keepId, dropId });
+      run(db, 'DELETE FROM looks WHERE id = :dropId', { dropId });
+    }
+    if (opts.label?.trim())
+      run(db, 'UPDATE looks SET label = :label WHERE id = :keepId', { keepId, label: opts.label.trim() });
+    const c = getCastMember(db, keep.cast_member_id);
+    appendEvent(db, {
+      actor,
+      kind: 'cast.looks_merged',
+      entityType: 'cast',
+      entityId: c.id,
+      projectId: c.projectId,
+      payload: { keepId, dropIds, label: opts.label ?? null, reason: opts.reason ?? null },
+    });
+    return listLooks(db, c.id).find((l) => l.id === keepId) as Look;
   });
 }
 

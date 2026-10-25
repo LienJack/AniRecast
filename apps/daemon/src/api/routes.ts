@@ -421,6 +421,18 @@ export function registerRoutes(
       });
     }),
   );
+  app.post('/api/projects/:ref/cast/tidy', (c) =>
+    handle(c, () => {
+      const project = getProject(ws.db, c.req.param('ref'));
+      return enqueueJob(ws.db, {
+        type: 'cast.tidy',
+        lane: 'generate',
+        projectId: project.id,
+        payload: { projectId: project.id },
+        requestedBy: USER,
+      });
+    }),
+  );
   app.post('/api/projects/:ref/shots/analyze', (c) =>
     handle(c, () => {
       const project = getProject(ws.db, c.req.param('ref'));

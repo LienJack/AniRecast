@@ -536,6 +536,10 @@ export function CastPage() {
     () => api.post(`/api/projects/${encodeURIComponent(ref)}/cast/identify`, { redetect }),
     { success: '已排入同一人識別', invalidate: [qk.jobs], onSuccess: () => setIdentifyOpen(false) },
   );
+  const tidy = useAction(() => api.post(`/api/projects/${encodeURIComponent(ref)}/cast/tidy`), {
+    success: '已排入：JEV 會合併同一人與相同造型，拿不準的交給 Codex',
+    invalidate: [qk.jobs],
+  });
   if (cast.isPending || overview.isPending) return <Loading />;
   if (cast.isError) return <ErrorState error={cast.error} />;
   if (overview.isError) return <ErrorState error={overview.error} />;
@@ -560,6 +564,15 @@ export function CastPage() {
         }
         actions={
           <>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={tidy.isPending}
+              title="JEV 看每個角色和每個造型的裁切：同一人合併、相同服裝的造型合併、混進來的別人交給 Codex（約 USD 0.02）"
+              onClick={() => tidy.mutate(undefined)}
+            >
+              <CombineIcon />用 JEV 合併相似角色與造型
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setIdentifyOpen(true)}>
               <ScanFaceIcon />
               重新識別角色

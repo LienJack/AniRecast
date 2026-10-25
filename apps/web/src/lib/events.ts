@@ -127,6 +127,8 @@ const TOAST_TYPES = new Set([
   'clip.extract',
   'render.compose',
   'cast.identify',
+  'cast.tidy',
+  'design.analyze',
 ]);
 
 function toastFor(e: AniEvent): void {
