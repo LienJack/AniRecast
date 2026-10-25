@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { AniError } from '@anirecast/shared';
+import { all, fromJson } from '../db.ts';
 import type { Workspace } from '../workspace.ts';
 import { type ShotCastEntry, shotCast } from './cast.ts';
 import { approvedBoard, getBoard, getTake, type InputRef } from './generation.ts';
@@ -26,11 +27,54 @@ interface PersonaUse {
   imagePaths: string[];
 }
 
+/** Head box is inside `outer` (the same head detected twice, at two sizes). */
+const nested = (inner: number[], outer: number[]): boolean => {
+  const cx = (inner[0]! + inner[2]!) / 2;
+  const cy = (inner[1]! + inner[3]!) / 2;
+  return cx >= outer[0]! && cx <= outer[2]! && cy >= outer[1]! && cy <= outer[3]!;
+};
+
+/**
+ * The instances of one character that are actually on screen together, judged at the detection frame closest
+ * to the representative frame. One person whose track split during the shot counts once; a collage or
+ * character-sheet frame showing them several times counts every view.
+ */
+function onScreenTogether(ws: Workspace, shot: Shot, entries: ShotCastEntry[]): ShotCastEntry[] {
+  if (entries.length < 2) return entries;
+  const dets = entries.flatMap((e) =>
+    all<{ frame: number; head_bbox_json: string | null }>(
+      ws.db,
+      'SELECT frame, head_bbox_json FROM detections WHERE tracklet_id = :id',
+      { id: e.tracklet.id },
+    ).map((d) => ({ entry: e, frame: d.frame, box: fromJson<number[] | null>(d.head_bbox_json, null) })),
+  );
+  if (dets.length === 0) return entries;
+  const ref = dets.reduce((b, d) =>
+    Math.abs(d.frame - shot.repFrame) < Math.abs(b.frame - shot.repFrame) ? d : b,
+  );
+  const atRef = dets.filter((d) => d.frame === ref.frame).sort((a, b) => area(b.box) - area(a.box));
+  const kept: typeof atRef = [];
+  for (const d of atRef) {
+    if (kept.some((k) => k.entry === d.entry || (d.box && k.box && nested(d.box, k.box)))) continue;
+    kept.push(d);
+  }
+  return kept.map((k) => k.entry);
+}
+
+const area = (b: number[] | null): number => (b ? (b[2]! - b[0]!) * (b[3]! - b[1]!) : 0);
+
 function personasInShot(ws: Workspace, shotId: string, perPersonaCap: number): PersonaUse[] {
-  const byPersona = new Map<string, ShotCastEntry[]>();
+  const shot = getShot(ws.db, shotId);
+  const byCast = new Map<string, ShotCastEntry[]>();
   for (const e of shotCast(ws.db, shotId)) {
     if (!e.personaId) continue;
-    byPersona.set(e.personaId, [...(byPersona.get(e.personaId) ?? []), e]);
+    const key = `${e.personaId}\u0000${e.cast?.id ?? e.tracklet.id}`;
+    byCast.set(key, [...(byCast.get(key) ?? []), e]);
+  }
+  const byPersona = new Map<string, ShotCastEntry[]>();
+  for (const group of byCast.values()) {
+    const personaId = group[0]!.personaId!;
+    byPersona.set(personaId, [...(byPersona.get(personaId) ?? []), ...onScreenTogether(ws, shot, group)]);
   }
   return [...byPersona.entries()].map(([personaId, entries]) => {
     const persona = getPersona(ws.db, personaId);
