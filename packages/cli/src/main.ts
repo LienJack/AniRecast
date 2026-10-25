@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { registerDoctor } from './commands/doctor.ts';
 import { registerJobs } from './commands/jobs.ts';
+import { registerMedia } from './commands/media.ts';
 import { registerServe } from './commands/serve.ts';
 import { registerWorkspace } from './commands/workspace.ts';
 
@@ -19,6 +20,7 @@ const program = new Command()
 
 registerWorkspace(program);
 registerJobs(program);
+registerMedia(program);
 registerDoctor(program);
 registerServe(program);
 

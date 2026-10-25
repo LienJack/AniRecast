@@ -1,56 +1,12 @@
-import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import {
-  DEFAULT_CONFIG,
-  enqueueJob,
-  getJob,
-  initWorkspace,
-  openWorkspace,
-  requestCancel,
-} from '@anirecast/core';
-import { afterEach, describe, expect, it } from 'vitest';
-import { type DaemonHandle, startDaemon } from '../src/index.ts';
-
-const CLI = path.resolve(import.meta.dirname, '../../../packages/cli/src/main.ts');
-const cleanups: Array<() => Promise<void> | void> = [];
-afterEach(async () => {
-  for (const c of cleanups.splice(0).reverse()) await c();
-});
-
-async function setup(): Promise<{ root: string; daemon: DaemonHandle; env: NodeJS.ProcessEnv }> {
-  const tmp = mkdtempSync(path.join(os.tmpdir(), 'anirecast-daemon-'));
-  cleanups.push(() => rmSync(tmp, { recursive: true, force: true }));
-  const root = path.join(tmp, 'ws');
-  initWorkspace(root).close();
-  const daemon = await startDaemon({ root, port: 0, config: DEFAULT_CONFIG, log: () => {} });
-  cleanups.push(() => daemon.stop());
-  return { root, daemon, env: { ...process.env, ANIRECAST_CONFIG_DIR: path.join(tmp, 'cfg') } };
-}
-
-function cli(
-  args: string[],
-  env: NodeJS.ProcessEnv,
-): Promise<{ code: number | null; json: unknown; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [CLI, ...args], { env });
-    let out = '';
-    let err = '';
-    child.stdout.on('data', (d) => {
-      out += d;
-    });
-    child.stderr.on('data', (d) => {
-      err += d;
-    });
-    child.on('close', (code) => resolve({ code, json: JSON.parse(out), stderr: err }));
-  });
-}
+import { DEFAULT_CONFIG, enqueueJob, getJob, openWorkspace, requestCancel } from '@anirecast/core';
+import { describe, expect, it } from 'vitest';
+import { startDaemon } from '../src/index.ts';
+import { cli, setupWorkspace as setup } from './helpers.ts';
 
 describe('daemon + CLI', () => {
   it('runs a job enqueued by a separate CLI process', async () => {
     const { root, env } = await setup();
-    const result = await cli(['--workspace', root, 'jobs', 'noop', '--ms', '100', '--wait'], env);
+    const result = await cli({ root, env }, ['jobs', 'noop', '--ms', '100', '--wait']);
     expect(result.code).toBe(0);
     expect(result.json).toMatchObject({
       ok: true,

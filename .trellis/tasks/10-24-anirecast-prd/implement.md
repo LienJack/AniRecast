@@ -38,7 +38,7 @@
   - 本機設定 `~/.config/anirecast/config.json`；金鑰讀取。
 - 驗證：Vitest 涵蓋 init/open/驗證失敗、命名規則、遷移、兩個連線同時寫入。
 
-### S3 CLI 與 daemon 骨架 — done: (S3 commit)
+### S3 CLI 與 daemon 骨架 — done: 3b23b7e
 - CLI：`workspace init|open|status`、`doctor`（先檢查 ffmpeg、yt-dlp、deno、Python、金鑰）、`jobs list|show|watch|cancel|retry`。
   - 輸出規範：stdout 一個 JSON（`{ok,data|error}`），進度寫到 stderr。
   - 心跳過期時回傳 `daemon_not_running`。
@@ -48,7 +48,7 @@
   - HTTP：`/api/health`、`/api/events`（SSE）。
 - 驗證：整合測試。CLI 排一個 noop job → daemon 執行 → `jobs watch` 看得到完成的 event。
 
-### S4 來源、節選、分鏡 — done:
+### S4 來源、節選、分鏡 — done: (S4 commit)
 - 產出：
   - `source import <file>`、`source add <url>`（yt-dlp job）；
   - `project create`；

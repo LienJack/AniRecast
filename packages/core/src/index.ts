@@ -1,6 +1,7 @@
 export * from './agents-md.ts';
 export * from './config.ts';
 export * from './db.ts';
+export * from './domain/index.ts';
 export * from './events.ts';
 export * from './heartbeat.ts';
 export * from './jobs.ts';
