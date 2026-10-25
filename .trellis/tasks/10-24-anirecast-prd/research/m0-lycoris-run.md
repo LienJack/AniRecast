@@ -51,8 +51,21 @@
 
 被擋的分鏡要多試幾次，所以照目前配額至少還要 2–3 天。費用估計：preview 約 USD 7、final 約 USD 10。
 
+## 配額與被擋的保護（153e16c、c38cc98）
+
+回頭檢查今天用掉的請求：daemon 送出 82 次，其中 25 次成功、3 次幀數不對但已修正、54 次被擋；另外我直接探測 11 次，只有 2 次通過。真正產出可用影片的只有 28 次。主要是對被擋的鏡頭重試太多輪：04:52 以後的重試和探測用掉 50 次以上，只多救回 3 個鏡頭。另外約 12 次是凌晨測試時在 `workspaces/fixture-op` 送的，也算在同一天的配額裡。
+
+改成：
+- schema v2 新增 `provider_requests` 表，每次請求都記下結果。今天的請求已經從 takes 和 cost_ledger 補記：Omni 93 次（含 11 次直接探測），並記下一筆「配額已用完」。
+- daemon 送出前先檢查配額：用完了就直接拒絕，不送出請求。
+- 排入分鏡視頻時也會檢查，連已在排隊的工作一起算；一整批超過剩餘次數時，整批都不排入。
+- 同一個鏡頭從上一次成功之後被擋 2 次（`limits.maxSafetyBlocks`），就要加 `--retry-blocked` 才會再送；`--all` 會跳過它，並列在 `blockedOut`。
+- 新增 `anirecast quota`、`/api/quota`，項目總覽的成本卡也會顯示。
+
+限制：計數是以 Workspace 為單位，Google 的配額卻是整個 Cloud 專案共用。用同一把 key 跑其他 Workspace 時，本地的數字會偏低。不過只要 Google 回報「配額用完」，daemon 就會停止送出。
+
 ## 暫存檔
 
-`~/.cache/ranolabs/sessions/2026-10-25-nas-anime-recast/`：只剩評審拼圖、重試和探測用的腳本（boards_sheet.py、takes_sheet.py、retry_blocked.sh、retry_varied.sh、omni_probe.ts、plan_diff.ts）。原片副本和參考圖副本已刪除，因為都已經在 workspace 裡；NAS 也已卸載。M0 跑完 final 合成後刪除。
+`~/.cache/ranolabs/sessions/2026-10-25-nas-anime-recast/`：只留評審拼圖（boards_sheet.py、takes_sheet.py），以及探測和比對用的 omni_probe.ts、plan_diff.ts。重試腳本已被系統的保護取代，刪除；原片和參考圖副本都已在 workspace 裡，也已刪除。NAS 已卸載。M0 跑完 final 合成後，整個資料夾刪除。
 
 第一次從 NAS 匯入時取消、留下的 pending 來源 `src_01m5sbjk3x68w6dtsv2k5y8gj9`，已經用新的 `source remove`（8d5466f）移到 `trash/sources/`。
