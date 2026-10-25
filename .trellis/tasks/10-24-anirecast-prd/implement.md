@@ -30,7 +30,7 @@
   - 根目錄 scripts：`typecheck`、`test`、`lint`、`anirecast`。
 - 驗證：`pnpm install && pnpm typecheck && pnpm test && pnpm lint`。
 
-### S2 Core：Workspace、DB、jobs、events — done: (S2 commit)
+### S2 Core：Workspace、DB、jobs、events — done: 7e2039b
 - 產出：
   - Workspace：manifest、跨平台命名檢查、鎖檔、`AGENTS.md` 產生、開啟時的版本與遷移檢查；
   - 資料庫：`node:sqlite` 連線（WAL、busy_timeout）、遷移執行器、全部資料表（design §5）；
@@ -38,7 +38,7 @@
   - 本機設定 `~/.config/anirecast/config.json`；金鑰讀取。
 - 驗證：Vitest 涵蓋 init/open/驗證失敗、命名規則、遷移、兩個連線同時寫入。
 
-### S3 CLI 與 daemon 骨架 — done:
+### S3 CLI 與 daemon 骨架 — done: (S3 commit)
 - CLI：`workspace init|open|status`、`doctor`（先檢查 ffmpeg、yt-dlp、deno、Python、金鑰）、`jobs list|show|watch|cancel|retry`。
   - 輸出規範：stdout 一個 JSON（`{ok,data|error}`），進度寫到 stderr。
   - 心跳過期時回傳 `daemon_not_running`。

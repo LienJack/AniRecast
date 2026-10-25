@@ -7,9 +7,11 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@anirecast/shared": "workspace:*",
     "@anirecast/core": "workspace:*",
+    "@anirecast/daemon": "workspace:*",
     "@anirecast/media": "workspace:*",
-    "@anirecast/providers": "workspace:*"
+    "@anirecast/providers": "workspace:*",
+    "@anirecast/shared": "workspace:*",
+    "commander": "^15.0.0"
   }
 }

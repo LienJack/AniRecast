@@ -1,4 +1,25 @@
 #!/usr/bin/env node
-import { ok } from '@anirecast/shared';
+import { Command } from 'commander';
+import { registerDoctor } from './commands/doctor.ts';
+import { registerJobs } from './commands/jobs.ts';
+import { registerServe } from './commands/serve.ts';
+import { registerWorkspace } from './commands/workspace.ts';
 
-process.stdout.write(`${JSON.stringify(ok({ name: 'anirecast', version: '0.1.0' }))}\n`);
+const program = new Command()
+  .name('anirecast')
+  .description(
+    'AniRecast: replace characters in anime openings, shot by shot. stdout is always one JSON object.',
+  )
+  .version('0.1.0')
+  .option(
+    '-w, --workspace <dir>',
+    'workspace folder (default: $ANIRECAST_WORKSPACE, current folder, or configured default)',
+  )
+  .showHelpAfterError();
+
+registerWorkspace(program);
+registerJobs(program);
+registerDoctor(program);
+registerServe(program);
+
+await program.parseAsync(process.argv);
