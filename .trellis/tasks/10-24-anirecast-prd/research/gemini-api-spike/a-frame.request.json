@@ -1,0 +1,3 @@
+{"model":"gemini-nano-banana-2.1",
+ "input":[{"type":"text","text":"Anime TV opening key frame, 2000s cel-shaded TV anime style. A high-school girl with long black hair and a red hair ribbon, navy sailor uniform, stands on a school rooftop at sunset, wind blowing her hair, looking over her shoulder toward the camera. Medium shot, slight low angle, warm orange backlight, lens flare, chain-link fence behind her. No text, no logos."}],
+ "response_format":{"type":"image","aspect_ratio":"16:9","image_size":"1K"}}

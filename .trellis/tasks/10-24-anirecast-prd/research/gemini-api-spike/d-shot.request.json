@@ -1,0 +1,4 @@
+{"model":"gemini-omni-1.1-flash",
+ "input":[{"type":"image","file":"a-frame-0.jpg"},
+  {"type":"text","text":"Animate this frame as a short TV anime opening shot in the same 2D cel-shaded style: her long hair and red ribbon blow in the wind, she slowly turns her head toward the camera and smiles slightly, gentle camera push-in, lens flare flickers. No dialogue; soft wind ambience only."}],
+ "response_format":{"type":"video","aspect_ratio":"16:9","resolution":"720p"}}

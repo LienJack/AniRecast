@@ -1,0 +1,49 @@
+{
+  "id": "v1_ChdSSjdkYXBDc090N2U5dE1QajdiUTJBURIXUko3ZGFwQ3NPdDdlOXRNUGo3YlEyQVE",
+  "status": "completed",
+  "usage": {
+    "total_tokens": 59593,
+    "total_input_tokens": 1165,
+    "input_tokens_by_modality": [
+      {
+        "modality": "text",
+        "tokens": 65
+      },
+      {
+        "modality": "image",
+        "tokens": 1100
+      }
+    ],
+    "total_cached_tokens": 0,
+    "total_output_tokens": 57920,
+    "output_tokens_by_modality": [
+      {
+        "modality": "video",
+        "tokens": 57920
+      }
+    ],
+    "total_tool_use_tokens": 0,
+    "total_thought_tokens": 508
+  },
+  "created": "2026-10-25T06:15:00Z",
+  "updated": "2026-10-25T06:15:00Z",
+  "service_tier": "standard",
+  "steps": [
+    {
+      "signature": "<9572 chars stripped>",
+      "type": "thought"
+    },
+    {
+      "content": [
+        {
+          "data": "<6517152 b64 chars -> d-shot-0.mp4>",
+          "mime_type": "video/mp4",
+          "type": "video"
+        }
+      ],
+      "type": "model_output"
+    }
+  ],
+  "object": "interaction",
+  "model": "gemini-omni-1.1-flash"
+}

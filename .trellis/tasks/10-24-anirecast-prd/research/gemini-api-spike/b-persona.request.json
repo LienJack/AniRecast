@@ -1,0 +1,3 @@
+{"model":"gemini-nano-banana-2.1",
+ "input":[{"type":"text","text":"Character reference sheet on plain white background, anime style. An original character: a young woman in her twenties with short silver bob haircut, amber eyes, small mole under left eye, wearing an oversized teal bomber jacket over a white hoodie, black shorts, white sneakers. Show front full-body view and a face close-up side by side. Clean line art, flat colors. No text."}],
+ "response_format":{"type":"image","aspect_ratio":"16:9","image_size":"1K"}}

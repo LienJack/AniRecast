@@ -1,0 +1,4 @@
+{"model":"gemini-nano-banana-2.1",
+ "input":[{"type":"image","file":"a-frame-0.jpg"},{"type":"image","file":"b-persona-0.jpg"},
+  {"type":"text","text":"Image 1 is a storyboard frame from an anime opening. Image 2 is a character reference sheet. Replace the girl in image 1 with the character from image 2 (silver bob hair, amber eyes, mole under left eye, teal bomber jacket over white hoodie, black shorts). Keep everything else from image 1 exactly: framing, camera angle, her pose and over-the-shoulder look, wind direction in the hair, sunset lighting and lens flares, background, and the 2000s cel-shaded TV anime rendering style. Re-light the new character to match the orange backlight."}],
+ "response_format":{"type":"image","aspect_ratio":"16:9","image_size":"1K"}}
