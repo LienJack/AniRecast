@@ -30,6 +30,12 @@ interface InteractionResponse {
 /** HTTP status → AniError. 4xx is a rejection (bad request, policy, key); 429/5xx is worth retrying. */
 export function mapHttpError(status: number, body: unknown, what: string): AniError {
   const message = (body as { error?: { message?: string } })?.error?.message ?? `HTTP ${status}`;
+  // A daily request quota (Omni allows 100 a day on Tier 2) does not clear in seconds; retrying only burns time.
+  if (status === 429 && /per day/i.test(message))
+    return new AniError('provider_rejected', `${what}: ${message}`, {
+      hint: "daily_quota: the model's daily request quota is used up; do not retry until it resets.",
+      details: { status, dailyQuota: true },
+    });
   if (status === 429 || status >= 500)
     return new AniError('transient', `${what}: ${message}`, { details: { status } });
   const hint =

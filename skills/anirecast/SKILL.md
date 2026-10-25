@@ -18,7 +18,7 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
 - You have no network. If a command says `daemon_not_running`, stop and tell the human.
 - Never approve a version. Approval is the human's call; say what you recommend instead.
 - `budget_exceeded`: stop and ask. `provider_rejected` (often a content filter): rephrase at most twice, then
-  `anirecast tasks ask`.
+  `anirecast tasks ask`. If its hint says `daily_quota`, do not retry at all; ask right away.
 - User decisions are locked (cast assignments made by the human). A `conflict … locked` error means leave it.
 - Generation tiers: `draft` (360p, cheapest, for iterating), `preview` (720p), `final` (1080p). Stay on the
   project tier unless the task says otherwise; never jump to `final` on your own.

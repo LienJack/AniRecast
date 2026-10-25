@@ -163,6 +163,17 @@ describe('gemini provider (mocked HTTP)', () => {
   it('maps HTTP errors and failed interactions', async () => {
     expect(mapHttpError(400, { error: { message: 'bad' } }, 'X').code).toBe('provider_rejected');
     expect(mapHttpError(429, {}, 'X').code).toBe('transient');
+    const daily = mapHttpError(
+      429,
+      {
+        error: {
+          message:
+            'Rate limit exceeded for model gemini-omni-1.1-flash (limit: 100 requests per day on Tier 2).',
+        },
+      },
+      'Video edit',
+    );
+    expect(daily).toMatchObject({ code: 'provider_rejected', details: { dailyQuota: true } });
     expect(mapHttpError(503, {}, 'X').code).toBe('transient');
     const provider = new GeminiProvider({
       apiKey: 'k',
