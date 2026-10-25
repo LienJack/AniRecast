@@ -21,6 +21,7 @@ import {
   Loading,
   PageHeader,
   Thumb,
+  ZoomButton,
 } from '@/components/common';
 import { AssignedByBadge, TaskCard } from '@/components/domain';
 import { Button } from '@/components/ui/button';
@@ -68,10 +69,11 @@ function Appearance({
   return (
     <div
       className={cn(
-        'flex w-32 flex-col overflow-hidden rounded-md border bg-background/40',
+        'relative flex w-32 flex-col overflow-hidden rounded-md border bg-background/40',
         selected && 'border-primary ring-1 ring-primary',
       )}
     >
+      <ZoomButton src={trackletImage(t, shot)} alt={label} className="absolute top-1 right-1 z-10" />
       <button
         type="button"
         draggable
@@ -285,7 +287,7 @@ function CastCard({
       className={cn(dropping && 'border-primary bg-primary/5')}
     >
       <CardHeader className="flex-wrap gap-3">
-        <Thumb src={thumb} alt={cast.label} className="size-12 rounded-md" />
+        <Thumb src={thumb} alt={cast.label} className="size-12 rounded-md" zoom />
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           {editing ? (
             <form

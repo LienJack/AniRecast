@@ -1,5 +1,6 @@
-import { AlertTriangleIcon, ImageOffIcon, Loader2Icon } from 'lucide-react';
+import { AlertTriangleIcon, ImageOffIcon, Loader2Icon, ZoomInIcon } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
+import { type LightboxImage, useLightbox } from '@/components/lightbox';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -86,13 +87,19 @@ export function Thumb({
   alt,
   className,
   fit = 'cover',
+  zoom = false,
+  gallery,
 }: {
   src: string | undefined;
   alt: string;
   className?: string;
   fit?: 'cover' | 'contain';
+  /** Click opens the image full screen (with `gallery`, the arrows step through the set). */
+  zoom?: boolean;
+  gallery?: LightboxImage[];
 }) {
   const [failed, setFailed] = useState<string | undefined>(undefined);
+  const openLightbox = useLightbox();
   if (!src || failed === src)
     return (
       <div
@@ -103,14 +110,70 @@ export function Thumb({
         <ImageOffIcon className="size-5 opacity-60" />
       </div>
     );
-  return (
+  const img = (
     <img
       src={src}
       alt={alt}
       loading="lazy"
       onError={() => setFailed(src)}
-      className={cn('bg-black', fit === 'cover' ? 'object-cover' : 'object-contain', className)}
+      className={cn(
+        'bg-black',
+        fit === 'cover' ? 'object-cover' : 'object-contain',
+        className,
+        zoom && 'cursor-zoom-in',
+      )}
     />
+  );
+  if (!zoom) return img;
+  const set = gallery?.length ? gallery : [{ src, alt }];
+  return (
+    <button
+      type="button"
+      className="contents"
+      aria-label={`放大查看：${alt}`}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openLightbox(
+          set,
+          Math.max(
+            0,
+            set.findIndex((g) => g.src === src),
+          ),
+        );
+      }}
+    >
+      {img}
+    </button>
+  );
+}
+
+/** A small magnifier for images whose own click already does something else. */
+export function ZoomButton({
+  src,
+  alt,
+  className,
+}: {
+  src: string | undefined;
+  alt: string;
+  className?: string;
+}) {
+  const openLightbox = useLightbox();
+  if (!src) return null;
+  return (
+    <button
+      type="button"
+      aria-label={`放大查看：${alt}`}
+      title="放大查看"
+      className={cn('rounded bg-black/60 p-1 text-white hover:bg-black/80', className)}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openLightbox([{ src, alt }]);
+      }}
+    >
+      <ZoomInIcon className="size-3.5" />
+    </button>
   );
 }
 

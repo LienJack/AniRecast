@@ -95,6 +95,7 @@ function SourceCard({
         src={fileUrl(source.thumbPath, source.updatedAt)}
         alt={source.title}
         className="aspect-video w-full rounded-t-lg"
+        zoom
       />
       <div className="flex flex-col gap-1.5 p-2.5">
         <div className="flex items-start gap-2">

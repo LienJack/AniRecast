@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { EmptyState, ErrorState, Loading } from '@/components/common';
+import { LightboxProvider } from '@/components/lightbox';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Toaster } from '@/components/ui/sonner';
@@ -214,13 +215,15 @@ function Sidebar() {
 export function AppShell() {
   useDaemonEvents();
   return (
-    <div className="flex h-full overflow-hidden">
-      <Sidebar />
-      <main className="min-w-0 flex-1 overflow-y-auto">
-        <Outlet />
-      </main>
-      <Toaster />
-    </div>
+    <LightboxProvider>
+      <div className="flex h-full overflow-hidden">
+        <Sidebar />
+        <main className="min-w-0 flex-1 overflow-y-auto">
+          <Outlet />
+        </main>
+        <Toaster />
+      </div>
+    </LightboxProvider>
   );
 }
 

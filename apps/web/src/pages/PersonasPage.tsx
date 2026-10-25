@@ -1,4 +1,6 @@
-import { ArchiveIcon, ArchiveRestoreIcon, PlusIcon, StarIcon, UploadIcon } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, PlusIcon, StarIcon, UploadIcon } from 'lucide-react';
 import { useId, useRef, useState } from 'react';
 import { EmptyState, ErrorState, Field, Loading, PageHeader, Tag, Thumb } from '@/components/common';
 import { Button } from '@/components/ui/button';
@@ -217,7 +219,8 @@ function UploadForm({ persona }: { persona: Persona }) {
   );
 }
 
-function EditDialog({ persona, onClose }: { persona: Persona; onClose: () => void }) {
+/** Name, description, tags, archive, and the reference images (zoomable, set primary, upload). */
+function PersonaEditor({ persona }: { persona: Persona }) {
   const [name, setName] = useState(persona.name);
   const [description, setDescription] = useState(persona.description);
   const [tags, setTags] = useState(persona.tags.join(', '));
@@ -230,91 +233,121 @@ function EditDialog({ persona, onClose }: { persona: Persona; onClose: () => voi
     success: '已設為主圖',
     invalidate: INVALIDATE,
   });
+  const gallery = persona.images.map((img) => ({
+    src: fileUrl(img.path) ?? '',
+    alt: `${persona.name} · ${PERSONA_VIEW_LABEL[img.view]}`,
+  }));
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {persona.name}
-            {persona.archived ? <Tag tone="muted">已封存</Tag> : null}
-          </DialogTitle>
-          <DialogDescription>Codex 可以用 `anirecast persona list --json` 看到這裡的人設。</DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="flex flex-col gap-3">
-            <PersonaFields
-              name={name}
-              setName={setName}
-              description={description}
-              setDescription={setDescription}
-              tags={tags}
-              setTags={setTags}
-            />
-            <div className="flex gap-2">
-              <Button
-                disabled={!name.trim() || save.isPending}
-                onClick={() =>
-                  save.mutate({ name: name.trim(), description: description.trim(), tags: parseTags(tags) })
-                }
-              >
-                儲存
-              </Button>
-              <Button
-                variant="outline"
-                disabled={save.isPending}
-                onClick={() => save.mutate({ archived: !persona.archived })}
-              >
-                {persona.archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
-                {persona.archived ? '取消封存' : '封存'}
-              </Button>
-            </div>
-          </div>
-          <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-3 gap-2">
-              {persona.images.map((img) => (
-                <div key={img.id} className="flex flex-col gap-1">
-                  <div
-                    className={cn(
-                      'relative overflow-hidden rounded-md border',
-                      img.isPrimary && 'border-amber-400',
-                    )}
-                  >
-                    <Thumb
-                      src={fileUrl(img.path)}
-                      alt={PERSONA_VIEW_LABEL[img.view]}
-                      fit="contain"
-                      className="aspect-[3/4] w-full"
-                    />
-                    {img.isPrimary ? (
-                      <span className="absolute top-1 left-1 rounded bg-amber-400 px-1 text-[10px] text-black">
-                        主圖
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-muted-foreground">{PERSONA_VIEW_LABEL[img.view]}</span>
-                    {!img.isPrimary ? (
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label="設為主圖"
-                        title="設為主圖"
-                        disabled={setPrimary.isPending}
-                        onClick={() => setPrimary.mutate(img.id)}
-                      >
-                        <StarIcon />
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-            {!persona.images.length ? <EmptyState className="p-4">還沒有參考圖</EmptyState> : null}
-            <UploadForm persona={persona} />
-          </div>
+    <div className="grid gap-5 p-5 lg:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="flex flex-col gap-3">
+        <PersonaFields
+          name={name}
+          setName={setName}
+          description={description}
+          setDescription={setDescription}
+          tags={tags}
+          setTags={setTags}
+        />
+        <div className="flex gap-2">
+          <Button
+            disabled={!name.trim() || save.isPending}
+            onClick={() =>
+              save.mutate({ name: name.trim(), description: description.trim(), tags: parseTags(tags) })
+            }
+          >
+            儲存
+          </Button>
+          <Button
+            variant="outline"
+            disabled={save.isPending}
+            onClick={() => save.mutate({ archived: !persona.archived })}
+          >
+            {persona.archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+            {persona.archived ? '取消封存' : '封存'}
+          </Button>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+      <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3">
+          {persona.images.map((img) => (
+            <div key={img.id} className="flex flex-col gap-1">
+              <div
+                className={cn(
+                  'relative overflow-hidden rounded-md border',
+                  img.isPrimary && 'border-amber-400',
+                )}
+              >
+                <Thumb
+                  src={fileUrl(img.path)}
+                  alt={`${persona.name} · ${PERSONA_VIEW_LABEL[img.view]}`}
+                  fit="contain"
+                  className="aspect-[3/4] w-full"
+                  zoom
+                  gallery={gallery}
+                />
+                {img.isPrimary ? (
+                  <span className="absolute top-1 left-1 rounded bg-amber-400 px-1 text-[10px] text-black">
+                    主圖
+                  </span>
+                ) : null}
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">{PERSONA_VIEW_LABEL[img.view]}</span>
+                {!img.isPrimary ? (
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="設為主圖"
+                    title="設為主圖"
+                    disabled={setPrimary.isPending}
+                    onClick={() => setPrimary.mutate(img.id)}
+                  >
+                    <StarIcon />
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+        {!persona.images.length ? <EmptyState className="p-4">還沒有參考圖</EmptyState> : null}
+        <UploadForm persona={persona} />
+      </div>
+    </div>
+  );
+}
+
+/** One library entry on its own page (opened from the 物料庫 cards). */
+export function PersonaDetailPage() {
+  const { personaId } = useParams({ from: '/library/$personaId' });
+  const persona = useQuery({
+    queryKey: ['personas', 'one', personaId],
+    queryFn: () => api.get<Persona>(`/api/personas/${encodeURIComponent(personaId)}`),
+  });
+  if (persona.isPending) return <Loading />;
+  if (persona.isError) return <ErrorState error={persona.error} />;
+  const p = persona.data;
+  return (
+    <div className="flex flex-col">
+      <PageHeader
+        title={
+          <span className="flex items-center gap-2">
+            {p.name}
+            <Tag tone="info">{KIND_TEXT[p.kind].noun}</Tag>
+            {p.archived ? <Tag tone="muted">已封存</Tag> : null}
+          </span>
+        }
+        description="點圖片可以放大；Codex 可以用 `anirecast persona list` 看到這裡的資料。"
+        actions={
+          <Button asChild size="sm" variant="ghost">
+            <Link to="/library">
+              <ArrowLeftIcon />
+              物料庫
+            </Link>
+          </Button>
+        }
+      />
+      <PersonaEditor key={p.id + p.updatedAt} persona={p} />
+    </div>
   );
 }
 
@@ -329,14 +362,12 @@ export function PersonasPage({
   const text = KIND_TEXT[kind];
   const [showArchived, setShowArchived] = useState(false);
   const personas = usePersonas(showArchived, kind);
-  // The editor looks entries up including archived ones, so archiving keeps the dialog open.
-  const everyone = usePersonas(true, kind);
   const [creating, setCreating] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const open = (id: string) => void navigate({ to: '/library/$personaId', params: { personaId: id } });
   const switchId = useId();
   if (personas.isPending) return <Loading />;
   if (personas.isError) return <ErrorState error={personas.error} />;
-  const editing = (everyone.data ?? personas.data).find((p) => p.id === editingId);
   return (
     <div className="flex flex-col">
       {(() => {
@@ -364,7 +395,7 @@ export function PersonasPage({
           <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
             {personas.data.map((p) => (
               <Card key={p.id} className={cn('overflow-hidden', p.archived && 'opacity-60')}>
-                <button type="button" className="text-left" onClick={() => setEditingId(p.id)}>
+                <button type="button" className="text-left" onClick={() => open(p.id)}>
                   <Thumb
                     src={fileUrl(primaryImage(p)?.path)}
                     alt={p.name}
@@ -404,11 +435,10 @@ export function PersonasPage({
           onClose={() => setCreating(false)}
           onCreated={(p) => {
             setCreating(false);
-            setEditingId(p.id);
+            open(p.id);
           }}
         />
       ) : null}
-      {editing ? <EditDialog key={editing.id} persona={editing} onClose={() => setEditingId(null)} /> : null}
     </div>
   );
 }

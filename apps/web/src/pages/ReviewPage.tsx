@@ -528,14 +528,17 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                     {board ? `分鏡圖 v${board.version}` : '還沒有分鏡圖'}
                   </span>
                   {board?.path ? (
-                    <a href={fileUrl(board.path)} target="_blank" rel="noreferrer" title="開新分頁看原圖">
-                      <Thumb
-                        src={fileUrl(board.path)}
-                        alt={`分鏡圖 v${board.version}`}
-                        fit="contain"
-                        className="aspect-video w-full rounded-md"
-                      />
-                    </a>
+                    <Thumb
+                      src={fileUrl(board.path)}
+                      alt={`分鏡圖 v${board.version}`}
+                      fit="contain"
+                      className="aspect-video w-full rounded-md"
+                      zoom
+                      gallery={[
+                        ...(repKeyframe ? [{ src: fileUrl(repKeyframe.path) ?? '', alt: '原代表幀' }] : []),
+                        { src: fileUrl(board.path) ?? '', alt: `分鏡圖 v${board.version}` },
+                      ]}
+                    />
                   ) : (
                     <div className="flex aspect-video items-center justify-center rounded-md bg-muted text-muted-foreground text-xs">
                       {board

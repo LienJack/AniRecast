@@ -93,7 +93,7 @@ export function FrameWithOverlays({
 }) {
   return (
     <div className={cn('relative aspect-video overflow-hidden rounded-md bg-black', className)}>
-      <Thumb src={src} alt={alt} fit="contain" className="h-full w-full" />
+      <Thumb src={src} alt={alt} fit="contain" className="h-full w-full" zoom />
       {overlays.map((o) => {
         const [x0, y0, x1, y1] = o.bbox;
         return (

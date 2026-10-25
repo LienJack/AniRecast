@@ -239,6 +239,7 @@ export function ProjectSourcePage() {
           src={fileUrl(source.thumbPath, source.updatedAt)}
           alt={source.title}
           className="aspect-video w-[480px] rounded-lg"
+          zoom
         />
         <div className="flex min-w-64 flex-col gap-2 text-sm">
           <span className="font-medium text-base">{source.title}</span>

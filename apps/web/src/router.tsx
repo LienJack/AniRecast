@@ -14,6 +14,7 @@ const page = {
   newProject: lazyRouteComponent(() => import('@/pages/NewProjectPage'), 'NewProjectPage'),
   projectSource: lazyRouteComponent(() => import('@/pages/NewProjectPage'), 'ProjectSourcePage'),
   library: lazyRouteComponent(() => import('@/pages/LibraryPage'), 'LibraryPage'),
+  persona: lazyRouteComponent(() => import('@/pages/PersonasPage'), 'PersonaDetailPage'),
   settings: lazyRouteComponent(() => import('@/pages/SettingsPage'), 'SettingsPage'),
   sources: lazyRouteComponent(() => import('@/pages/SourcesPage'), 'SourcesPage'),
   projectTasks: lazyRouteComponent(() => import('@/pages/TasksPage'), 'ProjectTasksPage'),
@@ -44,6 +45,11 @@ const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'library',
   component: page.library,
+});
+const personaRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'library/$personaId',
+  component: page.persona,
 });
 const sourcesRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -119,6 +125,7 @@ const routeTree = rootRoute.addChildren([
   projectsHomeRoute,
   newProjectRoute,
   libraryRoute,
+  personaRoute,
   sourcesRoute,
   settingsRoute,
   personasRoute,

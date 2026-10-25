@@ -203,6 +203,7 @@ function ShotCard({
           src={fileUrl(shot.thumb)}
           alt={`分鏡 ${shot.orderIndex + 1}`}
           className="aspect-video w-full rounded-t-lg"
+          zoom
         />
         <span className="absolute top-1.5 left-1.5 rounded bg-black/70 px-1.5 font-mono text-xs">
           #{shot.orderIndex + 1}
