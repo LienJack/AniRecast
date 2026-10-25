@@ -6,6 +6,7 @@ import { registerGenerate } from './commands/generate.ts';
 import { registerJobs } from './commands/jobs.ts';
 import { registerMedia } from './commands/media.ts';
 import { registerServe } from './commands/serve.ts';
+import { registerSetup } from './commands/setup.ts';
 import { registerWorkspace } from './commands/workspace.ts';
 
 const program = new Command()
@@ -27,5 +28,6 @@ registerCast(program);
 registerGenerate(program);
 registerDoctor(program);
 registerServe(program);
+registerSetup(program);
 
 await program.parseAsync(process.argv);

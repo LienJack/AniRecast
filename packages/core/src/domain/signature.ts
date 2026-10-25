@@ -46,7 +46,7 @@ export function placeTracklet(
   const position = cx === null ? null : cx < 0.4 ? 'left' : cx > 0.6 ? 'right' : 'center';
   const attrs = fromJson<Record<string, string>>(d.attrs_json, {});
   const parts = [attrs.hair, attrs.eyes ? `${attrs.eyes} eyes` : undefined, attrs.outfit].filter(
-    (p) => p && p.trim() && p.toLowerCase() !== 'null',
+    (p) => p?.trim() && p.toLowerCase() !== 'null',
   );
   return { position, appearance: parts.length ? parts.join('; ') : null };
 }

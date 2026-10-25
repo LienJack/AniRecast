@@ -23,6 +23,9 @@ export interface Tracklet {
   lookId: string | null;
   confidence: number | null;
   assignedBy: AssignedBy;
+  /** Crops of the appearance nearest its first sampled frame (for the cast page and contact sheets). */
+  headCropPath: string | null;
+  bodyCropPath: string | null;
 }
 
 export interface CastMember {
@@ -55,7 +58,15 @@ interface TrackletRow {
   look_id: string | null;
   confidence: number | null;
   assigned_by: AssignedBy;
+  head_crop_path: string | null;
+  body_crop_path: string | null;
 }
+
+/** Tracklet columns plus the crops of its earliest detection. */
+const TRACKLET_SELECT = `SELECT t.id, t.shot_id, t.cast_member_id, t.look_id, t.confidence, t.assigned_by,
+  (SELECT d.head_crop_path FROM detections d WHERE d.tracklet_id = t.id ORDER BY d.frame LIMIT 1) AS head_crop_path,
+  (SELECT d.body_crop_path FROM detections d WHERE d.tracklet_id = t.id ORDER BY d.frame LIMIT 1) AS body_crop_path
+  FROM tracklets t`;
 
 const toTracklet = (r: TrackletRow): Tracklet => ({
   id: r.id,
@@ -64,6 +75,8 @@ const toTracklet = (r: TrackletRow): Tracklet => ({
   lookId: r.look_id,
   confidence: r.confidence,
   assignedBy: r.assigned_by,
+  headCropPath: r.head_crop_path,
+  bodyCropPath: r.body_crop_path,
 });
 
 /** `codex:<thread>` actors are Codex decisions; everyone else is the human user. */
@@ -91,7 +104,7 @@ export function listLooks(db: Db, castMemberId: string): Look[] {
 }
 
 function toCast(db: Db, r: CastRow): CastMember {
-  const tracklets = all<TrackletRow>(db, 'SELECT * FROM tracklets WHERE cast_member_id = :id', {
+  const tracklets = all<TrackletRow>(db, `${TRACKLET_SELECT} WHERE t.cast_member_id = :id`, {
     id: r.id,
   }).map(toTracklet);
   return {
@@ -123,13 +136,13 @@ export function listCast(db: Db, projectId: string, { includeInactive = false } 
 }
 
 export function getTracklet(db: Db, id: string): Tracklet {
-  const row = one<TrackletRow>(db, 'SELECT * FROM tracklets WHERE id = :id', { id });
+  const row = one<TrackletRow>(db, `${TRACKLET_SELECT} WHERE t.id = :id`, { id });
   if (!row) throw new AniError('not_found', `Tracklet not found: ${id}`);
   return toTracklet(row);
 }
 
 export function listShotTracklets(db: Db, shotId: string): Tracklet[] {
-  return all<TrackletRow>(db, 'SELECT * FROM tracklets WHERE shot_id = :shotId', { shotId }).map(toTracklet);
+  return all<TrackletRow>(db, `${TRACKLET_SELECT} WHERE t.shot_id = :shotId`, { shotId }).map(toTracklet);
 }
 
 export function createCastMember(

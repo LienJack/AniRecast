@@ -7,8 +7,8 @@ import { approvedBoard, getBoard, getTake, type InputRef } from './generation.ts
 import { type Bbox, overlaysToRemove, type TextOverlay } from './overlays.ts';
 import { getPersona, type Persona } from './personas.ts';
 import type { GenerationTier } from './projects.ts';
-import { placeTracklet, replacementSignature } from './signature.ts';
 import { getShot, listKeyframes, type Shot } from './shots.ts';
+import { placeTracklet, replacementSignature } from './signature.ts';
 
 /** Nano Banana 2.1 accepts at most five character reference images per request. */
 export const MAX_CHARACTER_REFS = 5;

@@ -3,8 +3,8 @@ import { appendEvent } from '../events.ts';
 import { shotCast } from './cast.ts';
 import { findActiveClip } from './clips.ts';
 import { overlaysToRemove } from './overlays.ts';
-import { replacementSignature } from './signature.ts';
 import { getShot, listShots, type Shot, type ShotMode, updateShot } from './shots.ts';
+import { replacementSignature } from './signature.ts';
 
 /** design §6: replace if a mapped persona appears; else clean if overlays must go; else keep. */
 export function autoModeFor(db: Db, shot: Shot): ShotMode {
