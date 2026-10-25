@@ -132,7 +132,8 @@ describe('tidying the cast with the JEV judge', () => {
       const looks = listLooks(cli.db, takina.id);
       expect(looks.map((l) => l.label).sort()).toEqual(['制服', '造型 4']);
       const task = listAgentTasks(cli.db, { projectId: project.id }).find((t) => t.kind === 'cast_review');
-      const cases = (task?.payload as { cases: Array<{ type: string; trackletIds?: string[] }> }).cases;
+      expect(task).toBeDefined();
+      const cases = (task!.payload as { cases: Array<{ type: string; trackletIds?: string[] }> }).cases;
       expect(cases.map((c) => c.type).sort()).toEqual(['maybe_mixed', 'maybe_same']);
       expect(cases.find((c) => c.type === 'maybe_mixed')?.trackletIds).toEqual([stranger.id]);
       expect(asked).toHaveLength(2);
