@@ -63,12 +63,12 @@ describe('web API', () => {
     const form = new FormData();
     form.set('file', new File([PNG], 'ref.png', { type: 'image/png' }));
     form.set('view', 'full');
-    const uploaded = await (
+    const uploaded = (await (
       await fetch(`${t.daemon.url}/api/personas/silver/images`, { method: 'POST', body: form })
-    ).json();
+    ).json()) as { data: { images: Array<{ path: string; view: string; isPrimary: boolean }> } };
     expect(uploaded.data.images).toHaveLength(1);
     expect(uploaded.data.images[0]).toMatchObject({ view: 'full', isPrimary: true });
-    const file = await fetch(`${t.daemon.url}/api/files/${uploaded.data.images[0].path}`);
+    const file = await fetch(`${t.daemon.url}/api/files/${uploaded.data.images[0]!.path}`);
     expect(file.headers.get('content-type')).toBe('image/png');
   });
 });
