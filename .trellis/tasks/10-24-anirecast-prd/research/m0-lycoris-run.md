@@ -55,4 +55,4 @@
 
 `~/.cache/ranolabs/sessions/2026-10-25-nas-anime-recast/`：只剩評審拼圖、重試和探測用的腳本（boards_sheet.py、takes_sheet.py、retry_blocked.sh、retry_varied.sh、omni_probe.ts、plan_diff.ts）。原片副本和參考圖副本已刪除，因為都已經在 workspace 裡；NAS 也已卸載。M0 跑完 final 合成後刪除。
 
-已知殘留：第一次從 NAS 匯入時取消的來源 `src_01m5sbjk3x68w6dtsv2k5y8gj9` 還留在下載合集裡，狀態是 pending，目錄是空的。目前沒有刪除來源的指令，這是已知缺口。
+第一次從 NAS 匯入時取消、留下的 pending 來源 `src_01m5sbjk3x68w6dtsv2k5y8gj9`，已經用新的 `source remove`（8d5466f）移到 `trash/sources/`。
