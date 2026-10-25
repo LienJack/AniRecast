@@ -4,7 +4,7 @@ import {
   acquireDaemonLock,
   appendEvent,
   clearHeartbeat,
-  getGeminiApiKey,
+  getApiKey,
   HEARTBEAT_INTERVAL_MS,
   type LocalConfig,
   loadConfig,
@@ -15,7 +15,7 @@ import {
   type Workspace,
   writeHeartbeat,
 } from '@anirecast/core';
-import { createProvider, type Provider, unavailableProvider } from '@anirecast/providers';
+import { createProvider, type Provider } from '@anirecast/providers';
 import { AniError } from '@anirecast/shared';
 import { type ServerType, serve } from '@hono/node-server';
 import type { CodexCommand } from './codex/binary.ts';
@@ -46,13 +46,15 @@ export function resolveProvider(config: LocalConfig, env: NodeJS.ProcessEnv = pr
       ? env.ANIRECAST_PROVIDER
       : config.provider;
   if (kind === 'fake') return createProvider('fake');
-  const apiKey = getGeminiApiKey(env);
-  return apiKey
-    ? createProvider('gemini', { apiKey })
-    : unavailableProvider(
-        'No Gemini API key configured',
-        'Run `anirecast auth set-key`, or set GEMINI_API_KEY.',
-      );
+  // Each backend works as soon as its key is there; a model whose key is missing fails with a setup hint.
+  const apiKey = getApiKey('gemini', env);
+  const fal = getApiKey('fal', env);
+  const jev = getApiKey('jev', env);
+  return createProvider('gemini', {
+    ...(apiKey ? { apiKey } : {}),
+    ...(fal ? { fal } : {}),
+    ...(jev ? { jev: { apiKey: jev, baseUrl: env.JEV_URL ?? config.providers.jev.baseUrl } } : {}),
+  });
 }
 
 export interface DaemonHandle {

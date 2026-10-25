@@ -9,7 +9,22 @@ export interface LocalConfig {
   daemon: { host: string; port: number };
   /** `fake` runs the whole pipeline offline at zero cost (tests, dev past the budget). */
   provider: 'gemini' | 'fake';
-  models: { image: string; video: string; vision: string };
+  /**
+   * Model per task. A `fal:` prefix routes to fal.ai (e.g. `fal:bytedance/seedance-2.5/us/reference-to-video`),
+   * `jev:` to the OpenAI-compatible JEV router (e.g. `jev:google/gemini-3.8-flash`); no prefix is Gemini.
+   */
+  models: { image: string; video: string; vision: string; continuity: string };
+  providers: { jev: { baseUrl: string } };
+  /** After detection, judge each cut and merge the ones inside one continuous moment. */
+  continuity: {
+    enabled: boolean;
+    /** Merge automatically at or above this confidence. */
+    autoMerge: number;
+    /** Between this and `autoMerge` the cut goes to Codex; below it the cut stays. */
+    review: number;
+    /** A merge never makes a shot longer than this (Omni edits at most 10 s). */
+    maxShotSeconds: number;
+  };
   /** Hard cap on paid provider spend recorded in the workspace cost ledger. null = no cap. */
   budget: { capUsd: number | null };
   concurrency: { generate: number; media: number; io: number };
@@ -31,7 +46,14 @@ export const DEFAULT_CONFIG: LocalConfig = {
   recentWorkspaces: [],
   daemon: { host: '127.0.0.1', port: 7878 },
   provider: 'gemini',
-  models: { image: 'gemini-nano-banana-2.1', video: 'gemini-omni-1.1-flash', vision: 'gemini-3.8-flash' },
+  models: {
+    image: 'gemini-nano-banana-2.1',
+    video: 'gemini-omni-1.1-flash',
+    vision: 'gemini-3.8-flash',
+    continuity: 'jev:google/gemini-3.8-flash',
+  },
+  providers: { jev: { baseUrl: 'https://router.shengsuanyun.com/api/v1' } },
+  continuity: { enabled: true, autoMerge: 0.85, review: 0.5, maxShotSeconds: 10 },
   budget: { capUsd: null },
   concurrency: { generate: 2, media: 2, io: 2 },
   codex: { autoDispatch: true, binPath: null, model: null },

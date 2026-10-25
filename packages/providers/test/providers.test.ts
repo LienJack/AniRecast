@@ -4,7 +4,21 @@ import path from 'node:path';
 import { probe } from '@anirecast/media';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { synthesizeShots } from '../../media/test/fixtures.ts';
-import { FakeProvider, findMedia, GeminiProvider, mapHttpError, tokenCost } from '../src/index.ts';
+import {
+  estimateVideoEditCost,
+  estimateVisionCost,
+  FakeProvider,
+  falError,
+  falVideoFamily,
+  findMedia,
+  GeminiProvider,
+  mapHttpError,
+  parseJsonReply,
+  RoutedProvider,
+  tokenCost,
+  toSeedancePrompt,
+  videoModelTakesImages,
+} from '../src/index.ts';
 
 let dir: string;
 let video: string;
@@ -187,5 +201,68 @@ describe('gemini provider (mocked HTTP)', () => {
 
   it('ignores signature blobs when looking for media', () => {
     expect(findMedia({ steps: [{ signature: 'A'.repeat(500) }] }, 'video')).toBeUndefined();
+  });
+});
+
+describe('fal and JEV routes', () => {
+  it('sends each model to its backend and names the missing key', async () => {
+    const fake = new FakeProvider({ vision: () => ({ ok: true }) });
+    const routed = new RoutedProvider({ jev: fake });
+    expect(routed.backendFor('jev:google/gemini-3.8-flash')).toBe('jev');
+    expect(routed.backendFor('fal:bytedance/seedance-2.5/us/reference-to-video')).toBe('fal');
+    expect(routed.backendFor('gemini-omni-1.1-flash')).toBe('gemini');
+    const r = await routed.analyzeImages<{ ok: boolean }>({
+      model: 'jev:x',
+      prompt: 'p',
+      images: [],
+      responseSchema: {},
+    });
+    expect(r.data.ok).toBe(true);
+    await expect(
+      routed.editVideo({
+        model: 'fal:google/gemini-omni-flash/v1.1/edit',
+        prompt: 'p',
+        video: { path: video, mimeType: 'video/mp4' },
+        inputFrames: 1,
+        inputSeconds: 1,
+        images: [],
+        resolution: '360p',
+        aspectRatio: '16:9',
+      }),
+    ).rejects.toThrow(/No fal API key/);
+  });
+
+  it('turns fal content blocks into safety blocks and maps Seedance prompts', () => {
+    const blocked = falError(
+      422,
+      { detail: [{ type: 'content_policy_violation', msg: 'The output contains sexual content.' }] },
+      'fal video edit',
+    );
+    expect(blocked.code).toBe('provider_rejected');
+    expect(blocked.message).toMatch(/Request blocked by the safety filter/);
+    expect(falError(422, { detail: [{ type: 'greater_than_equal', msg: 'too short' }] }, 'x').message).toBe(
+      'x: too short',
+    );
+    expect(falError(503, { detail: 'busy' }, 'x').code).toBe('transient');
+    expect(toSeedancePrompt('Replace her with <IMAGE_REF_0> and <IMAGE_REF_2>.')).toBe(
+      'Edit @Video1. Replace her with @Image1 and @Image3.',
+    );
+    expect(falVideoFamily('fal:google/gemini-omni-flash/v1.1/edit')).toBe('omni-edit');
+    expect(falVideoFamily('fal:bytedance/seedance-2.5/us/reference-to-video')).toBe('seedance-reference');
+    expect(falVideoFamily('fal:google/gemini-omni-flash/v1.1/reference-to-video')).toBeUndefined();
+    expect(videoModelTakesImages('fal:google/gemini-omni-flash/v1.1/edit')).toBe(false);
+    expect(videoModelTakesImages('gemini-omni-1.1-flash')).toBe(true);
+  });
+
+  it('reads JSON replies and estimates fal and JEV costs', () => {
+    expect(parseJsonReply<{ a: number }>('Sure:\n```json\n{"a": 1}\n```')).toEqual({ a: 1 });
+    expect(() => parseJsonReply('no json here')).toThrow(/did not answer in JSON/);
+    // Omni edit on fal: USD 0.03 per output second.
+    expect(estimateVideoEditCost('fal:google/gemini-omni-flash/v1.1/edit', 3, '360p')).toBeCloseTo(0.09);
+    // Seedance: at least 4 s at 480p plus the 1.5 s reference at 0.6x, USD 0.0214 per 1000 tokens.
+    const seedance = estimateVideoEditCost('fal:bytedance/seedance-2.5/us/reference-to-video', 1.5, '360p');
+    expect(seedance).toBeGreaterThan(0.9);
+    expect(seedance).toBeLessThan(1.1);
+    expect(estimateVisionCost('jev:google/gemini-3.8-flash', 4)).toBeLessThan(0.01);
   });
 });

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   AGENTS_FILE,
+  apiKeySource,
   daemonStatus,
   geminiKeySource,
   inspectWorkspace,
@@ -82,6 +83,20 @@ export function runDoctor(globals: GlobalOptions): { healthy: boolean; checks: C
     detail: keySource,
     ...(keySource === 'missing' ? { hint: 'Run `anirecast auth set-key` (reads the key from stdin).' } : {}),
   });
+
+  // Optional backends: fal.ai (fal: video models) and the JEV router (jev: models, used to judge shot cuts).
+  for (const provider of ['fal', 'jev'] as const) {
+    const source = apiKeySource(provider);
+    checks.push({
+      name: `${provider}-api-key`,
+      ok: source !== 'missing',
+      required: false,
+      detail: source,
+      ...(source === 'missing'
+        ? { hint: `anirecast auth set-key --provider ${provider} --from-env-file .env` }
+        : {}),
+    });
+  }
 
   let root: string | undefined;
   try {

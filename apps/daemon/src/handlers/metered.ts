@@ -12,8 +12,8 @@ export async function metered<T>(
   call: () => Promise<T>,
 ): Promise<T> {
   const { workspace: ws, services, job } = ctx;
-  const provider = services.provider.name;
-  if (provider !== 'fake') assertQuota(ws.db, services.config, req.model, 1);
+  const provider = services.provider.backendFor?.(req.model) ?? services.provider.name;
+  if (services.provider.name !== 'fake') assertQuota(ws.db, services.config, req.model, 1);
   const base = {
     provider,
     model: req.model,

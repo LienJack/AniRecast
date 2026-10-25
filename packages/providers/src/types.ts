@@ -74,7 +74,10 @@ export interface VisionResult<T> extends ProviderCallMeta {
 }
 
 export interface Provider {
-  readonly name: 'gemini' | 'fake';
+  /** `router` dispatches by model prefix to gemini, fal or jev; `fake` runs offline at no cost. */
+  readonly name: 'gemini' | 'fake' | 'fal' | 'jev' | 'router';
+  /** Which backend serves a model (for the request log); single-backend providers return their name. */
+  backendFor?(model: string): string;
   generateImage(req: ImageGenRequest): Promise<ImageGenResult>;
   editVideo(req: VideoEditRequest): Promise<VideoEditResult>;
   analyzeImages<T>(req: VisionRequest): Promise<VisionResult<T>>;

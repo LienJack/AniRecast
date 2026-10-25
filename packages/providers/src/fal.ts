@@ -1,0 +1,221 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { AniError, isTextOnlyVideoModel } from '@anirecast/shared';
+import type {
+  ImageGenRequest,
+  ImageGenResult,
+  LocalMedia,
+  Provider,
+  VideoEditRequest,
+  VideoEditResult,
+  VisionRequest,
+  VisionResult,
+} from './types.ts';
+
+export const FAL_PREFIX = 'fal:';
+const QUEUE = 'https://queue.fal.run';
+const STORAGE = 'https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3';
+const PLATFORM = 'https://api.fal.ai/v1';
+
+type Json = Record<string, unknown>;
+
+/** How a fal endpoint is driven for a video edit. */
+export type FalVideoFamily = 'omni-edit' | 'seedance-reference';
+
+export function falVideoFamily(model: string): FalVideoFamily | undefined {
+  const id = model.startsWith(FAL_PREFIX) ? model.slice(FAL_PREFIX.length) : model;
+  if (/gemini-omni/.test(id) && id.endsWith('/edit')) return 'omni-edit';
+  if (/seedance/.test(id) && id.endsWith('/reference-to-video')) return 'seedance-reference';
+  return undefined;
+}
+
+/** Whether a video model can be given reference images (board, persona). */
+export function videoModelTakesImages(model: string): boolean {
+  return !isTextOnlyVideoModel(model);
+}
+
+/** fal reports problems as `{detail: [{msg, type}]}` or `{detail: "..."}`; content blocks become safety blocks. */
+export function falError(status: number, body: unknown, what: string): AniError {
+  const detail = (body as { detail?: unknown })?.detail;
+  const first = Array.isArray(detail)
+    ? (detail[0] as { msg?: string; type?: string } | undefined)
+    : undefined;
+  const message = first?.msg ?? (typeof detail === 'string' ? detail : `HTTP ${status}`);
+  if (first?.type === 'content_policy_violation')
+    return new AniError('provider_rejected', `${what}: Request blocked by the safety filter (${message})`, {
+      hint: 'safety_block: change the prompt, the board or the persona look.',
+      details: { status, type: first.type },
+    });
+  if (status === 429 || status >= 500)
+    return new AniError('transient', `${what}: ${message}`, { details: { status } });
+  const hint =
+    status === 401 || status === 403
+      ? 'Check the fal.ai key (`anirecast auth status`).'
+      : 'The request was rejected; adjust the prompt or inputs and retry.';
+  return new AniError('provider_rejected', `${what}: ${message}`, {
+    hint,
+    details: { status, type: first?.type },
+  });
+}
+
+/** Turns `<IMAGE_REF_n>` (planner order: board first, then personas) into Seedance's `@Image{n+1}`. */
+export function toSeedancePrompt(prompt: string): string {
+  return `Edit @Video1. ${prompt.replace(/<IMAGE_REF_(\d+)>/g, (_m, n: string) => `@Image${Number(n) + 1}`)}`;
+}
+
+/**
+ * Video edits on fal.ai: Gemini Omni `edit` (video and prompt only) and Seedance reference-to-video in editing
+ * mode (video plus reference images). Models are named `fal:<endpoint id>`. Cost is fal's billable units for
+ * the request times the endpoint's list price.
+ */
+export class FalProvider implements Provider {
+  readonly name = 'fal' as const;
+  readonly #key: string;
+  readonly #prices = new Map<string, Promise<number>>();
+
+  constructor(opts: { apiKey: string }) {
+    this.#key = opts.apiKey;
+  }
+
+  get #auth() {
+    return { authorization: `Key ${this.#key}` };
+  }
+
+  async #upload(media: LocalMedia, signal?: AbortSignal): Promise<string> {
+    const init = await fetch(STORAGE, {
+      method: 'POST',
+      headers: { ...this.#auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ content_type: media.mimeType, file_name: path.basename(media.path) }),
+      ...(signal ? { signal } : {}),
+    });
+    const target = (await init.json().catch(() => ({}))) as { upload_url?: string; file_url?: string };
+    if (!init.ok || !target.upload_url || !target.file_url) throw falError(init.status, target, 'fal upload');
+    const put = await fetch(target.upload_url, {
+      method: 'PUT',
+      headers: { 'content-type': media.mimeType },
+      body: await readFile(media.path),
+      ...(signal ? { signal } : {}),
+    });
+    if (!put.ok) throw falError(put.status, {}, 'fal upload');
+    return target.file_url;
+  }
+
+  /** List price per billable unit of an endpoint (seconds for Omni, 1000 tokens for Seedance). */
+  #unitPrice(endpoint: string): Promise<number> {
+    let p = this.#prices.get(endpoint);
+    if (!p) {
+      p = fetch(`${PLATFORM}/models/pricing?endpoint_id=${encodeURIComponent(endpoint)}`, {
+        headers: this.#auth,
+      })
+        .then((r) => (r.ok ? r.json() : { prices: [] }))
+        .then((j) =>
+          Number(((j as Json).prices as Array<{ unit_price?: number }> | undefined)?.[0]?.unit_price ?? 0),
+        )
+        .catch(() => 0);
+      this.#prices.set(endpoint, p);
+    }
+    return p;
+  }
+
+  /** Submits to fal's queue and waits for the result; returns the output and the billable units. */
+  async #run(
+    endpoint: string,
+    input: Json,
+    what: string,
+    signal?: AbortSignal,
+    onStatus?: (m: string) => void,
+  ): Promise<{ output: Json; units: number; requestId: string }> {
+    const submit = await fetch(`${QUEUE}/${endpoint}`, {
+      method: 'POST',
+      headers: { ...this.#auth, 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      ...(signal ? { signal } : {}),
+    });
+    const queued = (await submit.json().catch(() => ({}))) as {
+      request_id?: string;
+      status_url?: string;
+      response_url?: string;
+    };
+    if (!submit.ok || !queued.status_url || !queued.response_url) throw falError(submit.status, queued, what);
+    const deadline = Date.now() + 20 * 60_000;
+    let last = '';
+    for (;;) {
+      if (signal?.aborted) throw new AniError('transient', `${what}: cancelled`);
+      const s = await fetch(queued.status_url, { headers: this.#auth, ...(signal ? { signal } : {}) });
+      const status = ((await s.json().catch(() => ({}))) as { status?: string }).status ?? 'UNKNOWN';
+      if (status !== last) onStatus?.(`fal ${status.toLowerCase().replace('_', ' ')}`);
+      last = status;
+      if (status === 'COMPLETED') break;
+      if (Date.now() > deadline) throw new AniError('transient', `${what}: still ${status} after 20 minutes`);
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    const res = await fetch(queued.response_url, { headers: this.#auth, ...(signal ? { signal } : {}) });
+    const output = (await res.json().catch(() => ({}))) as Json;
+    if (!res.ok || output.detail) throw falError(res.status, output, what);
+    return {
+      output,
+      units: Number(res.headers.get('x-fal-billable-units') ?? 0),
+      requestId: queued.request_id ?? '',
+    };
+  }
+
+  async editVideo(req: VideoEditRequest): Promise<VideoEditResult> {
+    const t0 = Date.now();
+    const endpoint = req.model.startsWith(FAL_PREFIX) ? req.model.slice(FAL_PREFIX.length) : req.model;
+    const family = falVideoFamily(endpoint);
+    if (!family) {
+      throw new AniError('usage', `fal endpoint ${endpoint} is not set up for shot edits`, {
+        hint: 'Use a fal Omni …/edit or Seedance …/reference-to-video endpoint.',
+      });
+    }
+    req.onStatus?.('uploading to fal');
+    const videoUrl = await this.#upload(req.video, req.signal);
+    let input: Json;
+    if (family === 'omni-edit') {
+      input = { prompt: req.prompt, video_url: videoUrl, resolution: req.resolution };
+    } else {
+      const imageUrls = await Promise.all(req.images.map((m) => this.#upload(m, req.signal)));
+      input = {
+        prompt: toSeedancePrompt(req.prompt),
+        video_urls: [videoUrl],
+        image_urls: imageUrls,
+        task: 'editing',
+        duration: 'auto',
+        // Seedance has no 360p; its smallest size is 480p.
+        resolution: req.resolution === '360p' ? '480p' : req.resolution === '4k' ? '1080p' : req.resolution,
+        aspect_ratio: req.aspectRatio,
+        generate_audio: false,
+      };
+    }
+    const { output, units, requestId } = await this.#run(
+      endpoint,
+      input,
+      'fal video edit',
+      req.signal,
+      req.onStatus,
+    );
+    const url = (output.video as { url?: string } | undefined)?.url;
+    if (!url) throw new AniError('provider_rejected', 'fal returned no video');
+    const video = await fetch(url, req.signal ? { signal: req.signal } : {});
+    if (!video.ok) throw falError(video.status, {}, 'fal download');
+    const unitPrice = await this.#unitPrice(endpoint);
+    return {
+      data: Buffer.from(await video.arrayBuffer()),
+      mimeType: 'video/mp4',
+      provider: 'fal',
+      model: req.model,
+      usage: { inputTokens: 0, outputTokens: 0, raw: { billableUnits: units, unitPrice, family } },
+      costUsd: units * unitPrice,
+      latencyMs: Date.now() - t0,
+      remote: { interactionId: requestId },
+    };
+  }
+
+  async generateImage(_req: ImageGenRequest): Promise<ImageGenResult> {
+    throw new AniError('usage', 'fal image models are not wired in yet; use a Gemini image model');
+  }
+
+  async analyzeImages<T>(_req: VisionRequest): Promise<VisionResult<T>> {
+    throw new AniError('usage', 'Use a Gemini or jev: model for image analysis');
+  }
+}

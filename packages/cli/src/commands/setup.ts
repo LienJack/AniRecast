@@ -12,13 +12,19 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import {
+  API_KEYS,
+  apiKeySource,
   geminiKeySource,
+  getApiKey,
   initWorkspace,
   inspectWorkspace,
+  type KeyedProvider,
+  keyFromEnvText,
   loadConfig,
   openWorkspace,
   rememberWorkspace,
-  setGeminiApiKey,
+  setApiKey,
+  updateConfig,
   type Workspace,
 } from '@anirecast/core';
 import { AppServerClient, resolveCodexCommand } from '@anirecast/daemon';
@@ -302,40 +308,76 @@ export function registerSetup(program: Command): void {
 
   const auth = program
     .command('auth')
-    .description('Gemini API key (stored in the macOS keychain, never in a workspace)');
+    .description('API keys for Gemini, fal.ai and the JEV router (macOS keychain, never in a workspace)');
+  const providerOf = (value: string | undefined): KeyedProvider => {
+    const p = (value ?? 'gemini') as KeyedProvider;
+    if (!(p in API_KEYS))
+      throw new AniError('usage', `--provider must be one of ${Object.keys(API_KEYS).join(', ')}`);
+    return p;
+  };
   auth
     .command('set-key')
-    .description('Read the key from stdin (e.g. `pbpaste | anirecast auth set-key`) or from a .env file')
-    .option('--from-env-file <file>', 'take GEMINI_API_KEY or GEMINI_OMNI_API_KEY from this file')
+    .description(
+      'Read the key from stdin (e.g. `pbpaste | anirecast auth set-key --provider fal`) or from a .env file',
+    )
+    .option('--provider <name>', 'gemini (default), fal or jev')
+    .option(
+      '--from-env-file <file>',
+      'take the key from this file (GEMINI_API_KEY, FAL_KEY/FAL_AI_KEY or JEV_API_KEY; JEV_URL is saved too)',
+    )
     .action(
-      command(async (opts: { fromEnvFile?: string }) => {
+      command(async (opts: { provider?: string; fromEnvFile?: string }) => {
+        const provider = providerOf(opts.provider);
         let key: string | undefined;
+        let baseUrl: string | undefined;
         if (opts.fromEnvFile) {
           const text = readFileSync(opts.fromEnvFile, 'utf8');
-          key = /^(?:GEMINI_API_KEY|GEMINI_OMNI_API_KEY)\s*=\s*"?([^"\n]+)"?/m.exec(text)?.[1]?.trim();
+          key = keyFromEnvText(provider, text);
+          if (provider === 'jev') baseUrl = /^JEV_URL\s*=\s*"?([^"\n]+)"?/m.exec(text)?.[1]?.trim();
         } else {
           if (process.stdin.isTTY) note('Paste the key, then press Ctrl-D:');
           const chunks: Buffer[] = [];
           for await (const c of process.stdin) chunks.push(c as Buffer);
           key = Buffer.concat(chunks).toString('utf8').trim();
         }
-        if (!key) throw new AniError('usage', 'No key found');
-        setGeminiApiKey(key);
-        return { stored: 'keychain', length: key.length };
+        if (!key) throw new AniError('usage', `No ${API_KEYS[provider].label} key found`);
+        setApiKey(provider, key);
+        if (baseUrl)
+          updateConfig((c) => {
+            c.providers.jev.baseUrl = baseUrl;
+          });
+        return { provider, stored: 'keychain', length: key.length, ...(baseUrl ? { baseUrl } : {}) };
       }),
     );
   auth
     .command('status')
-    .option('--check', 'call the free model list endpoint to confirm the key works')
+    .option('--check', 'make one free call per configured key to confirm it works')
     .action(
       command(async (opts: { check?: boolean }) => {
-        const source = geminiKeySource();
-        if (!opts.check || source === 'missing') return { source };
-        const { getGeminiApiKey } = await import('@anirecast/core');
-        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', {
-          headers: { 'x-goog-api-key': getGeminiApiKey() ?? '' },
-        });
-        return { source, valid: res.ok, status: res.status };
+        const config = loadConfig();
+        const out = [];
+        for (const provider of Object.keys(API_KEYS) as KeyedProvider[]) {
+          const source = apiKeySource(provider);
+          const row: Record<string, unknown> = { provider, source };
+          if (provider === 'jev') row.baseUrl = process.env.JEV_URL ?? config.providers.jev.baseUrl;
+          if (opts.check && source !== 'missing') {
+            const key = getApiKey(provider) ?? '';
+            const res =
+              provider === 'gemini'
+                ? await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', {
+                    headers: { 'x-goog-api-key': key },
+                  })
+                : provider === 'fal'
+                  ? await fetch('https://api.fal.ai/v1/models?limit=1', {
+                      headers: { authorization: `Key ${key}` },
+                    })
+                  : await fetch(`${row.baseUrl}/models`, { headers: { authorization: `Bearer ${key}` } });
+            row.valid = res.ok;
+            row.status = res.status;
+          }
+          out.push(row);
+        }
+        return out;
       }),
     );
 }

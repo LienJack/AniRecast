@@ -1,3 +1,5 @@
+import { FAL_PREFIX, falVideoFamily } from './fal.ts';
+import { CNY_PER_USD, JEV_PREFIX } from './jev.ts';
 import type { ImageSize, Usage, VideoResolution } from './types.ts';
 
 /** USD per 1M tokens, from ai.google.dev pricing (checked 2026-10-25; Flash prices rise 2027-01-01). */
@@ -38,6 +40,28 @@ export function imageCost(model: string, size: ImageSize, inputTokens: number): 
   return IMAGE_PRICE[size] + tokenCost(model, { inputTokens, outputTokens: 0 });
 }
 
+/** fal list prices (USD, checked 2026-10-25): Omni edit per output second, Seedance 2.5 per 1000 tokens. */
+const FAL_OMNI_PER_SECOND = 0.03;
+const FAL_SEEDANCE_PER_1K_TOKENS = 0.0214;
+const SEEDANCE_SIZE: Record<string, [number, number]> = {
+  '480p': [854, 480],
+  '720p': [1280, 720],
+  '1080p': [1920, 1080],
+};
+
+/**
+ * Seedance bills width × height × 24 fps × seconds / 1024 tokens, at least 4 s of output, plus the reference
+ * video at 0.6× (fal, 2026-10). 360p requests run at 480p.
+ */
+function seedanceEstimate(seconds: number, resolution: VideoResolution): number {
+  const [w, h] = SEEDANCE_SIZE[
+    resolution === '360p' ? '480p' : resolution === '4k' ? '1080p' : resolution
+  ] ?? [854, 480];
+  const perSecond = (w * h * 24) / 1024;
+  const tokens = Math.max(4, seconds) * perSecond + seconds * perSecond * 0.6;
+  return (tokens / 1000) * FAL_SEEDANCE_PER_1K_TOKENS;
+}
+
 export function estimateVideoEditCost(
   model: string,
   seconds: number,
@@ -45,6 +69,10 @@ export function estimateVideoEditCost(
   refImages = 2,
   inputHeight = 720,
 ): number {
+  if (model.startsWith(FAL_PREFIX))
+    return falVideoFamily(model) === 'seedance-reference'
+      ? seedanceEstimate(seconds, resolution)
+      : Math.max(1, seconds) * FAL_OMNI_PER_SECOND;
   const inputTokens = seconds * omniInputTokensPerSecond(inputHeight) + refImages * 1100 + 200;
   const outputTokens = seconds * OMNI_OUTPUT_TOKENS_PER_SECOND[resolution];
   return tokenCost(model, { inputTokens, outputTokens });
@@ -55,5 +83,8 @@ export function estimateImageCost(model: string, size: ImageSize, refImages: num
 }
 
 export function estimateVisionCost(model: string, images: number): number {
+  // JEV router prices are CNY per 1M tokens; gemini-3.8-flash there is 5.25 in / 26.25 out.
+  if (model.startsWith(JEV_PREFIX))
+    return ((images * 1100 + 800) * 5.25 + 600 * 26.25) / 1_000_000 / CNY_PER_USD;
   return tokenCost(model, { inputTokens: images * 1100 + 800, outputTokens: 1500 });
 }

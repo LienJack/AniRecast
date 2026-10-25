@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { AniError } from '@anirecast/shared';
+import { AniError, isTextOnlyVideoModel } from '@anirecast/shared';
 import { all, fromJson } from '../db.ts';
 import type { Workspace } from '../workspace.ts';
 import { type ShotCastEntry, shotCast } from './cast.ts';
@@ -231,10 +231,12 @@ export function planTake(
   ws: Workspace,
   shotId: string,
   tier: GenerationTier,
-  opts: { extra?: string; fromTakeId?: string } = {},
+  opts: { extra?: string; fromTakeId?: string; model?: string } = {},
 ): Plan & { boardId: string | null } {
   const shot = getShot(ws.db, shotId);
   if (!shot.sourcePath) throw new AniError('conflict', 'Shot source segment is not prepared yet');
+  // A model that takes no reference images gets the persona in words instead of pictures.
+  const textOnly = opts.model ? isTextOnlyVideoModel(opts.model) : false;
   if (opts.fromTakeId) {
     const from = getTake(ws.db, opts.fromTakeId);
     const prompt = opts.extra?.trim()
@@ -252,15 +254,19 @@ export function planTake(
   let boardId: string | null = null;
   if (shot.mode === 'replace') {
     const board = approvedBoard(ws.db, shotId);
-    if (board?.path) {
-      boardId = board.id;
-      refs.push({ role: 'board', path: board.path });
-    }
+    if (board?.path) boardId = board.id;
+    if (board?.path && !textOnly) refs.push({ role: 'board', path: board.path });
     const { uses, keyframe } = castInShot(ws, shot, 1);
-    let idx = boardId ? 1 : 0;
+    let idx = boardId && !textOnly ? 1 : 0;
     // No persona names here: the images identify each character, and on the Lycoris OP names such as
     // "DeepSeek" or "Claude" went with Omni safety blocks that cleared once they were left out.
     for (const use of uses) {
+      if (textOnly) {
+        lines.push(
+          `Replace ${describeWho(ws, keyframe.frame, use)} with a different character: ${use.persona.description || 'see the persona notes'}. Give them that outfit, hairstyle and colours.`,
+        );
+        continue;
+      }
       refs.push({ role: `persona:${use.persona.id}`, path: use.imagePaths[0]! });
       const look = lookInstruction(use, `<IMAGE_REF_${idx}>`);
       lines.push(

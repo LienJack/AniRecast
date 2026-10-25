@@ -69,7 +69,7 @@ export function queueTake(
   assertNotBlockedOut(ws.db, config, shotId, opts.retryBlocked);
   if (config.provider !== 'fake' && process.env.ANIRECAST_PROVIDER !== 'fake')
     assertQuota(ws.db, config, config.models.video, 1, { includePending: true });
-  const plan = planTake(ws, shotId, tier, opts);
+  const plan = planTake(ws, shotId, tier, { ...opts, model: config.models.video });
   const take = createTake(
     ws.db,
     {
