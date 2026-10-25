@@ -22,6 +22,7 @@ import {
   type ShotMode,
   setGenerationTier,
   splitShot,
+  trashSource,
   updateShot,
   type Workspace,
 } from '@anirecast/core';
@@ -115,6 +116,10 @@ export function registerMedia(program: Command): void {
   source
     .command('show <id>')
     .action(command((id: string) => withWorkspace(globals(), (ws) => getSource(ws.db, id))));
+  source
+    .command('remove <id>')
+    .description('Move a source to the workspace trash (refused while a project uses it)')
+    .action(command((id: string) => withWorkspace(globals(), (ws) => trashSource(ws, id, actorFromEnv()))));
 
   const project = program.command('project').description('Projects (one recast of one source)');
   project

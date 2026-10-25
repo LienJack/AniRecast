@@ -68,6 +68,7 @@ import {
   TIERS,
   taskContext,
   totalSpend,
+  trashSource,
   updatePersona,
   updateShot,
   type Verdict,
@@ -189,6 +190,7 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
   // ---- sources ---------------------------------------------------------------------------------
   app.get('/api/sources', (c) => handle(c, () => listSources(ws.db)));
   app.get('/api/sources/:id', (c) => handle(c, () => getSource(ws.db, c.req.param('id'))));
+  app.delete('/api/sources/:id', (c) => handle(c, () => trashSource(ws, c.req.param('id'), USER)));
   app.post('/api/sources', async (c) =>
     handle(c, async () => {
       const { url } = await body<{ url: string }>(c);

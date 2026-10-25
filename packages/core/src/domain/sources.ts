@@ -1,6 +1,9 @@
+import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import path from 'node:path';
 import { AniError, newId } from '@anirecast/shared';
 import { all, type Db, one, run, tx } from '../db.ts';
 import { appendEvent } from '../events.ts';
+import type { Workspace } from '../workspace.ts';
 
 export type SourceStatus = 'pending' | 'downloading' | 'ready' | 'failed' | 'trashed';
 
@@ -171,5 +174,61 @@ export function updateSource(
       payload: { status: source.status, fields: Object.keys(patch) },
     });
     return source;
+  });
+}
+
+/**
+ * Takes a source out of the collection. Its folder moves to `trash/sources/<id>` (recoverable by moving it
+ * back), the regenerable proxy and thumbnail are deleted, and the record stays as trashed. Refused while an
+ * active project uses it or its download or import is still running.
+ */
+export function trashSource(ws: Workspace, id: string, actor: string, now: number = Date.now()): Source {
+  const source = getSource(ws.db, id);
+  if (source.status === 'trashed') return source;
+  const users = all<{ name: string }>(
+    ws.db,
+    `SELECT name FROM projects WHERE source_id = :id AND status = 'active'`,
+    { id },
+  );
+  if (users.length > 0)
+    throw new AniError('conflict', `Source is used by: ${users.map((u) => u.name).join(', ')}`, {
+      hint: 'Archive those projects first.',
+    });
+  const busy = one<{ n: number }>(
+    ws.db,
+    `SELECT COUNT(*) AS n FROM jobs WHERE type IN ('source.download', 'source.import')
+       AND status IN ('queued', 'running') AND json_extract(payload_json, '$.sourceId') = :id`,
+    { id },
+  );
+  if ((busy?.n ?? 0) > 0)
+    throw new AniError('conflict', 'This source is still downloading or importing', {
+      hint: 'Cancel its job first (anirecast jobs cancel <job>).',
+    });
+  const folder = ws.abs(sourceDir(id));
+  const trashRel = `trash/sources/${id}`;
+  let trashed: string | null = null;
+  if (existsSync(folder)) {
+    if (existsSync(ws.abs(trashRel))) throw new AniError('conflict', `${trashRel} already exists`);
+    mkdirSync(path.dirname(ws.abs(trashRel)), { recursive: true });
+    renameSync(folder, ws.abs(trashRel));
+    trashed = trashRel;
+  }
+  rmSync(ws.abs(sourceCacheDir(id)), { recursive: true, force: true });
+  return tx(ws.db, () => {
+    const updated = updateSource(
+      ws.db,
+      id,
+      { status: 'trashed', filePath: null, infoPath: null, thumbPath: null },
+      actor,
+      now,
+    );
+    appendEvent(ws.db, {
+      actor,
+      kind: 'source.trashed',
+      entityType: 'source',
+      entityId: id,
+      payload: { title: source.title, movedTo: trashed },
+    });
+    return updated;
   });
 }

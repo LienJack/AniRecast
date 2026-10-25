@@ -1,5 +1,5 @@
 import { Link, useNavigate } from '@tanstack/react-router';
-import { DownloadIcon, FileVideoIcon, FolderInputIcon, PlusIcon, SearchIcon } from 'lucide-react';
+import { DownloadIcon, FileVideoIcon, FolderInputIcon, PlusIcon, SearchIcon, Trash2Icon } from 'lucide-react';
 import { useState } from 'react';
 import {
   ConfirmDialog,
@@ -79,12 +79,15 @@ function SourceCard({
   job,
   projects,
   onCreate,
+  onRemove,
 }: {
   source: Source;
   job: Job | undefined;
   projects: Project[];
   onCreate: () => void;
+  onRemove: () => void;
 }) {
+  const busy = job?.status === 'running' || job?.status === 'queued';
   const fps = source.fpsNum && source.fpsDen ? (source.fpsNum / source.fpsDen).toFixed(3) : null;
   return (
     <Card>
@@ -145,10 +148,29 @@ function SourceCard({
             ))}
           </div>
         ) : null}
-        <Button size="sm" variant="secondary" disabled={source.status !== 'ready'} onClick={onCreate}>
-          <PlusIcon />
-          建立項目
-        </Button>
+        <div className="flex gap-1.5">
+          <Button
+            size="sm"
+            variant="secondary"
+            className="flex-1"
+            disabled={source.status !== 'ready'}
+            onClick={onCreate}
+          >
+            <PlusIcon />
+            建立項目
+          </Button>
+          {projects.length === 0 && !busy ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              title="移到 Workspace 的垃圾桶"
+              aria-label="移到垃圾桶"
+              onClick={onRemove}
+            >
+              <Trash2Icon />
+            </Button>
+          ) : null}
+        </div>
       </div>
     </Card>
   );
@@ -165,6 +187,10 @@ export function SourcesPage() {
   const [creating, setCreating] = useState<Source | null>(null);
   const [duplicate, setDuplicate] = useState<Source | null>(null);
 
+  const remove = useAction((id: string) => api.del(`/api/sources/${id}`), {
+    success: '已移到垃圾桶',
+    invalidate: [qk.sources],
+  });
   const add = useAction((u: string) => api.post('/api/sources', { url: u }), {
     success: '已開始下載',
     invalidate: [qk.sources, qk.jobs],
@@ -298,6 +324,14 @@ export function SourcesPage() {
                 job={jobFor(s.id)}
                 projects={(projects.data ?? []).filter((p) => p.sourceId === s.id)}
                 onCreate={() => setCreating(s)}
+                onRemove={() => {
+                  if (
+                    window.confirm(
+                      `把「${s.title}」移到 Workspace 的垃圾桶？檔案會移到 trash/sources，可以手動搬回來。`,
+                    )
+                  )
+                    remove.mutate(s.id);
+                }}
               />
             ))}
           </div>
