@@ -10,6 +10,8 @@ import {
   createProject,
   createSource,
   createTracklet,
+  enqueueJob,
+  getBoard,
   getCastMember,
   getShot,
   initWorkspace,
@@ -22,6 +24,7 @@ import {
   replaceAutoOverlays,
   replacementSignature,
   replaceShots,
+  requestCancel,
   run,
   setOverlayRemoval,
   shotCast,
@@ -118,6 +121,24 @@ describe('shot modes', () => {
     );
     expect(markShotGenerationStale(ws.db, shotId, 'mapping changed', 'user')).toBe(2);
     expect(markShotGenerationStale(ws.db, shotId, 'again', 'user')).toBe(0);
+    ws.close();
+  });
+
+  it('closes the board of a generation job cancelled before it ran', () => {
+    const { ws, shotIds } = fixture();
+    run(
+      ws.db,
+      `INSERT INTO boards (id, shot_id, version, status, prompt, model, created_by, created_at) VALUES ('b1', :shotId, 1, 'queued', 'p', 'm', 'user', 1)`,
+      { shotId: shotIds[0]! },
+    );
+    const job = enqueueJob(ws.db, {
+      type: 'board.generate',
+      lane: 'generate',
+      payload: { boardId: 'b1' },
+      requestedBy: 'user',
+    });
+    requestCancel(ws.db, job.id, 'user');
+    expect(getBoard(ws.db, 'b1')).toMatchObject({ status: 'failed', error: 'Cancelled' });
     ws.close();
   });
 });

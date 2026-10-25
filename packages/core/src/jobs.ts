@@ -213,6 +213,25 @@ export function failJob(
   });
 }
 
+/** The version row each generation job produces, so a cancelled job does not leave it looking pending. */
+const PRODUCES: Record<string, { table: string; key: string; pending: string[] }> = {
+  'board.generate': { table: 'boards', key: 'boardId', pending: ['queued', 'generating'] },
+  'take.generate': { table: 'takes', key: 'takeId', pending: ['queued', 'generating'] },
+  'render.compose': { table: 'renders', key: 'renderId', pending: ['queued', 'rendering'] },
+};
+
+function closeProducedVersion(db: Db, job: Job): void {
+  const target = PRODUCES[job.type];
+  const versionId = (job.payload as Record<string, unknown> | null)?.[target?.key ?? ''];
+  if (!target || typeof versionId !== 'string') return;
+  run(
+    db,
+    `UPDATE ${target.table} SET status = 'failed', error = 'Cancelled'
+     WHERE id = :versionId AND status IN (${target.pending.map((s) => `'${s}'`).join(', ')})`,
+    { versionId },
+  );
+}
+
 export function requestCancel(db: Db, id: string, actor: string, now: number = Date.now()): Job {
   return tx(db, () => {
     const current = getJob(db, id);
@@ -227,6 +246,7 @@ export function requestCancel(db: Db, id: string, actor: string, now: number = D
         },
       );
       const job = getJob(db, id);
+      closeProducedVersion(db, job);
       jobEvent(db, job, 'job.cancelled', actor);
       return job;
     }
@@ -245,6 +265,7 @@ export function markCancelled(db: Db, id: string, now: number = Date.now()): Job
       now,
     });
     const job = getJob(db, id);
+    closeProducedVersion(db, job);
     jobEvent(db, job, 'job.cancelled', 'daemon');
     return job;
   });
