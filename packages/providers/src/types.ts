@@ -80,14 +80,17 @@ export interface Provider {
   analyzeImages<T>(req: VisionRequest): Promise<VisionResult<T>>;
 }
 
+/** Omni has no 480p (the API rejects it, verified 2026-10-25), so draft is 360p in and out. */
 export const TIER_RESOLUTION: Record<Tier, VideoResolution> = {
   draft: '360p',
   preview: '720p',
   final: '1080p',
 };
-/** Conformed output size per tier (draft renders at 480p even when Omni returns 360p). */
+/** Upload height per tier; input tokens scale with it. Final's upload height is an M0 decision. */
+export const TIER_UPLOAD_HEIGHT: Record<Tier, number> = { draft: 360, preview: 720, final: 720 };
+/** Conformed output size per tier. */
 export const TIER_SIZE: Record<Tier, { width: number; height: number }> = {
-  draft: { width: 854, height: 480 },
+  draft: { width: 640, height: 360 },
   preview: { width: 1280, height: 720 },
   final: { width: 1920, height: 1080 },
 };

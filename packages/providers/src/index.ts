@@ -22,3 +22,11 @@ export function createProvider(
   }
   return new GeminiProvider({ apiKey: opts.apiKey });
 }
+
+/** Stand-in when no key is configured: the daemon still runs downloads and media jobs, generation fails clearly. */
+export function unavailableProvider(reason: string, hint: string): Provider {
+  const fail = async (): Promise<never> => {
+    throw new AniError('dependency_missing', reason, { hint });
+  };
+  return { name: 'gemini', generateImage: fail, editVideo: fail, analyzeImages: fail };
+}

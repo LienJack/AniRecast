@@ -4,6 +4,7 @@ import {
   acquireDaemonLock,
   appendEvent,
   clearHeartbeat,
+  getGeminiApiKey,
   HEARTBEAT_INTERVAL_MS,
   type LocalConfig,
   loadConfig,
@@ -14,6 +15,7 @@ import {
   type Workspace,
   writeHeartbeat,
 } from '@anirecast/core';
+import { createProvider, type Provider, unavailableProvider } from '@anirecast/providers';
 import { AniError } from '@anirecast/shared';
 import { type ServerType, serve } from '@hono/node-server';
 import { EventsHub } from './events-hub.ts';
@@ -28,7 +30,25 @@ export interface StartOptions {
   port?: number;
   config?: LocalConfig;
   handlers?: Map<string, JobHandler>;
+  /** Overrides config/env provider selection (tests inject a configured fake). */
+  provider?: Provider;
   log?: (message: string) => void;
+}
+
+/** `ANIRECAST_PROVIDER=fake` forces the offline provider regardless of config. */
+export function resolveProvider(config: LocalConfig, env: NodeJS.ProcessEnv = process.env): Provider {
+  const kind =
+    env.ANIRECAST_PROVIDER === 'fake' || env.ANIRECAST_PROVIDER === 'gemini'
+      ? env.ANIRECAST_PROVIDER
+      : config.provider;
+  if (kind === 'fake') return createProvider('fake');
+  const apiKey = getGeminiApiKey(env);
+  return apiKey
+    ? createProvider('gemini', { apiKey })
+    : unavailableProvider(
+        'No Gemini API key configured',
+        'Run `anirecast auth set-key`, or set GEMINI_API_KEY.',
+      );
 }
 
 export interface DaemonHandle {
@@ -74,8 +94,11 @@ export async function startDaemon(options: StartOptions): Promise<DaemonHandle> 
     }
   }, HEARTBEAT_INTERVAL_MS);
 
+  const services = { config, provider: options.provider ?? resolveProvider(config) };
+  log(`provider: ${services.provider.name}`);
   const runner = new JobRunner({
     workspace,
+    services,
     handlers: options.handlers ?? createHandlers(),
     concurrency: {
       generate: config.concurrency.generate,

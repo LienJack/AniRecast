@@ -5,15 +5,24 @@ import {
   getJob,
   type Job,
   type Lane,
+  type LocalConfig,
   markCancelled,
   updateJobProgress,
   type Workspace,
 } from '@anirecast/core';
+import type { Provider } from '@anirecast/providers';
 import { AniError, toEnvelopeError } from '@anirecast/shared';
+
+/** Long-lived dependencies handed to every job (provider, config). */
+export interface Services {
+  config: LocalConfig;
+  provider: Provider;
+}
 
 export interface JobContext {
   workspace: Workspace;
   job: Job;
+  services: Services;
   /** Aborted when the job is cancelled or the daemon shuts down. */
   signal: AbortSignal;
   progress: (fraction: number, message?: string) => void;
@@ -29,6 +38,7 @@ export type JobHandler = (ctx: JobContext) => Promise<JobOutcome>;
 
 export interface RunnerOptions {
   workspace: Workspace;
+  services: Services;
   handlers: Map<string, JobHandler>;
   concurrency: Record<Lane, number>;
   workerId: string;
@@ -116,6 +126,7 @@ export class JobRunner {
     const ctx: JobContext = {
       workspace,
       job,
+      services: this.opts.services,
       signal: controller.signal,
       progress: (fraction, message) => {
         const now = Date.now();

@@ -1,3 +1,4 @@
+export * from './compose.ts';
 export * from './exec.ts';
 export * from './ffmpeg.ts';
 export * from './probe.ts';

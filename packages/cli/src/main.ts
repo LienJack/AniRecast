@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { registerCast } from './commands/cast.ts';
 import { registerDoctor } from './commands/doctor.ts';
+import { registerGenerate } from './commands/generate.ts';
 import { registerJobs } from './commands/jobs.ts';
 import { registerMedia } from './commands/media.ts';
 import { registerServe } from './commands/serve.ts';
@@ -23,6 +24,7 @@ registerWorkspace(program);
 registerJobs(program);
 registerMedia(program);
 registerCast(program);
+registerGenerate(program);
 registerDoctor(program);
 registerServe(program);
 

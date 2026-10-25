@@ -64,7 +64,7 @@
   - 成本帳本與花費上限保護：超過上限時拒絕真實呼叫。
 - 驗證：fake 的單元測試；gemini 的請求組裝與回應解析，用 `research/gemini-api-spike/*.response.json` 當固定測資。
 
-### S6 人設、角色、處理方式 — done: (S6 commit)
+### S6 人設、角色、處理方式 — done: 3b38b6f
 - 產出：
   - `persona add|list|show|edit|archive`；
   - 資料表 `cast_members`／`looks`／`tracklets`／`cast_decisions`；
@@ -72,7 +72,7 @@
   - 分鏡處理方式的自動判定（design §6）。
 - 驗證：單元測試涵蓋處理方式判定與 stale 傳播。
 
-### S7 分鏡圖 → 分鏡視頻 → 合成 → 對比（fake 端到端）— done:
+### S7 分鏡圖 → 分鏡視頻 → 合成 → 對比（fake 端到端）— done: (S7 commit)
 - 產出：
   - `board generate`、`take generate`（換角、去字）；
   - 對齊：幀數校驗、24fps 重新標記與還原、1080p、去音軌；

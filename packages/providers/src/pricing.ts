@@ -43,8 +43,9 @@ export function estimateVideoEditCost(
   seconds: number,
   resolution: VideoResolution,
   refImages = 2,
+  inputHeight = 720,
 ): number {
-  const inputTokens = seconds * OMNI_INPUT_TOKENS_PER_SECOND + refImages * 1100 + 200;
+  const inputTokens = seconds * omniInputTokensPerSecond(inputHeight) + refImages * 1100 + 200;
   const outputTokens = seconds * OMNI_OUTPUT_TOKENS_PER_SECOND[resolution];
   return tokenCost(model, { inputTokens, outputTokens });
 }

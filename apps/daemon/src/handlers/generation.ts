@@ -1,0 +1,387 @@
+import { copyFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import {
+  assertWithinBudget,
+  boardFileStem,
+  findActiveClip,
+  getBoard,
+  getProject,
+  getRender,
+  getShot,
+  getTake,
+  listShots,
+  listTakes,
+  projectCacheDir,
+  projectDir,
+  projectOfShot,
+  type Render,
+  recordCost,
+  shotDir,
+  type Take,
+  takeFileStem,
+  updateBoard,
+  updateRender,
+  updateTake,
+  type Workspace,
+} from '@anirecast/core';
+import { conformTake, renderSequence, scaleForUpload, stackCompare } from '@anirecast/media';
+import {
+  estimateImageCost,
+  estimateVideoEditCost,
+  mimeFor,
+  type ProviderCallMeta,
+  TIER_RESOLUTION,
+  TIER_SIZE,
+  TIER_UPLOAD_HEIGHT,
+} from '@anirecast/providers';
+import { AniError, toEnvelopeError } from '@anirecast/shared';
+import type { JobContext, JobHandler } from '../runner.ts';
+import { outPath, span } from './util.ts';
+
+/** Remote uploads expire after ~48 h; reuse one only while it is comfortably fresh. */
+const UPLOAD_REUSE_MS = 40 * 3_600_000;
+/** Omni accepts at most 10 s per uploaded video. */
+const OMNI_MAX_SECONDS = 10;
+
+function ledger(ctx: JobContext, meta: ProviderCallMeta, projectId: string, tier: string | null): void {
+  recordCost(ctx.workspace.db, {
+    jobId: ctx.job.id,
+    projectId,
+    provider: meta.provider,
+    model: meta.model,
+    tier,
+    usage: meta.usage,
+    usd: meta.provider === 'fake' ? 0 : meta.costUsd,
+  });
+}
+
+/** Immutable provenance next to each generated file: enough to replay the request on any machine. */
+async function writeProvenance(ws: Workspace, rel: string, data: Record<string, unknown>): Promise<void> {
+  await writeFile(outPath(ws, rel), `${JSON.stringify(data, null, 2)}\n`);
+}
+
+const budgetCheck = (ctx: JobContext, estimate: number) => {
+  if (ctx.services.provider.name !== 'fake')
+    assertWithinBudget(ctx.workspace.db, ctx.services.config.budget.capUsd, estimate);
+};
+
+export const generateBoardHandler: JobHandler = async (ctx) => {
+  const { workspace: ws, services, signal, job } = ctx;
+  const { boardId } = job.payload as { boardId: string };
+  const board = getBoard(ws.db, boardId);
+  const project = projectOfShot(ws.db, board.shotId);
+  try {
+    const images = board.inputs.map((i) => ({ path: ws.abs(i.path), mimeType: mimeFor(i.path) }));
+    budgetCheck(ctx, estimateImageCost(board.model, '1K', images.length));
+    updateBoard(ws.db, boardId, { status: 'generating' }, 'daemon');
+    ctx.progress(0.1, 'generating board');
+    const params = board.params as { aspectRatio?: '16:9'; imageSize?: '1K' | '2K' };
+    const result = await services.provider.generateImage({
+      model: board.model,
+      prompt: board.prompt,
+      images,
+      aspectRatio: params.aspectRatio ?? '16:9',
+      imageSize: params.imageSize ?? '1K',
+      signal,
+    });
+    ledger(ctx, result, project.id, null);
+    const ext = result.mimeType === 'image/png' ? 'png' : 'jpg';
+    const stem = `${shotDir(project, board.shotId)}/boards/${boardFileStem(board.version)}`;
+    await writeFile(outPath(ws, `${stem}.${ext}`), result.data);
+    await writeProvenance(ws, `${stem}.json`, {
+      kind: 'board',
+      id: board.id,
+      shotId: board.shotId,
+      version: board.version,
+      model: board.model,
+      prompt: board.prompt,
+      params: board.params,
+      inputs: board.inputs,
+      provider: result.provider,
+      usage: result.usage,
+      costUsd: result.costUsd,
+      remote: result.remote,
+      createdBy: board.createdBy,
+      generatedAt: new Date().toISOString(),
+    });
+    const updated = updateBoard(
+      ws.db,
+      boardId,
+      {
+        status: 'ready',
+        path: `${stem}.${ext}`,
+        costUsd: result.costUsd,
+        remote: result.remote,
+        error: null,
+      },
+      'daemon',
+    );
+    return { result: { board: updated }, costUsd: result.costUsd };
+  } catch (error) {
+    if (!signal.aborted)
+      updateBoard(ws.db, boardId, { status: 'failed', error: toEnvelopeError(error).message }, 'daemon');
+    throw error;
+  }
+};
+
+function reusableUpload(ws: Workspace, take: Take, uploadSha: string): string | undefined {
+  const now = Date.now();
+  for (const t of listTakes(ws.db, take.shotId).reverse()) {
+    const r = t.remote as { fileUri?: string; uploadSha?: string; uploadedAt?: number };
+    if (
+      t.id !== take.id &&
+      r.fileUri &&
+      r.uploadSha === uploadSha &&
+      r.uploadedAt &&
+      now - r.uploadedAt < UPLOAD_REUSE_MS &&
+      !r.fileUri.startsWith('fake://')
+    ) {
+      return r.fileUri;
+    }
+  }
+  return undefined;
+}
+
+export const generateTakeHandler: JobHandler = async (ctx) => {
+  const { workspace: ws, services, signal, job, progress } = ctx;
+  const { takeId } = job.payload as { takeId: string };
+  const take = getTake(ws.db, takeId);
+  const shot = getShot(ws.db, take.shotId);
+  const project = projectOfShot(ws.db, shot.id);
+  const clip = findActiveClip(ws.db, project.id);
+  try {
+    if (!clip || clip.id !== shot.clipId)
+      throw new AniError('conflict', 'Shot does not belong to the active clip');
+    const seconds = (shot.frameCount * clip.fpsDen) / clip.fpsNum;
+    if (seconds > OMNI_MAX_SECONDS) {
+      throw new AniError(
+        'usage',
+        `Shot is ${seconds.toFixed(1)} s; Omni edits at most ${OMNI_MAX_SECONDS} s`,
+        { hint: 'Split the shot (anirecast shots split) before generating.' },
+      );
+    }
+    const video = take.inputs.find((i) => i.role === 'video');
+    if (!video) throw new AniError('internal', 'Take has no video input');
+    const refs = take.inputs.filter((i) => i.role !== 'video');
+    const resolution = TIER_RESOLUTION[take.tier];
+    const uploadHeight = TIER_UPLOAD_HEIGHT[take.tier];
+    budgetCheck(ctx, estimateVideoEditCost(take.model, seconds, resolution, refs.length, uploadHeight));
+    updateTake(ws.db, takeId, { status: 'generating', framesIn: shot.frameCount }, 'daemon');
+
+    const cache = projectCacheDir(project);
+    const uploadRel = `${cache}/uploads/${shot.id}-${uploadHeight}p.mp4`;
+    progress(0.05, 'preparing upload');
+    await scaleForUpload(ws.abs(video.path), outPath(ws, uploadRel), uploadHeight, { signal });
+    const uploadSha = `${video.sha256 ?? ''}:${uploadHeight}`;
+    const cachedFileUri = reusableUpload(ws, take, uploadSha);
+
+    const result = await services.provider.editVideo({
+      model: take.model,
+      prompt: take.prompt,
+      video: { path: ws.abs(uploadRel), mimeType: 'video/mp4' },
+      inputFrames: shot.frameCount,
+      inputSeconds: seconds,
+      images: refs.map((r) => ({ path: ws.abs(r.path), mimeType: mimeFor(r.path) })),
+      resolution,
+      aspectRatio: '16:9',
+      ...(cachedFileUri ? { cachedFileUri } : {}),
+      signal,
+      onStatus: (m) => progress(0.15, m),
+    });
+    ledger(ctx, result, project.id, take.tier);
+    const remote = { ...result.remote, uploadSha, uploadedAt: cachedFileUri ? undefined : Date.now() };
+
+    const stem = takeFileStem(take.version);
+    const rawRel = `${cache}/takes/${shot.id}-${stem}.raw.mp4`;
+    await writeFile(outPath(ws, rawRel), result.data);
+    progress(0.8, 'conforming');
+    const size = TIER_SIZE[take.tier];
+    const outRel = `${shotDir(project, shot.id)}/takes/${stem}.mp4`;
+    let conform: Awaited<ReturnType<typeof conformTake>>;
+    try {
+      conform = await conformTake(
+        ws.abs(rawRel),
+        outPath(ws, outRel),
+        { frames: shot.frameCount, fpsNum: clip.fpsNum, fpsDen: clip.fpsDen, ...size },
+        { signal },
+      );
+    } catch (error) {
+      updateTake(
+        ws.db,
+        takeId,
+        {
+          remote,
+          costUsd: result.costUsd,
+          framesOut: ((error as AniError).details as { framesOut?: number })?.framesOut ?? null,
+        },
+        'daemon',
+      );
+      throw error;
+    }
+    progress(0.9, 'building review compare');
+    const compareRel = `${cache}/takes/${shot.id}-${stem}.compare.mp4`;
+    if (!shot.sourcePath) throw new AniError('internal', 'Shot source missing');
+    await stackCompare(
+      ws.abs(shot.sourcePath),
+      ws.abs(outRel),
+      outPath(ws, compareRel),
+      { layout: 'v', height: 360 },
+      { signal },
+    );
+    await writeProvenance(ws, `${shotDir(project, shot.id)}/takes/${stem}.json`, {
+      kind: 'take',
+      id: take.id,
+      shotId: shot.id,
+      version: take.version,
+      tier: take.tier,
+      model: take.model,
+      prompt: take.prompt,
+      params: take.params,
+      inputs: take.inputs,
+      boardId: take.boardId,
+      provider: result.provider,
+      usage: result.usage,
+      costUsd: result.costUsd,
+      remote: { interactionId: result.remote.interactionId },
+      conform,
+      createdBy: take.createdBy,
+      generatedAt: new Date().toISOString(),
+    });
+    const updated = updateTake(
+      ws.db,
+      takeId,
+      {
+        status: 'ready',
+        path: outRel,
+        costUsd: result.costUsd,
+        remote: { ...remote, comparePath: compareRel },
+        framesOut: conform.framesOut,
+        conform: { ...conform },
+        error: null,
+      },
+      'daemon',
+    );
+    return { result: { take: updated }, costUsd: result.costUsd };
+  } catch (error) {
+    if (!signal.aborted)
+      updateTake(ws.db, takeId, { status: 'failed', error: toEnvelopeError(error).message }, 'daemon');
+    throw error;
+  }
+};
+
+/** Picks each shot's segment for a render; final renders refuse anything not approved at the tier. */
+export function renderPlan(ws: Workspace, render: Render): Render['shots'] {
+  const clip = findActiveClip(ws.db, render.projectId);
+  if (!clip) throw new AniError('conflict', 'Project has no clip');
+  const missing: string[] = [];
+  const plan = listShots(ws.db, clip.id).map((shot): Render['shots'][number] => {
+    if (shot.mode === 'keep' || shot.mode === 'exclude') return { shotId: shot.id, source: 'original' };
+    const takes = listTakes(ws.db, shot.id).filter((t) => t.path);
+    const approvedAtTier = takes.filter((t) => t.status === 'approved' && t.tier === render.tier).at(-1);
+    if (approvedAtTier) return { shotId: shot.id, source: 'take', takeId: approvedAtTier.id };
+    if (render.kind === 'final') {
+      missing.push(`#${shot.orderIndex + 1}`);
+      return { shotId: shot.id, source: 'original' };
+    }
+    const best =
+      takes.filter((t) => t.status === 'approved').at(-1) ?? takes.filter((t) => t.status === 'ready').at(-1);
+    return best
+      ? { shotId: shot.id, source: 'take', takeId: best.id }
+      : { shotId: shot.id, source: 'original' };
+  });
+  if (missing.length > 0) {
+    throw new AniError(
+      'conflict',
+      `Final render needs approved ${render.tier} takes for shots ${missing.join(', ')}`,
+      {
+        hint: 'Approve them, set them to keep the original, or make a draft render.',
+      },
+    );
+  }
+  return plan;
+}
+
+export const composeRenderHandler: JobHandler = async (ctx) => {
+  const { workspace: ws, signal, job, progress } = ctx;
+  const { renderId } = job.payload as { renderId: string };
+  const render = getRender(ws.db, renderId);
+  const project = getProject(ws.db, render.projectId);
+  try {
+    const clip = findActiveClip(ws.db, project.id);
+    if (!clip?.filePath || !clip.audioPath) throw new AniError('conflict', 'Clip is not ready');
+    updateRender(ws.db, renderId, { status: 'rendering' }, 'daemon');
+    const plan = renderPlan(ws, render);
+    const segments = plan.map((p) => {
+      const shot = getShot(ws.db, p.shotId);
+      const file = p.source === 'take' && p.takeId ? getTake(ws.db, p.takeId).path : shot.sourcePath;
+      if (!file) throw new AniError('internal', `No segment for shot ${shot.id}`);
+      return { file: ws.abs(file), frames: shot.frameCount };
+    });
+    const size = TIER_SIZE[render.tier];
+    const stem = `${projectDir(project)}/renders/r${String(render.version).padStart(3, '0')}`;
+    const total = await renderSequence(
+      segments,
+      ws.abs(clip.audioPath),
+      outPath(ws, `${stem}.mp4`),
+      { fpsNum: clip.fpsNum, fpsDen: clip.fpsDen, ...size, draftMark: render.kind === 'draft' },
+      { signal, onProgress: span(progress, 0, 0.7, 'rendering') },
+    );
+    if (total !== clip.frameCount)
+      throw new AniError('internal', `Render has ${total} frames, clip has ${clip.frameCount}`);
+    progress(0.75, 'comparison video');
+    const original = ws.abs(clip.filePath);
+    const compareHeight = Math.min(size.height, 720);
+    await stackCompare(
+      original,
+      ws.abs(`${stem}.mp4`),
+      outPath(ws, `${stem}.compare.mp4`),
+      { layout: 'h', height: compareHeight, audioFrom: ws.abs(clip.audioPath) },
+      { signal },
+    );
+    progress(0.9, 'slider proxy');
+    const proxyRel = `${projectCacheDir(project)}/renders/r${String(render.version).padStart(3, '0')}.slider.mp4`;
+    await stackCompare(
+      original,
+      ws.abs(`${stem}.mp4`),
+      outPath(ws, proxyRel),
+      { layout: 'v', height: 540, audioFrom: ws.abs(clip.audioPath) },
+      { signal },
+    );
+    await writeProvenance(ws, `${stem}.json`, {
+      kind: 'render',
+      id: render.id,
+      version: render.version,
+      renderKind: render.kind,
+      tier: render.tier,
+      size,
+      frames: total,
+      shots: plan,
+      generatedAt: new Date().toISOString(),
+    });
+    const updated = updateRender(
+      ws.db,
+      renderId,
+      {
+        status: 'ready',
+        path: `${stem}.mp4`,
+        comparePath: `${stem}.compare.mp4`,
+        compareProxyPath: proxyRel,
+        shots: plan,
+        error: null,
+      },
+      'daemon',
+    );
+    return { result: { render: updated } };
+  } catch (error) {
+    if (!signal.aborted)
+      updateRender(ws.db, renderId, { status: 'failed', error: toEnvelopeError(error).message }, 'daemon');
+    throw error;
+  }
+};
+
+/** Keeps the original under a stable name when a user exports (copy, never move). */
+export async function exportFile(ws: Workspace, rel: string, name: string): Promise<string> {
+  const target = `${rel.split('/').slice(0, 2).join('/')}/exports/${name}`;
+  await copyFile(ws.abs(rel), outPath(ws, target));
+  return path.posix.normalize(target);
+}
