@@ -46,6 +46,7 @@ import {
   projectOfShot,
   projectOverview,
   queueBoard,
+  queueStillTake,
   queueTake,
   quotaOverview,
   readLock,
@@ -536,6 +537,15 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
           retryBlocked: Boolean(b.retryBlocked),
         }),
       );
+    }),
+  );
+  app.post('/api/shots/:id/still-take', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ tier?: GenerationTier }>(c);
+      const shotId = c.req.param('id');
+      const tier = b.tier ?? projectOfShot(ws.db, shotId).generationTier;
+      if (!TIERS.includes(tier)) throw new AniError('usage', `Tier must be one of ${TIERS.join(', ')}`);
+      return queueStillTake(ws, shotId, tier, USER);
     }),
   );
   app.post('/api/takes/:id/promote', async (c) =>

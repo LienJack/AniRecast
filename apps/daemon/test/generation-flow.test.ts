@@ -191,6 +191,29 @@ describe('board → take → render with the fake provider', () => {
       const sheet = await cliData<{ absPath: string }>(t, ['take', 'sheet', takes.takes[0]!.id]);
       expect(await probe(sheet.absPath)).toMatchObject({ height: 540 });
 
+      // A shot the video model will not do can hold its approved board instead: exact length, no request.
+      const before = await cliData<Array<{ model: string; used: number }>>(t, ['quota']);
+      const stillShot = shots.find((s) => s.id === takes.takes[0]!.shotId)!;
+      const still = await cliData<{ takes: Array<{ id: string }> }>(t, [
+        'take',
+        'still',
+        project.slug,
+        stillShot.id,
+        '--wait',
+      ]);
+      const stillTake = await cliData<{ take: { path: string; status: string; model: string } }>(t, [
+        'take',
+        'show',
+        still.takes[0]!.id,
+      ]);
+      expect(stillTake.take).toMatchObject({ status: 'ready', model: 'still' });
+      expect(await probe(path.join(root, stillTake.take.path), { countFrames: true })).toMatchObject({
+        frameCount: stillShot.frameCount,
+        width: 640,
+        height: 360,
+      });
+      expect(await cliData<typeof before>(t, ['quota'])).toEqual(before);
+
       // Feedback becomes an agent task with everything Codex needs.
       const changed = await cliData<{ task: { id: string } }>(t, [
         'review',

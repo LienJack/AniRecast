@@ -388,6 +388,9 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
       }),
     { onSuccess: (r) => reportQueue(r, '分鏡視頻') },
   );
+  const stillTake = useAction(() => api.post(`/api/shots/${shot.id}/still-take`, { tier }), {
+    success: '已排入：用分鏡圖做靜態鏡頭（不呼叫模型、不收費）',
+  });
   const setMode = useAction((mode: ShotMode) => api.patch(`/api/shots/${shot.id}`, { mode }), {
     success: (_r, mode) => `處理方式改為${MODE_LABEL[mode]}`,
   });
@@ -440,6 +443,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
 
   const takeCompare = take ? comparePathOf(take) : null;
   const hasBoardStage = shot.mode === 'replace';
+  const boardApproved = d.boards.some((b) => b.status === 'approved');
   const generates = shot.mode === 'replace' || shot.mode === 'clean';
   const openTasks = d.tasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled');
 
@@ -792,6 +796,18 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                       <Checkbox checked={forceTake} onCheckedChange={(v) => setForceTake(v === true)} />
                       分鏡圖未通過也強制生成
                     </Label>
+                  ) : null}
+                  {hasBoardStage && boardApproved ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={stillTake.isPending}
+                      title="影片模型一直擋這個分鏡時使用：把已通過的分鏡圖做成同長度的鏡頭，帶一點推近"
+                      onClick={() => stillTake.mutate(undefined)}
+                    >
+                      <ImageIcon />
+                      改用分鏡圖做靜態鏡頭
+                    </Button>
                   ) : null}
                 </>
               ) : (

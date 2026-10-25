@@ -122,6 +122,47 @@ export async function conformTake(
   };
 }
 
+/**
+ * A still image as a clip of exactly `frames` frames at the clip rate and the given size, with a slow push-in
+ * (4% by default) so it does not read as a frozen frame. For shots that keep the approved board instead of a
+ * generated video.
+ */
+export async function stillClip(
+  image: string,
+  output: string,
+  spec: { frames: number; fpsNum: number; fpsDen: number; width: number; height: number; zoom?: number },
+  opts: FfmpegRunOptions = {},
+): Promise<void> {
+  ensureDir(output);
+  const rate = `${spec.fpsNum}/${spec.fpsDen}`;
+  const { width: w, height: h, frames } = spec;
+  const zoom = spec.zoom ?? 0.04;
+  await ffmpeg(
+    [
+      '-i',
+      image,
+      '-an',
+      '-vf',
+      // Work at twice the size so the zoom moves in sub-pixel steps instead of jittering.
+      `scale=${w * 2}:${h * 2}:force_original_aspect_ratio=increase,crop=${w * 2}:${h * 2},` +
+        `zoompan=z='1+${zoom}*on/${Math.max(1, frames - 1)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'` +
+        `:d=${frames}:s=${w}x${h}:fps=${rate},setsar=1,format=yuv420p`,
+      '-frames:v',
+      String(frames),
+      '-r',
+      rate,
+      '-c:v',
+      'libx264',
+      '-preset',
+      'medium',
+      '-crf',
+      '16',
+      output,
+    ],
+    { ...opts, totalFrames: frames },
+  );
+}
+
 export interface RenderSegment {
   file: string;
   frames: number;

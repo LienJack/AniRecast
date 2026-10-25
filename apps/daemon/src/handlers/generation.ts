@@ -24,7 +24,14 @@ import {
   updateTake,
   type Workspace,
 } from '@anirecast/core';
-import { conformTake, renderSequence, scaleForUpload, stackCompare } from '@anirecast/media';
+import {
+  conformTake,
+  probe,
+  renderSequence,
+  scaleForUpload,
+  stackCompare,
+  stillClip,
+} from '@anirecast/media';
 import {
   estimateImageCost,
   estimateVideoEditCost,
@@ -282,6 +289,90 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
       'daemon',
     );
     return { result: { take: updated }, costUsd: result.costUsd };
+  } catch (error) {
+    if (!signal.aborted)
+      updateTake(ws.db, takeId, { status: 'failed', error: toEnvelopeError(error).message }, 'daemon');
+    throw error;
+  }
+};
+
+/** Holds the approved board for the shot's exact frame count; no provider request, no cost. */
+export const stillTakeHandler: JobHandler = async (ctx) => {
+  const { workspace: ws, signal, job, progress } = ctx;
+  const { takeId } = job.payload as { takeId: string };
+  const take = getTake(ws.db, takeId);
+  const shot = getShot(ws.db, take.shotId);
+  const project = projectOfShot(ws.db, shot.id);
+  const clip = findActiveClip(ws.db, project.id);
+  try {
+    if (!clip || clip.id !== shot.clipId)
+      throw new AniError('conflict', 'Shot does not belong to the active clip');
+    const board = take.inputs.find((i) => i.role === 'board');
+    if (!board) throw new AniError('internal', 'Still take has no board input');
+    if (!shot.sourcePath) throw new AniError('internal', 'Shot source missing');
+    updateTake(ws.db, takeId, { status: 'generating', framesIn: shot.frameCount }, 'daemon');
+    progress(0.1, 'holding the board');
+    const stem = takeFileStem(take.version);
+    const outRel = `${shotDir(project, shot.id)}/takes/${stem}.mp4`;
+    const size = TIER_SIZE[take.tier];
+    await stillClip(
+      ws.abs(board.path),
+      outPath(ws, outRel),
+      { frames: shot.frameCount, fpsNum: clip.fpsNum, fpsDen: clip.fpsDen, ...size },
+      { signal },
+    );
+    const out = await probe(ws.abs(outRel), { countFrames: true, signal });
+    if (out.frameCount !== shot.frameCount)
+      throw new AniError(
+        'internal',
+        `Still clip has ${out.frameCount} frames, the shot has ${shot.frameCount}`,
+      );
+    progress(0.7, 'building review compare');
+    const compareRel = `${projectCacheDir(project)}/takes/${shot.id}-${stem}.compare.mp4`;
+    await stackCompare(
+      ws.abs(shot.sourcePath),
+      ws.abs(outRel),
+      outPath(ws, compareRel),
+      { layout: 'v', height: 360 },
+      { signal },
+    );
+    const conform = {
+      framesIn: shot.frameCount,
+      framesOut: out.frameCount,
+      endAdjust: 0,
+      sourceFps: `${clip.fpsNum}/${clip.fpsDen}`,
+      sourceSize: `${size.width}x${size.height}`,
+    };
+    await writeProvenance(ws, `${shotDir(project, shot.id)}/takes/${stem}.json`, {
+      kind: 'take',
+      id: take.id,
+      shotId: shot.id,
+      version: take.version,
+      tier: take.tier,
+      model: take.model,
+      still: true,
+      inputs: take.inputs,
+      boardId: take.boardId,
+      costUsd: 0,
+      conform,
+      createdBy: take.createdBy,
+      generatedAt: new Date().toISOString(),
+    });
+    const updated = updateTake(
+      ws.db,
+      takeId,
+      {
+        status: 'ready',
+        path: outRel,
+        costUsd: 0,
+        remote: { comparePath: compareRel },
+        framesOut: out.frameCount,
+        conform,
+        error: null,
+      },
+      'daemon',
+    );
+    return { result: { take: updated }, costUsd: 0 };
   } catch (error) {
     if (!signal.aborted)
       updateTake(ws.db, takeId, { status: 'failed', error: toEnvelopeError(error).message }, 'daemon');

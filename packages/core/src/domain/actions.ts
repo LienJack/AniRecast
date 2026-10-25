@@ -1,3 +1,4 @@
+import { AniError } from '@anirecast/shared';
 import { loadConfig } from '../config.ts';
 import { enqueueJob } from '../jobs.ts';
 import { assertNotBlockedOut, assertQuota } from '../quota.ts';
@@ -8,6 +9,7 @@ import { findActiveClip, getClip } from './clips.ts';
 import { findCodexThread } from './codex.ts';
 import {
   addReview,
+  approvedBoard,
   createBoard,
   createTake,
   getBoard,
@@ -22,7 +24,7 @@ import {
 import { markShotGenerationStale, recomputeShotModes } from './modes.ts';
 import { listTextOverlays } from './overlays.ts';
 import { getPersona } from './personas.ts';
-import { planBoard, planTake } from './plan.ts';
+import { planBoard, planTake, sha256File } from './plan.ts';
 import { type GenerationTier, getProject } from './projects.ts';
 import { getShot, listKeyframes, listShots, projectOfShot } from './shots.ts';
 import { getSource } from './sources.ts';
@@ -90,6 +92,39 @@ export function queueTake(
     payload: { takeId: take.id },
     requestedBy: actor,
     maxAttempts: 2,
+  });
+  return { take, job };
+}
+
+/** `model` of takes made from a still board, so they are told apart from video-model takes. */
+export const STILL_TAKE_MODEL = 'still';
+
+/**
+ * A take that holds the approved board for the length of the shot, for shots the video model will not do.
+ * No model, no request, no cost; it renders like any other take.
+ */
+export function queueStillTake(ws: Workspace, shotId: string, tier: GenerationTier, actor: string) {
+  const board = approvedBoard(ws.db, shotId);
+  if (!board?.path)
+    throw new AniError('conflict', 'A still take needs an approved board', {
+      hint: 'Approve the board first.',
+    });
+  const take = createTake(ws.db, {
+    shotId,
+    tier,
+    boardId: board.id,
+    prompt: 'Still: the approved board held for the length of the shot (no video model).',
+    model: STILL_TAKE_MODEL,
+    params: { tier, still: true },
+    inputs: [{ role: 'board', path: board.path, sha256: sha256File(ws.abs(board.path)) }],
+    createdBy: actor,
+  });
+  const job = enqueueJob(ws.db, {
+    type: 'take.still',
+    lane: 'media',
+    projectId: projectOfShot(ws.db, shotId).id,
+    payload: { takeId: take.id },
+    requestedBy: actor,
   });
   return { take, job };
 }

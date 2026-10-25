@@ -29,6 +29,7 @@ import {
   projectCacheDir,
   projectOfShot,
   queueBoard,
+  queueStillTake,
   queueTake,
   quotaOverview,
   safetyBlockCount,
@@ -223,6 +224,31 @@ export function registerGenerate(program: Command): void {
             retryBlocked: Boolean(opts.retryBlocked),
           });
           return { take: q.take, ...(await waitAll(ws, [q.job.id], opts.wait)) };
+        }),
+      ),
+    );
+  take
+    .command('still <project> <shots...>')
+    .description('Hold the approved board for the length of each shot instead of a video (no model, no cost)')
+    .option(
+      '--tier <tier>',
+      'output size: draft (360p), preview (720p) or final (1080p); default: the project tier',
+    )
+    .option('--wait', 'wait until the clips are made')
+    .action(
+      command((projectRef: string, shotIds: string[], opts: { tier?: GenerationTier; wait?: boolean }) =>
+        withWorkspace(globals(), async (ws) => {
+          const tier = opts.tier ?? getProject(ws.db, projectRef).generationTier;
+          if (!TIERS.includes(tier)) throw new AniError('usage', `Tier must be one of ${TIERS.join(', ')}`);
+          const queued = shotIds.map((id) => queueStillTake(ws, id, tier, actorFromEnv()));
+          return {
+            takes: queued.map((q) => q.take),
+            ...(await waitAll(
+              ws,
+              queued.map((q) => q.job.id),
+              opts.wait,
+            )),
+          };
         }),
       ),
     );

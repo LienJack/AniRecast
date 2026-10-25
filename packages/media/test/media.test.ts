@@ -12,6 +12,7 @@ import {
   probe,
   runSidecar,
   scaleForUpload,
+  stillClip,
 } from '../src/index.ts';
 import { FPS_DEN, FPS_NUM, synthesizeShots } from './fixtures.ts';
 
@@ -102,6 +103,20 @@ describe('media', () => {
     await expect(conformTake(short, path.join(dir, 'x.mp4'), { ...spec, frames: 40 })).rejects.toThrow(
       /28 frames, the shot has 40/,
     );
+  }, 60_000);
+
+  it('holds a still image for an exact frame count', async () => {
+    const still = path.join(dir, 'still.jpg');
+    await extractFrame(source, still, 40, FPS_NUM, FPS_DEN);
+    const out = path.join(dir, 'still.mp4');
+    await stillClip(still, out, { frames: 31, fpsNum: FPS_NUM, fpsDen: FPS_DEN, width: 320, height: 180 });
+    expect(await probe(out, { countFrames: true })).toMatchObject({
+      frameCount: 31,
+      width: 320,
+      height: 180,
+      fpsNum: FPS_NUM,
+      fpsDen: FPS_DEN,
+    });
   }, 60_000);
 
   it('detects the known cuts with the Python sidecar', async () => {

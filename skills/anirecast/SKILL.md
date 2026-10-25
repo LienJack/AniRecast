@@ -21,7 +21,8 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
   `anirecast tasks ask`. If its hint says `daily_quota`, do not retry at all; ask right away.
 - Omni has a daily request quota (see `anirecast quota`); blocked requests count too. Before regenerating, check
   that requests are left. A `conflict` whose hint says `safety_blocked` means the shot was refused repeatedly:
-  do not pass `--retry-blocked` yourself; describe what you would change and `anirecast tasks ask`.
+  do not pass `--retry-blocked` yourself; describe what you would change and `anirecast tasks ask`. Holding the
+  board instead (`anirecast take still`) or keeping the original is the human's choice, not yours.
 - User decisions are locked (cast assignments made by the human). A `conflict … locked` error means leave it.
 - Generation tiers: `draft` (360p, cheapest, for iterating), `preview` (720p), `final` (1080p). Stay on the
   project tier unless the task says otherwise; never jump to `final` on your own.
