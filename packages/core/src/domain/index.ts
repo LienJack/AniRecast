@@ -10,6 +10,7 @@ export * from './designs.ts';
 export * from './generation.ts';
 export * from './handoffs.ts';
 export * from './identity.ts';
+export * from './models.ts';
 export * from './modes.ts';
 export * from './overlays.ts';
 export * from './personas.ts';

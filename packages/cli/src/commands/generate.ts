@@ -31,6 +31,7 @@ import {
   listTakes,
   loadConfig,
   projectCacheDir,
+  projectModels,
   projectOfShot,
   queueBoard,
   queueCastAnalysis,
@@ -90,20 +91,33 @@ async function waitAll(ws: Workspace, jobIds: string[], wait?: boolean) {
 export function registerGenerate(program: Command): void {
   const globals = () => program.opts<GlobalOptions>();
 
-  const board = program.command('board').description('Storyboard frames (分鏡圖) via Nano Banana 2.1');
+  const board = program
+    .command('board')
+    .description('Storyboard frames (分鏡圖) via the project image model (Nano Banana 2.1 or GPT Image 2.5)');
   board
     .command('generate <project> [shots...]')
     .option('--all', 'every replace shot of the project')
     .option('--extra <text>', 'extra instructions appended to the prompt')
     .option('--prompt-file <file>', 'extra instructions from a file')
     .option('--from <boardId>', 'revise this board (adds --extra on top of its prompt inputs)')
+    .option(
+      '--model <id>',
+      'image model for this request (default: the project choice; see `project models`)',
+    )
     .option('--wait', 'wait for generation')
     .action(
       command(
         (
           projectRef: string,
           shotIds: string[],
-          opts: { all?: boolean; extra?: string; promptFile?: string; from?: string; wait?: boolean },
+          opts: {
+            all?: boolean;
+            extra?: string;
+            promptFile?: string;
+            from?: string;
+            model?: string;
+            wait?: boolean;
+          },
         ) =>
           withWorkspace(globals(), async (ws) => {
             const ids = opts.from
@@ -114,6 +128,7 @@ export function registerGenerate(program: Command): void {
               queueBoard(ws, id, actorFromEnv(), {
                 ...(extra ? { extra } : {}),
                 ...(opts.from ? { fromBoardId: opts.from } : {}),
+                ...(opts.model ? { model: opts.model } : {}),
               }),
             );
             return {
@@ -213,13 +228,14 @@ export function registerGenerate(program: Command): void {
     .option('--kind <kind>', 'only one sheet: turnaround, expressions or poses')
     .option('--extra <text>', 'extra instructions')
     .option('--from <designId>', 'revise this sheet (same inputs, plus --extra)')
+    .option('--model <id>', 'image model for these sheets (default: the project choice)')
     .option('--wait', 'wait for the sheets')
     .action(
       command(
         (
           projectRef: string,
           character: string | undefined,
-          opts: { kind?: DesignKind; extra?: string; from?: string; wait?: boolean },
+          opts: { kind?: DesignKind; extra?: string; from?: string; model?: string; wait?: boolean },
         ) =>
           withWorkspace(globals(), async (ws) => {
             const queued = queueDesign(
@@ -231,6 +247,7 @@ export function registerGenerate(program: Command): void {
                 ...(opts.kind ? { kind: opts.kind } : {}),
                 ...(opts.extra ? { extra: opts.extra } : {}),
                 ...(opts.from ? { fromDesignId: opts.from } : {}),
+                ...(opts.model ? { model: opts.model } : {}),
               },
             );
             return {
@@ -270,7 +287,9 @@ export function registerGenerate(program: Command): void {
       ),
     );
 
-  const take = program.command('take').description('Shot videos (分鏡視頻) via Gemini Omni');
+  const take = program
+    .command('take')
+    .description('Shot videos (分鏡視頻): video-to-video edits with the project video model');
   take
     .command('generate <project> [shots...]')
     .option('--all', 'every replace/clean shot that is ready for video')
@@ -282,6 +301,10 @@ export function registerGenerate(program: Command): void {
     .option(
       '--retry-blocked',
       'send a shot the safety filter has already blocked limits.maxSafetyBlocks times',
+    )
+    .option(
+      '--model <id>',
+      'video model for this request (default: the project choice; see `project models`)',
     )
     .option('--wait', 'wait for generation')
     .action(
@@ -297,11 +320,13 @@ export function registerGenerate(program: Command): void {
             from?: string;
             force?: boolean;
             retryBlocked?: boolean;
+            model?: string;
             wait?: boolean;
           },
         ) =>
           withWorkspace(globals(), async (ws) => {
             const project = getProject(ws.db, projectRef);
+            const model = opts.model ?? projectModels(ws.db, project.id).video;
             // Revising a take stays on that take's tier unless told otherwise.
             const tier = opts.tier ?? (opts.from ? getTake(ws.db, opts.from).tier : project.generationTier);
             if (!TIERS.includes(tier)) throw new AniError('usage', `Tier must be one of ${TIERS.join(', ')}`);
@@ -323,7 +348,7 @@ export function registerGenerate(program: Command): void {
             if (!opts.all) for (const id of ready) assertNotBlockedOut(ws.db, config, id, opts.retryBlocked);
             // Check the whole batch against today's quota before queueing any of it.
             if (config.provider !== 'fake' && process.env.ANIRECAST_PROVIDER !== 'fake')
-              assertQuota(ws.db, config, config.models.video, ready.length, { includePending: true });
+              assertQuota(ws.db, config, model, ready.length, { includePending: true });
             const extra = extraText(opts);
             const queued = ready.map((id) =>
               queueTake(ws, id, tier, actorFromEnv(), {
@@ -331,6 +356,7 @@ export function registerGenerate(program: Command): void {
                 ...(opts.from ? { fromTakeId: opts.from } : {}),
                 force: Boolean(opts.force),
                 retryBlocked: Boolean(opts.retryBlocked),
+                model,
               }),
             );
             return {

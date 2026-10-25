@@ -34,6 +34,7 @@ import {
   shotStage,
   type Verdict,
 } from './generation.ts';
+import { projectModels } from './models.ts';
 import { markShotGenerationStale, recomputeShotModes } from './modes.ts';
 import { listTextOverlays } from './overlays.ts';
 import { getPersona } from './personas.ts';
@@ -48,13 +49,14 @@ export function queueBoard(
   ws: Workspace,
   shotId: string,
   actor: string,
-  opts: { extra?: string; fromBoardId?: string } = {},
+  opts: { extra?: string; fromBoardId?: string; model?: string } = {},
 ) {
-  const plan = planBoard(ws, shotId, opts);
+  const { model: chosen, ...planOpts } = opts;
+  const plan = planBoard(ws, shotId, planOpts);
   const board = createBoard(ws.db, {
     shotId,
     prompt: plan.prompt,
-    model: loadConfig().models.image,
+    model: chosen ?? projectModels(ws.db, projectOfShot(ws.db, shotId).id).image,
     params: plan.params,
     inputs: plan.inputs,
     parentId: opts.fromBoardId ?? null,
@@ -76,13 +78,14 @@ export function queueTake(
   shotId: string,
   tier: GenerationTier,
   actor: string,
-  opts: { extra?: string; fromTakeId?: string; force?: boolean; retryBlocked?: boolean } = {},
+  opts: { extra?: string; fromTakeId?: string; force?: boolean; retryBlocked?: boolean; model?: string } = {},
 ) {
   const config = loadConfig();
+  const model = opts.model ?? projectModels(ws.db, projectOfShot(ws.db, shotId).id).video;
   assertNotBlockedOut(ws.db, config, shotId, opts.retryBlocked);
   if (config.provider !== 'fake' && process.env.ANIRECAST_PROVIDER !== 'fake')
-    assertQuota(ws.db, config, config.models.video, 1, { includePending: true });
-  const plan = planTake(ws, shotId, tier, { ...opts, model: config.models.video });
+    assertQuota(ws.db, config, model, 1, { includePending: true });
+  const plan = planTake(ws, shotId, tier, { ...opts, model });
   const take = createTake(
     ws.db,
     {
@@ -90,7 +93,7 @@ export function queueTake(
       tier,
       boardId: plan.boardId,
       prompt: plan.prompt,
-      model: config.models.video,
+      model,
       params: plan.params,
       inputs: plan.inputs,
       parentId: opts.fromTakeId ?? null,
@@ -118,10 +121,11 @@ export function queueDesign(
   projectRef: string,
   ref: string | null,
   actor: string,
-  opts: { kind?: DesignKind; extra?: string; fromDesignId?: string } = {},
+  opts: { kind?: DesignKind; extra?: string; fromDesignId?: string; model?: string } = {},
 ) {
   const project = getProject(ws.db, projectRef);
   const from = opts.fromDesignId ? getDesign(ws.db, opts.fromDesignId) : undefined;
+  const designModel = opts.model ?? projectModels(ws.db, project.id).design;
   const bindings: Binding[] = from
     ? from.castMemberId
       ? [{ castMemberId: from.castMemberId, personaId: from.personaId }]
@@ -132,7 +136,6 @@ export function queueDesign(
   if (!bindings.length)
     throw new AniError('conflict', 'No original character is bound to a library character yet');
   const kinds = from ? [from.kind] : opts.kind ? [opts.kind] : [...DESIGN_KINDS];
-  const config = loadConfig();
   return bindings.flatMap((binding) =>
     kinds.map((kind) => {
       const plan = planDesign(ws, project.id, binding, kind, {
@@ -145,7 +148,7 @@ export function queueDesign(
         personaId: binding.personaId,
         kind,
         prompt: plan.prompt,
-        model: config.models.design,
+        model: designModel,
         params: plan.params,
         inputs: plan.inputs,
         parentId: from?.id ?? null,
@@ -386,6 +389,7 @@ export function projectOverview(ws: Workspace, ref: string) {
     openTasks: listAgentTasks(ws.db, { projectId: project.id }).filter(
       (t) => t.status !== 'done' && t.status !== 'cancelled',
     ),
+    models: projectModels(ws.db, project.id),
   };
 }
 

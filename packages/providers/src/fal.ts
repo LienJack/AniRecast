@@ -20,12 +20,14 @@ const PLATFORM = 'https://api.fal.ai/v1';
 type Json = Record<string, unknown>;
 
 /** How a fal endpoint is driven for a video edit. */
-export type FalVideoFamily = 'omni-edit' | 'seedance-reference';
+export type FalVideoFamily = 'omni-edit' | 'seedance-reference' | 'h3-recast' | 'wan-edit';
 
 export function falVideoFamily(model: string): FalVideoFamily | undefined {
   const id = model.startsWith(FAL_PREFIX) ? model.slice(FAL_PREFIX.length) : model;
   if (/gemini-omni/.test(id) && id.endsWith('/edit')) return 'omni-edit';
   if (/seedance/.test(id) && id.endsWith('/reference-to-video')) return 'seedance-reference';
+  if (/minimax\/h3/.test(id) && id.endsWith('/recast')) return 'h3-recast';
+  if (/wan/.test(id) && id.endsWith('/edit-video')) return 'wan-edit';
   return undefined;
 }
 
@@ -59,6 +61,10 @@ export function falError(status: number, body: unknown, what: string): AniError 
 }
 
 /** Turns `<IMAGE_REF_n>` (planner order: board first, then personas) into Seedance's `@Image{n+1}`. */
+/** Prompts name references as <IMAGE_REF_n>; models without that syntax get plain words. */
+export const plainRefs = (prompt: string, name: (n: number) => string): string =>
+  prompt.replace(/<IMAGE_REF_(\d+)>/g, (_m, n: string) => name(Number(n)));
+
 export function toSeedancePrompt(prompt: string): string {
   return `Edit @Video1. ${prompt.replace(/<IMAGE_REF_(\d+)>/g, (_m, n: string) => `@Image${Number(n) + 1}`)}`;
 }
@@ -165,14 +171,37 @@ export class FalProvider implements Provider {
     const family = falVideoFamily(endpoint);
     if (!family) {
       throw new AniError('usage', `fal endpoint ${endpoint} is not set up for shot edits`, {
-        hint: 'Use a fal Omni …/edit or Seedance …/reference-to-video endpoint.',
+        hint: 'Use a fal Omni …/edit, Seedance …/reference-to-video, MiniMax H3 …/recast or Wan …/edit-video endpoint.',
       });
     }
     req.onStatus?.('uploading to fal');
     const videoUrl = await this.#upload(req.video, req.signal);
     let input: Json;
+    const high = req.resolution === '1080p' || req.resolution === '4k';
     if (family === 'omni-edit') {
       input = { prompt: req.prompt, video_url: videoUrl, resolution: req.resolution };
+    } else if (family === 'h3-recast') {
+      // One reference per new character, replacing the main people left to right; 5–30 s input.
+      if (!req.images.length)
+        throw new AniError('usage', 'MiniMax H3 Recast needs a reference image of each new character');
+      const imageUrls = await Promise.all(req.images.slice(0, 4).map((m) => this.#upload(m, req.signal)));
+      input = {
+        prompt: plainRefs(req.prompt, (n) => `reference image ${n + 1}`).slice(0, 2000),
+        video_url: videoUrl,
+        reference_image_urls: imageUrls,
+        resolution: high ? '1080P' : '768P',
+      };
+    } else if (family === 'wan-edit') {
+      // duration 0 keeps the input length; one optional reference image (the storyboard frame).
+      const ref = req.images[0] ? await this.#upload(req.images[0], req.signal) : null;
+      input = {
+        prompt: plainRefs(req.prompt, () => 'the reference image'),
+        video_url: videoUrl,
+        ...(ref ? { reference_image_url: ref } : {}),
+        duration: 0,
+        resolution: high ? '1080p' : '720p',
+        audio_setting: 'origin',
+      };
     } else {
       const imageUrls = await Promise.all(req.images.map((m) => this.#upload(m, req.signal)));
       input = {

@@ -14,13 +14,15 @@ export async function scaleForUpload(
   input: string,
   output: string,
   height: number,
-  opts: FfmpegRunOptions & { frameStep?: number } = {},
+  opts: FfmpegRunOptions & { frameStep?: number; minFrames?: number } = {},
 ): Promise<{ frames: number; padded: number }> {
   ensureDir(output);
-  const { frameStep, ...run } = opts;
+  const { frameStep, minFrames, ...run } = opts;
   const frames = (await probe(input, { countFrames: true, ...(run.signal ? { signal: run.signal } : {}) }))
     .frameCount;
-  const padded = frameStep ? (frameStep - (frames % frameStep)) % frameStep : 0;
+  // Hold the last frame to reach a model's minimum length, then to its frame step.
+  const long = Math.max(frames, minFrames ?? 0);
+  const padded = long - frames + (frameStep ? (frameStep - (long % frameStep)) % frameStep : 0);
   const pad = padded > 0 ? `,tpad=stop_mode=clone:stop=${padded}` : '';
   await ffmpeg(
     [
@@ -117,6 +119,87 @@ export async function conformTake(
     framesIn: spec.frames,
     framesOut: p.frameCount,
     endAdjust,
+    sourceFps: `${p.fpsNum}/${p.fpsDen}`,
+    sourceSize: `${p.width}x${p.height}`,
+  };
+}
+
+export interface TimeConformSpec {
+  /** Frames of the shot (the start of the upload; anything after was padding). */
+  frames: number;
+  fpsNum: number;
+  fpsDen: number;
+  width: number;
+  height: number;
+  /** Length of what was uploaded, padding included. */
+  inputSeconds: number;
+  /** How far the output length may differ from the input before it counts as a different take (0.2 = ±20%). */
+  tolerance?: number;
+}
+
+export interface TimeConformResult {
+  framesIn: number;
+  framesOut: number;
+  /** Output seconds / input seconds before scaling (1 = same length). */
+  speed: number;
+  sourceFps: string;
+  sourceSize: string;
+}
+
+/**
+ * For models with their own frame rate and timing (Seedance, H3, Wan): scales the output to the uploaded
+ * length (within `tolerance`), resamples it by time to the clip rate and keeps the first `frames` frames — the
+ * shot; padding held at the end of the upload is dropped. Fails beyond the tolerance rather than warping.
+ */
+export async function conformByTime(
+  raw: string,
+  output: string,
+  spec: TimeConformSpec,
+  opts: FfmpegRunOptions = {},
+): Promise<TimeConformResult> {
+  const p = await probe(raw, { countFrames: true, ...(opts.signal ? { signal: opts.signal } : {}) });
+  const outSeconds = p.durationMs / 1000 || p.frameCount / (p.fpsNum / p.fpsDen);
+  const speed = outSeconds / spec.inputSeconds;
+  if (!(outSeconds > 0) || Math.abs(speed - 1) > (spec.tolerance ?? 0.2)) {
+    throw new AniError(
+      'provider_rejected',
+      `Generated clip is ${outSeconds.toFixed(2)} s, the upload was ${spec.inputSeconds.toFixed(2)} s`,
+      {
+        hint: 'conform_mismatch: the model changed the length too much to line up with the shot; regenerate or use another model.',
+        details: { conform_mismatch: true, framesIn: spec.frames, framesOut: p.frameCount, speed },
+      },
+    );
+  }
+  ensureDir(output);
+  const rate = `${spec.fpsNum}/${spec.fpsDen}`;
+  await ffmpeg(
+    [
+      '-i',
+      raw,
+      '-an',
+      '-vf',
+      // Rescale time to the upload length, resample to the clip rate, hold the end if rounding left it short.
+      `setpts=(PTS-STARTPTS)/${speed},fps=${rate},tpad=stop_mode=clone:stop=${spec.frames},scale=${spec.width}:${spec.height}:flags=lanczos,setsar=1,format=yuv420p`,
+      '-fps_mode',
+      'cfr',
+      '-r',
+      rate,
+      '-frames:v',
+      String(spec.frames),
+      '-c:v',
+      'libx264',
+      '-preset',
+      'medium',
+      '-crf',
+      '16',
+      output,
+    ],
+    { ...opts, totalFrames: spec.frames },
+  );
+  return {
+    framesIn: spec.frames,
+    framesOut: p.frameCount,
+    speed: Number(speed.toFixed(4)),
     sourceFps: `${p.fpsNum}/${p.fpsDen}`,
     sourceSize: `${p.width}x${p.height}`,
   };

@@ -34,6 +34,7 @@ import {
   TaskCard,
   VersionBadge,
 } from '@/components/domain';
+import { ModelSelect } from '@/components/models';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -302,6 +303,12 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
   const [comment, setComment] = useState('');
   const [extra, setExtra] = useState('');
   const [tier, setTier] = useState<GenerationTier>(d.project.tier);
+  // Models default to the project's choice; a request can try another.
+  const projectModels = useOverview(projectRef).data?.models;
+  const [boardModel, setBoardModel] = useState<string | undefined>(undefined);
+  const [takeModel, setTakeModel] = useState<string | undefined>(undefined);
+  const imageModel = boardModel ?? projectModels?.image;
+  const videoModel = takeModel ?? projectModels?.video;
   const [forceTake, setForceTake] = useState(false);
   const [confirmKeep, setConfirmKeep] = useState(false);
   const commentId = useId();
@@ -376,6 +383,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
       api.post<BoardQueue>(`/api/projects/${encodeURIComponent(projectRef)}/boards`, {
         shotIds: [shot.id],
         ...(extra.trim() ? { extra: extra.trim() } : {}),
+        ...(imageModel ? { model: imageModel } : {}),
       }),
     { onSuccess: (r) => reportQueue(r, '分鏡圖') },
   );
@@ -386,6 +394,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
         tier,
         force: forceTake,
         ...(extra.trim() ? { extra: extra.trim() } : {}),
+        ...(videoModel ? { model: videoModel } : {}),
       }),
     { onSuccess: (r) => reportQueue(r, '分鏡視頻') },
   );
@@ -772,17 +781,27 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                 </>
               ) : null}
               {hasBoardStage ? (
-                <Button
-                  variant="secondary"
-                  disabled={genBoard.isPending}
-                  onClick={() => genBoard.mutate(undefined)}
-                >
-                  <ImageIcon />
-                  生成分鏡圖
-                </Button>
+                <div className="flex items-center gap-2">
+                  <ModelSelect
+                    kind="image"
+                    value={imageModel}
+                    onChange={setBoardModel}
+                    label="分鏡圖模型"
+                    className="min-w-0 flex-1"
+                  />
+                  <Button
+                    variant="secondary"
+                    disabled={genBoard.isPending}
+                    onClick={() => genBoard.mutate(undefined)}
+                  >
+                    <ImageIcon />
+                    生成分鏡圖
+                  </Button>
+                </div>
               ) : null}
               {generates ? (
                 <>
+                  <ModelSelect kind="video" value={videoModel} onChange={setTakeModel} label="分鏡視頻模型" />
                   <div className="flex items-center gap-2">
                     <Select value={tier} onValueChange={(v) => setTier(v as GenerationTier)}>
                       <SelectTrigger size="sm" className="flex-1" aria-label="生成檔位">

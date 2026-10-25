@@ -84,12 +84,18 @@ export function getCastAnalysis(db: Db, castId: string): CastAnalysis | null {
   const used = fromJson<string[]>(r.tracklets_json, []);
   const now = trackletIdsOf(db, castId);
   const data = r.status === 'ready' ? fromJson<CastAnalysisData | null>(r.analysis_json, null) : null;
+  // Shots merged or split since: the shot numbers in it no longer match.
+  const shotsGone = (data?.appearances ?? []).some(
+    (a) => !one(db, 'SELECT 1 AS x FROM shots WHERE id = :id', { id: a.shotId }),
+  );
   return {
     castMemberId: r.cast_member_id,
     projectId: r.project_id,
     status: r.status,
     data,
-    stale: r.status === 'ready' && (used.length !== now.length || used.some((id, i) => id !== now[i])),
+    stale:
+      r.status === 'ready' &&
+      (shotsGone || used.length !== now.length || used.some((id, i) => id !== now[i])),
     model: r.model,
     costUsd: r.cost_usd,
     error: r.error,

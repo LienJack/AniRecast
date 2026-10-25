@@ -2,12 +2,13 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { probe } from '@anirecast/media';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { synthesizeShots } from '../../media/test/fixtures.ts';
 import {
   estimateVideoEditCost,
   estimateVisionCost,
   FakeProvider,
+  FalProvider,
   falError,
   falVideoFamily,
   findMedia,
@@ -252,6 +253,76 @@ describe('fal and JEV routes', () => {
     expect(falVideoFamily('fal:google/gemini-omni-flash/v1.1/reference-to-video')).toBeUndefined();
     expect(videoModelTakesImages('fal:google/gemini-omni-flash/v1.1/edit')).toBe(false);
     expect(videoModelTakesImages('gemini-omni-1.1-flash')).toBe(true);
+  });
+
+  it('drives MiniMax H3 Recast and Wan edit with their own fields', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'anirecast-fal-'));
+    const bodies: Record<string, unknown> = {};
+    vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/storage/upload/initiate'))
+        return Response.json({
+          upload_url: 'https://up/x',
+          file_url: `https://cdn/${JSON.parse(String(init?.body)).file_name}`,
+        });
+      if (u.startsWith('https://up/')) return new Response(null, { status: 200 });
+      if (u.startsWith('https://queue.fal.run/')) {
+        bodies[u.slice('https://queue.fal.run/'.length)] = JSON.parse(String(init?.body));
+        return Response.json({
+          request_id: 'r',
+          status_url: 'https://q/status',
+          response_url: 'https://q/resp',
+        });
+      }
+      if (u === 'https://q/status') return Response.json({ status: 'COMPLETED' });
+      if (u === 'https://q/resp')
+        return Response.json(
+          { video: { url: 'https://cdn/out.mp4' } },
+          { headers: { 'x-fal-billable-units': '5' } },
+        );
+      if (u === 'https://cdn/out.mp4') return new Response(new Uint8Array([1, 2, 3]));
+      if (u.includes('/models/pricing')) return Response.json({ prices: [{ unit_price: 0.3 }] });
+      throw new Error(`unexpected fetch ${u}`);
+    });
+    try {
+      for (const f of ['video.mp4', 'a.png', 'b.png']) writeFileSync(path.join(dir, f), f);
+      const fal = new FalProvider({ apiKey: 'test-key' });
+      const base = {
+        prompt: 'Replace the girl on the left.',
+        video: { path: path.join(dir, 'video.mp4'), mimeType: 'video/mp4' },
+        inputFrames: 120,
+        inputSeconds: 5,
+        images: ['a.png', 'b.png'].map((f) => ({ path: path.join(dir, f), mimeType: 'image/png' })),
+        resolution: '360p' as const,
+        aspectRatio: '16:9' as const,
+      };
+      const h3 = await fal.editVideo({ ...base, model: 'fal:minimax/h3-max/recast' });
+      expect(bodies['minimax/h3-max/recast']).toEqual({
+        prompt: 'Replace the girl on the left.',
+        video_url: 'https://cdn/video.mp4',
+        reference_image_urls: ['https://cdn/a.png', 'https://cdn/b.png'],
+        resolution: '768P',
+      });
+      expect(h3.costUsd).toBeCloseTo(1.5);
+      await fal.editVideo({ ...base, model: 'fal:fal-ai/wan/v2.7/edit-video', resolution: '1080p' });
+      expect(bodies['fal-ai/wan/v2.7/edit-video']).toEqual({
+        prompt: 'Replace the girl on the left.',
+        video_url: 'https://cdn/video.mp4',
+        reference_image_url: 'https://cdn/a.png',
+        duration: 0,
+        resolution: '1080p',
+        audio_setting: 'origin',
+      });
+      await expect(
+        fal.editVideo({ ...base, images: [], model: 'fal:minimax/h3-max/recast' }),
+      ).rejects.toThrow(/reference image of each new character/);
+      expect(falVideoFamily('fal:minimax/h3-max/recast')).toBe('h3-recast');
+      expect(estimateVideoEditCost('fal:minimax/h3-max/recast', 1.2, '360p')).toBeCloseTo(1.5);
+      expect(estimateVideoEditCost('fal:fal-ai/wan/v2.7/edit-video', 3, '720p')).toBeCloseTo(0.3);
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('reads JSON replies and estimates fal and JEV costs', () => {

@@ -59,6 +59,7 @@ import {
   mergeShots,
   type OverlayCategory,
   type PersonaView,
+  projectModels,
   projectOfShot,
   projectOverview,
   projectSummaries,
@@ -82,6 +83,7 @@ import {
   setLookPolicy,
   setOverlayRemoval,
   setPrimaryImage,
+  setProjectModels,
   setShotCastOverride,
   settleCast,
   shotDetail,
@@ -102,12 +104,21 @@ import {
   type Workspace,
 } from '@anirecast/core';
 import { parseTimecode, probe } from '@anirecast/media';
-import { AniError, type ErrorCode, toEnvelopeError } from '@anirecast/shared';
+import { AniError, type ErrorCode, IMAGE_MODELS, toEnvelopeError, VIDEO_MODELS } from '@anirecast/shared';
 import type { Context, Hono } from 'hono';
 import type { CodexDiscussions } from '../codex/discussions.ts';
 import { serveWorkspaceFile } from './files.ts';
 
 const USER = 'user';
+
+const imageModelOrThrow = (model: string) => {
+  if (!IMAGE_MODELS.some((m) => m.id === model))
+    throw new AniError('usage', `Not a selectable image model: ${model}`);
+};
+const videoModelOrThrow = (model: string) => {
+  if (!VIDEO_MODELS.some((m) => m.id === model))
+    throw new AniError('usage', `Not a selectable video model: ${model}`);
+};
 
 const STATUS: Partial<Record<ErrorCode, 400 | 402 | 404 | 409 | 423 | 503>> = {
   usage: 400,
@@ -555,7 +566,9 @@ export function registerRoutes(
         kind?: DesignKind;
         extra?: string;
         fromDesignId?: string;
+        model?: string;
       }>(c);
+      if (b.model) imageModelOrThrow(b.model);
       return queueDesign(
         ws,
         c.req.param('ref'),
@@ -565,9 +578,24 @@ export function registerRoutes(
           ...(b.kind ? { kind: b.kind } : {}),
           ...(b.extra ? { extra: b.extra } : {}),
           ...(b.fromDesignId ? { fromDesignId: b.fromDesignId } : {}),
+          ...(b.model ? { model: b.model } : {}),
         },
       );
     }),
+  );
+  // ---- models: what each project generates with ----------------------------------------------------
+  app.get('/api/models', (c) =>
+    handle(c, () => ({ image: IMAGE_MODELS, video: VIDEO_MODELS, defaults: loadConfig().models })),
+  );
+  app.patch('/api/projects/:ref/models', async (c) =>
+    handle(c, async () =>
+      setProjectModels(
+        ws.db,
+        c.req.param('ref'),
+        await body<{ image?: string | null; design?: string | null; video?: string | null }>(c),
+        USER,
+      ),
+    ),
   );
   app.post('/api/projects/:ref/designs/analyze', async (c) =>
     handle(c, async () => {
@@ -598,12 +626,14 @@ export function registerRoutes(
   );
   app.post('/api/projects/:ref/boards', async (c) =>
     handle(c, async () => {
-      const b = await body<{ shotIds?: string[]; extra?: string; fromBoardId?: string }>(c);
+      const b = await body<{ shotIds?: string[]; extra?: string; fromBoardId?: string; model?: string }>(c);
       const ids = shotsForMode(ws, c.req.param('ref'), b.shotIds, ['replace']);
+      if (b.model) imageModelOrThrow(b.model);
       return queueMany(ids, (id) =>
         queueBoard(ws, id, USER, {
           ...(b.extra ? { extra: b.extra } : {}),
           ...(b.fromBoardId ? { fromBoardId: b.fromBoardId } : {}),
+          ...(b.model ? { model: b.model } : {}),
         }),
       );
     }),
@@ -617,8 +647,11 @@ export function registerRoutes(
         fromTakeId?: string;
         force?: boolean;
         retryBlocked?: boolean;
+        model?: string;
       }>(c);
       const project = getProject(ws.db, c.req.param('ref'));
+      if (b.model) videoModelOrThrow(b.model);
+      const model = b.model ?? projectModels(ws.db, project.id).video;
       const tier = b.tier ?? (b.fromTakeId ? getTake(ws.db, b.fromTakeId).tier : project.generationTier);
       if (!TIERS.includes(tier)) throw new AniError('usage', `Tier must be one of ${TIERS.join(', ')}`);
       let ids = shotsForMode(ws, project.id, b.shotIds, ['replace', 'clean']);
@@ -627,13 +660,14 @@ export function registerRoutes(
       const config = loadConfig();
       // The whole batch must fit in today's quota before any of it is queued.
       if (config.provider !== 'fake' && process.env.ANIRECAST_PROVIDER !== 'fake')
-        assertQuota(ws.db, config, config.models.video, ids.length, { includePending: true });
+        assertQuota(ws.db, config, model, ids.length, { includePending: true });
       return queueMany(ids, (id) =>
         queueTake(ws, id, tier, USER, {
           ...(b.extra ? { extra: b.extra } : {}),
           ...(b.fromTakeId ? { fromTakeId: b.fromTakeId } : {}),
           force: Boolean(b.force),
           retryBlocked: Boolean(b.retryBlocked),
+          model,
         }),
       );
     }),

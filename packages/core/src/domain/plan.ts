@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { AniError, isTextOnlyVideoModel } from '@anirecast/shared';
+import { AniError, isTextOnlyVideoModel, videoModelSpec } from '@anirecast/shared';
 import { all, fromJson } from '../db.ts';
 import type { Workspace } from '../workspace.ts';
 import { getCastMember, type ShotCastEntry, shotCast } from './cast.ts';
@@ -251,10 +251,13 @@ export function planTake(
 ): Plan & { boardId: string | null } {
   const shot = getShot(ws.db, shotId);
   if (!shot.sourcePath) throw new AniError('conflict', 'Shot source segment is not prepared yet');
-  // A model that takes no reference images gets the persona in words instead of pictures.
-  const textOnly = opts.model ? isTextOnlyVideoModel(opts.model) : false;
-  if (opts.fromTakeId) {
-    const from = getTake(ws.db, opts.fromTakeId);
+  // What the model takes decides the references: none (the persona in words), the storyboard frame only, one
+  // image per new character, or both.
+  const spec = videoModelSpec(opts.model ?? '');
+  const textOnly = opts.model ? isTextOnlyVideoModel(opts.model) || spec.maxRefs === 0 : false;
+  const from = opts.fromTakeId ? getTake(ws.db, opts.fromTakeId) : undefined;
+  // A revision with the same model reuses the inputs; another model is planned afresh with the instructions.
+  if (from && (!opts.model || from.model === opts.model)) {
     const prompt = opts.extra?.trim()
       ? `${from.prompt}\nAdditional instructions: ${opts.extra.trim()}`
       : from.prompt;
@@ -266,27 +269,38 @@ export function planTake(
     };
   }
   const refs: Array<Omit<InputRef, 'sha256'>> = [{ role: 'video', path: shot.sourcePath }];
+  // Planned afresh for another model: keep the instructions the revised take had.
+  const extraLines = (from?.params.extras as string[] | undefined) ?? [];
   const lines: string[] = [];
   let boardId: string | null = null;
   if (shot.mode === 'replace') {
     const board = approvedBoard(ws.db, shotId);
     if (board?.path) boardId = board.id;
-    if (board?.path && !textOnly) refs.push({ role: 'board', path: board.path });
+    const withBoard = Boolean(board?.path) && !textOnly && spec.refStyle !== 'per-character';
+    if (withBoard && board?.path) refs.push({ role: 'board', path: board.path });
     const { uses, keyframe } = castInShot(ws, shot, 1);
-    let idx = boardId && !textOnly ? 1 : 0;
+    let idx = withBoard ? 1 : 0;
     // No persona names here: the images identify each character, and on the Lycoris OP names such as
     // "DeepSeek" or "Claude" went with Omni safety blocks that cleared once they were left out.
     for (const use of uses) {
-      if (textOnly) {
+      const who = describeWho(ws, keyframe.frame, use);
+      if (withBoard && spec.refStyle === 'board') {
+        // One reference (the storyboard frame) shows everyone already replaced.
         lines.push(
-          `Replace ${describeWho(ws, keyframe.frame, use)} with a different character: ${use.persona.description || 'see the persona notes'}. Give them that outfit, hairstyle and colours.`,
+          `Replace ${who} with the character shown in <IMAGE_REF_0>. ${lookInstruction(use, '<IMAGE_REF_0>')}`,
+        );
+        continue;
+      }
+      if (textOnly || idx >= spec.maxRefs) {
+        lines.push(
+          `Replace ${who} with a different character: ${use.persona.description || 'see the persona notes'}. Give them that outfit, hairstyle and colours.`,
         );
         continue;
       }
       refs.push({ role: `persona:${use.persona.id}`, path: use.imagePaths[0]! });
       const look = lookInstruction(use, `<IMAGE_REF_${idx}>`);
       lines.push(
-        `Replace ${describeWho(ws, keyframe.frame, use)} with the character shown in ${boardId ? '<IMAGE_REF_0> and ' : ''}<IMAGE_REF_${idx}>. ${look}`,
+        `Replace ${who} with the character shown in ${withBoard ? '<IMAGE_REF_0> and ' : ''}<IMAGE_REF_${idx}>. ${look}`,
       );
       idx++;
     }
@@ -299,11 +313,22 @@ export function planTake(
   if (overlay) lines.push(overlay);
   if (lines.length === 0) throw new AniError('conflict', 'Clean shot has no overlay marked for removal');
   lines.push(KEEP_VIDEO);
-  if (opts.extra?.trim()) lines.push(`Additional instructions: ${opts.extra.trim()}`);
+  if (refs.length - 1 < spec.minRefs)
+    throw new AniError('usage', `${spec.label} needs a reference image of each new character`, {
+      hint: 'Use another video model for shots that only remove text.',
+    });
+  const extras = [...extraLines, ...(opts.extra?.trim() ? [opts.extra.trim()] : [])];
+  for (const e of extras) lines.push(`Additional instructions: ${e}`);
   return {
     prompt: lines.join('\n'),
     inputs: withHashes(ws, refs),
-    params: { tier, aspectRatio: '16:9', signature: replacementSignature(ws.db, shotId) },
+    params: {
+      tier,
+      aspectRatio: '16:9',
+      signature: replacementSignature(ws.db, shotId),
+      ...(from ? { fromTakeId: from.id } : {}),
+      ...(extras.length ? { extras } : {}),
+    },
     boardId,
   };
 }
@@ -453,7 +478,9 @@ export function planDesign(
     lines.push(
       `${span(n('tile:'))} is a grid of ${who}'s ${what} in this opening, read left to right, top to bottom: ${cells
         .map((c, i) => `${i + 1}. ${c.item.label}${c.item.description ? ` (${c.item.description})` : ''}`)
-        .join('; ')}. Take only the ${kind === 'expressions' ? 'expression' : 'pose'} from each cell — not its background, props in the scene, other people or the original's clothes.`,
+        .join(
+          '; ',
+        )}. Take only the ${kind === 'expressions' ? 'expression' : 'pose'} from each cell — not its background, props in the scene, other people or the original's clothes.`,
     );
   } else {
     if (n('original:').length) lines.push(`${span(n('original:'))} show ${who} as this opening draws her.`);

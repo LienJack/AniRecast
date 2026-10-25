@@ -11,6 +11,7 @@ import type {
   Handoff,
   Health,
   Job,
+  ModelCatalogue,
   Persona,
   Project,
   ProjectOverview,
@@ -43,6 +44,7 @@ export const qk = {
   tasks: ['tasks'] as const,
   projectTasks: (ref: string) => ['project', ref, 'tasks'] as const,
   designs: (ref: string) => ['project', ref, 'designs'] as const,
+  models: ['models'] as const,
   discussions: (ref: string) => ['project', ref, 'codex'] as const,
   discussion: (id: string) => ['codex', id] as const,
   cost: ['cost'] as const,
@@ -118,6 +120,12 @@ export const useDiscussion = (id: string) =>
   useQuery({
     queryKey: qk.discussion(id),
     queryFn: () => api.get<DiscussionView>(`/api/codex/${encodeURIComponent(id)}`),
+  });
+export const useModels = () =>
+  useQuery({
+    queryKey: qk.models,
+    queryFn: () => api.get<ModelCatalogue>('/api/models'),
+    staleTime: 5 * 60_000,
   });
 export const useJobs = () =>
   useQuery({ queryKey: qk.jobs, queryFn: () => api.get<Job[]>('/api/jobs?limit=200') });

@@ -69,10 +69,16 @@ export function estimateVideoEditCost(
   refImages = 2,
   inputHeight = 720,
 ): number {
-  if (model.startsWith(FAL_PREFIX))
-    return falVideoFamily(model) === 'seedance-reference'
+  if (model.startsWith(FAL_PREFIX)) {
+    const family = falVideoFamily(model);
+    const high = resolution === '1080p' || resolution === '4k';
+    // Per output second (fal pricing, 2026-10-25): H3 Recast 768P 0.30 / 1080P 0.45, Wan 2.7 edit 0.10 / 0.15.
+    if (family === 'h3-recast') return Math.max(5, seconds) * (high ? 0.45 : 0.3);
+    if (family === 'wan-edit') return Math.max(2, seconds) * (high ? 0.15 : 0.1);
+    return family === 'seedance-reference'
       ? seedanceEstimate(seconds, resolution)
       : Math.max(1, seconds) * FAL_OMNI_PER_SECOND;
+  }
   const inputTokens = seconds * omniInputTokensPerSecond(inputHeight) + refImages * 1100 + 200;
   const outputTokens = seconds * OMNI_OUTPUT_TOKENS_PER_SECOND[resolution];
   return tokenCost(model, { inputTokens, outputTokens });

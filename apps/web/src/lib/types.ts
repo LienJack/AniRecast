@@ -7,15 +7,18 @@ import type {
   Board,
   designOverview,
   Handoff,
+  ImageModelSpec,
   Job,
   LocalConfig,
   LockInfo,
   Manifest,
+  ProjectModels,
   projectOverview,
   projectSummaries,
   Review,
   shotDetail,
   Take,
+  VideoModelSpec,
 } from '@anirecast/core';
 
 export type {
@@ -36,6 +39,7 @@ export type {
   HandoffResult,
   HandoffStatus,
   HandoffTarget,
+  ImageModelSpec,
   InspectResult,
   Job,
   JobStatus,
@@ -48,6 +52,7 @@ export type {
   PersonaImage,
   PersonaView,
   Project,
+  ProjectModels,
   ProjectStep,
   Render,
   Review,
@@ -60,6 +65,7 @@ export type {
   Tracklet,
   Verdict,
   VersionStatus,
+  VideoModelSpec,
 } from '@anirecast/core';
 
 export type ProjectOverview = ReturnType<typeof projectOverview>;
@@ -160,4 +166,11 @@ export interface DiscussionView {
   targetShotId: string | null;
   threadId?: string | null;
   openError?: string | null;
+}
+
+/** `GET /api/models`: what can be chosen, and the workspace defaults. */
+export interface ModelCatalogue {
+  image: ImageModelSpec[];
+  video: VideoModelSpec[];
+  defaults: ProjectModels & Record<string, string>;
 }

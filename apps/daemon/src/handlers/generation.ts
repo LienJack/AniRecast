@@ -29,6 +29,7 @@ import {
   type Workspace,
 } from '@anirecast/core';
 import {
+  conformByTime,
   conformTake,
   cropGrid,
   probe,
@@ -46,7 +47,7 @@ import {
   TIER_SIZE,
   TIER_UPLOAD_HEIGHT,
 } from '@anirecast/providers';
-import { AniError, toEnvelopeError } from '@anirecast/shared';
+import { AniError, toEnvelopeError, videoModelSpec } from '@anirecast/shared';
 import type { JobContext, JobHandler } from '../runner.ts';
 import { metered } from './metered.ts';
 import { outPath, span } from './util.ts';
@@ -59,7 +60,6 @@ const OMNI_MAX_SECONDS = 10;
  * Omni returns whole groups of 4 frames (75 in → 76 out, 33 in → 32 out on the Lycoris OP). Uploads are padded
  * to the step by holding the last frame, and conform absorbs up to 3 frames at the end.
  */
-const OMNI_FRAME_STEP = 4;
 const OMNI_END_TOLERANCE = 3;
 
 function ledger(ctx: JobContext, meta: ProviderCallMeta, projectId: string, tier: string | null): void {
@@ -257,30 +257,39 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
   try {
     if (!clip || clip.id !== shot.clipId)
       throw new AniError('conflict', 'Shot does not belong to the active clip');
+    const spec = videoModelSpec(take.model);
     const seconds = (shot.frameCount * clip.fpsDen) / clip.fpsNum;
-    if (seconds > OMNI_MAX_SECONDS) {
+    const maxSeconds = Math.min(spec.maxSeconds, OMNI_MAX_SECONDS);
+    if (seconds > maxSeconds) {
       throw new AniError(
         'usage',
-        `Shot is ${seconds.toFixed(1)} s; Omni edits at most ${OMNI_MAX_SECONDS} s`,
-        { hint: 'Split the shot (anirecast shots split) before generating.' },
+        `Shot is ${seconds.toFixed(1)} s; ${spec.label} edits at most ${maxSeconds} s`,
+        {
+          hint: 'Split the shot (anirecast shots split) before generating.',
+        },
       );
     }
+    // Short shots are padded (last frame held) to the model's minimum and frame step, then cut back.
+    const minFrames = Math.ceil((spec.minSeconds * clip.fpsNum) / clip.fpsDen);
     const video = take.inputs.find((i) => i.role === 'video');
     if (!video) throw new AniError('internal', 'Take has no video input');
     const refs = take.inputs.filter((i) => i.role !== 'video');
     const resolution = TIER_RESOLUTION[take.tier];
     const uploadHeight = TIER_UPLOAD_HEIGHT[take.tier];
-    budgetCheck(ctx, estimateVideoEditCost(take.model, seconds, resolution, refs.length, uploadHeight));
+    const uploadSeconds = Math.max(seconds, spec.minSeconds);
+    budgetCheck(ctx, estimateVideoEditCost(take.model, uploadSeconds, resolution, refs.length, uploadHeight));
     updateTake(ws.db, takeId, { status: 'generating', framesIn: shot.frameCount }, 'daemon');
 
     const cache = projectCacheDir(project);
-    const uploadRel = `${cache}/uploads/${shot.id}-${uploadHeight}p.mp4`;
+    const uploadRel = `${cache}/uploads/${shot.id}-${uploadHeight}p-step${spec.frameStep}-min${minFrames}.mp4`;
     progress(0.05, 'preparing upload');
-    await scaleForUpload(ws.abs(video.path), outPath(ws, uploadRel), uploadHeight, {
+    const upload = await scaleForUpload(ws.abs(video.path), outPath(ws, uploadRel), uploadHeight, {
       signal,
-      frameStep: OMNI_FRAME_STEP,
+      frameStep: spec.frameStep,
+      minFrames,
     });
-    const uploadSha = `${video.sha256 ?? ''}:${uploadHeight}:step${OMNI_FRAME_STEP}`;
+    const uploadedSeconds = ((upload.frames + upload.padded) * clip.fpsDen) / clip.fpsNum;
+    const uploadSha = `${video.sha256 ?? ''}:${uploadHeight}:step${spec.frameStep}:min${minFrames}`;
     const cachedFileUri = reusableUpload(ws, take, uploadSha);
 
     const result = await metered(ctx, { model: take.model, kind: 'video_edit', shotId: shot.id }, () =>
@@ -288,8 +297,8 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
         model: take.model,
         prompt: take.prompt,
         video: { path: ws.abs(uploadRel), mimeType: 'video/mp4' },
-        inputFrames: shot.frameCount,
-        inputSeconds: seconds,
+        inputFrames: upload.frames + upload.padded,
+        inputSeconds: uploadedSeconds,
         images: refs.map((r) => ({ path: ws.abs(r.path), mimeType: mimeFor(r.path) })),
         resolution,
         aspectRatio: '16:9',
@@ -307,20 +316,24 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
     progress(0.8, 'conforming');
     const size = TIER_SIZE[take.tier];
     const outRel = `${shotDir(project, shot.id)}/takes/${stem}.mp4`;
-    let conform: Awaited<ReturnType<typeof conformTake>>;
+    let conform: Awaited<ReturnType<typeof conformTake>> | Awaited<ReturnType<typeof conformByTime>>;
     try {
-      conform = await conformTake(
-        ws.abs(rawRel),
-        outPath(ws, outRel),
-        {
-          frames: shot.frameCount,
-          fpsNum: clip.fpsNum,
-          fpsDen: clip.fpsDen,
-          ...size,
-          endTolerance: OMNI_END_TOLERANCE,
-        },
-        { signal },
-      );
+      const base = { frames: shot.frameCount, fpsNum: clip.fpsNum, fpsDen: clip.fpsDen, ...size };
+      // Frame-exact models (Omni) are conformed by count; the others by time, padding cut off.
+      conform =
+        spec.timing === 'frames'
+          ? await conformTake(
+              ws.abs(rawRel),
+              outPath(ws, outRel),
+              { ...base, endTolerance: Math.max(OMNI_END_TOLERANCE, upload.padded) },
+              { signal },
+            )
+          : await conformByTime(
+              ws.abs(rawRel),
+              outPath(ws, outRel),
+              { ...base, inputSeconds: uploadedSeconds },
+              { signal },
+            );
     } catch (error) {
       updateTake(
         ws.db,

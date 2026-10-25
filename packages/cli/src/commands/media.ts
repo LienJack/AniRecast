@@ -20,18 +20,20 @@ import {
   listShots,
   listSources,
   mergeShots,
+  projectModels,
   projectOfShot,
   recomputeShotModes,
   recordBoundary,
   type ShotMode,
   setGenerationTier,
+  setProjectModels,
   splitShot,
   trashSource,
   updateShot,
   type Workspace,
 } from '@anirecast/core';
 import { formatTimecode, parseTimecode } from '@anirecast/media';
-import { AniError } from '@anirecast/shared';
+import { AniError, IMAGE_MODELS, VIDEO_MODELS } from '@anirecast/shared';
 import type { Command } from 'commander';
 import { type GlobalOptions, withWorkspace } from '../context.ts';
 import { command, note } from '../output.ts';
@@ -126,6 +128,33 @@ export function registerMedia(program: Command): void {
     .action(command((id: string) => withWorkspace(globals(), (ws) => trashSource(ws, id, actorFromEnv()))));
 
   const project = program.command('project').description('Projects (one recast of one source)');
+  project
+    .command('models <project>')
+    .description(
+      'Show or choose the models a project generates with (image: storyboard frames, design: character sheets, video: shot videos)',
+    )
+    .option('--image <id>', 'storyboard frame model')
+    .option('--design <id>', 'character design model')
+    .option('--video <id>', 'shot video model (video-to-video)')
+    .option('--reset', 'go back to the workspace defaults')
+    .action(
+      command(
+        (projectRef: string, opts: { image?: string; design?: string; video?: string; reset?: boolean }) =>
+          withWorkspace(globals(), (ws) => {
+            const patch = opts.reset
+              ? { image: null, design: null, video: null }
+              : {
+                  ...(opts.image ? { image: opts.image } : {}),
+                  ...(opts.design ? { design: opts.design } : {}),
+                  ...(opts.video ? { video: opts.video } : {}),
+                };
+            const models = Object.keys(patch).length
+              ? setProjectModels(ws.db, projectRef, patch, actorFromEnv())
+              : projectModels(ws.db, projectRef);
+            return { models, choices: { image: IMAGE_MODELS, video: VIDEO_MODELS } };
+          }),
+      ),
+    );
   project
     .command('create')
     .requiredOption('--source <id>', 'source id')

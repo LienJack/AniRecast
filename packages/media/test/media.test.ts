@@ -3,10 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  conformByTime,
   conformTake,
   extractAudioSegment,
   extractFrame,
   extractVideoSegment,
+  ffmpeg,
   formatTimecode,
   parseTimecode,
   probe,
@@ -103,6 +105,33 @@ describe('media', () => {
     await expect(conformTake(short, path.join(dir, 'x.mp4'), { ...spec, frames: 40 })).rejects.toThrow(
       /28 frames, the shot has 40/,
     );
+  }, 60_000);
+
+  it('pads short uploads to a model minimum and conforms a re-timed output by time', async () => {
+    const seg = path.join(dir, 'brief.mp4');
+    await extractVideoSegment(source, seg, {
+      startFrame: 0,
+      frameCount: 30,
+      fpsNum: FPS_NUM,
+      fpsDen: FPS_DEN,
+    });
+    const up = path.join(dir, 'brief-up.mp4');
+    expect(await scaleForUpload(seg, up, 180, { minFrames: 48 })).toEqual({ frames: 30, padded: 18 });
+    expect((await probe(up, { countFrames: true })).frameCount).toBe(48);
+    const inputSeconds = (48 * FPS_DEN) / FPS_NUM;
+    // A model that answers at 30 fps and 5% slower than the upload.
+    const out = path.join(dir, 'brief-30fps.mp4');
+    await ffmpeg(['-i', up, '-vf', 'setpts=1.05*PTS', '-r', '30', out]);
+    const spec = { frames: 30, fpsNum: FPS_NUM, fpsDen: FPS_DEN, width: 320, height: 180, inputSeconds };
+    const fit = await conformByTime(out, path.join(dir, 'brief-fit.mp4'), spec);
+    expect(fit.speed).toBeGreaterThan(1.02);
+    expect(fit.speed).toBeLessThan(1.08);
+    expect(await probe(path.join(dir, 'brief-fit.mp4'), { countFrames: true })).toMatchObject({
+      frameCount: 30,
+    });
+    const slow = path.join(dir, 'brief-slow.mp4');
+    await ffmpeg(['-i', up, '-vf', 'setpts=1.5*PTS', '-r', '30', slow]);
+    await expect(conformByTime(slow, path.join(dir, 'x2.mp4'), spec)).rejects.toThrow(/the upload was/);
   }, 60_000);
 
   it('holds a still image for an exact frame count', async () => {

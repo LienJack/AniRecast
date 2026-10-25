@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { DiscussInCodex } from '@/components/codex';
 import { ConfirmDialog, EmptyState, ErrorState, Loading, PageHeader, Tag, Thumb } from '@/components/common';
 import { ModeBadge, StageBadge, TaskCard } from '@/components/domain';
+import { ModelSelect } from '@/components/models';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -21,7 +22,7 @@ import {
   type Tone,
 } from '@/lib/labels';
 import { qk, useAction, useOverview, useProjectCost, useWorkspace } from '@/lib/queries';
-import type { BoardQueue, GenerationTier, ProjectOverview, TakeQueue } from '@/lib/types';
+import type { BoardQueue, GenerationTier, ProjectModels, ProjectOverview, TakeQueue } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 const TONE_BG: Record<Tone, string> = {
@@ -75,6 +76,42 @@ function pipeline(o: ProjectOverview): Array<{ label: string; state: StepState; 
       detail: `${readyRenders.length} 版`,
     },
   ];
+}
+
+/** Which models this project generates with; each request can still pick another on the review page. */
+function ModelsCard({ projectRef, models }: { projectRef: string; models: ProjectModels }) {
+  const save = useAction(
+    (patch: Partial<ProjectModels>) =>
+      api.patch(`/api/projects/${encodeURIComponent(projectRef)}/models`, patch),
+    { success: '已更新模型', invalidate: [['project']] },
+  );
+  const row = (slot: keyof ProjectModels, label: string, kind: 'image' | 'video', hint: string) => (
+    <div className="flex flex-col gap-1">
+      <span className="text-muted-foreground text-xs">{label}</span>
+      <ModelSelect
+        kind={kind}
+        value={models[slot]}
+        onChange={(id) => save.mutate({ [slot]: id })}
+        label={label}
+      />
+      <span className="text-[11px] text-muted-foreground">{hint}</span>
+    </div>
+  );
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>模型</CardTitle>
+        <span className="ml-auto text-muted-foreground text-xs">
+          這個項目預設用的模型；評審頁每次生成也能另選
+        </span>
+      </CardHeader>
+      <CardContent className="grid gap-3 md:grid-cols-3">
+        {row('image', '分鏡圖', 'image', '每個換角分鏡的第一張參考圖')}
+        {row('design', '角色設計', 'image', '三視圖、表情、動作')}
+        {row('video', '分鏡視頻（Video-to-Video）', 'video', '把原片分鏡改成換角後的版本，幀數對齊原片')}
+      </CardContent>
+    </Card>
+  );
 }
 
 export function OverviewPage() {
@@ -172,6 +209,7 @@ export function OverviewPage() {
             ))}
           </CardContent>
         </Card>
+        <ModelsCard projectRef={ref} models={o.models} />
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <Card>
