@@ -229,7 +229,7 @@ export async function contactSheet(
       '-i',
       stacked,
       '-vf',
-      `select='not(mod(n\\,${step}))',scale=-2:360,tile=${count}x1`,
+      `select='not(mod(n\\,${step}))',scale=-2:540,tile=${count}x1`,
       '-frames:v',
       '1',
       '-q:v',

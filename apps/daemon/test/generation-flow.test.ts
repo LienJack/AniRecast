@@ -172,6 +172,9 @@ describe('board → take → render with the fake provider', () => {
       expect(existsSync(path.join(root, render!.comparePath))).toBe(true);
       expect(existsSync(path.join(root, render!.compareProxyPath))).toBe(true);
 
+      const sheet = await cliData<{ absPath: string }>(t, ['take', 'sheet', takes.takes[0]!.id]);
+      expect(await probe(sheet.absPath)).toMatchObject({ height: 540 });
+
       // Feedback becomes an agent task with everything Codex needs.
       const changed = await cliData<{ task: { id: string } }>(t, [
         'review',

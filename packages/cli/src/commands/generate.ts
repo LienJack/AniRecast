@@ -273,6 +273,23 @@ export function registerGenerate(program: Command): void {
         withWorkspace(globals(), (ws) => ({ take: getTake(ws.db, id), reviews: listReviews(ws.db, id) })),
       ),
     );
+  take
+    .command('sheet <take>')
+    .description('Contact sheet image of a take: original frames on top, generated frames below')
+    .option('--count <n>', 'frames across', '5')
+    .action(
+      command((id: string, opts: { count: string }) =>
+        withWorkspace(globals(), async (ws) => {
+          const t = getTake(ws.db, id);
+          const compare = (t.remote as { comparePath?: string }).comparePath;
+          if (!compare || t.framesOut === null)
+            throw new AniError('conflict', 'This take has no review proxy yet');
+          const rel = `${projectCacheDir(projectOfShot(ws.db, t.shotId))}/sheets/${t.id}.jpg`;
+          await contactSheet(ws.abs(compare), ws.abs(rel), t.framesOut, Number(opts.count));
+          return { path: rel, absPath: ws.abs(rel) };
+        }),
+      ),
+    );
 
   const review = program.command('review').description('Human review of boards and takes');
   const target = (ws: Workspace, id: string): { type: 'board' | 'take'; shotId: string } =>
