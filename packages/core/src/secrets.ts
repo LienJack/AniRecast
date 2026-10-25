@@ -32,7 +32,7 @@ export function setGeminiApiKey(key: string): void {
       hint: 'Set GEMINI_API_KEY in the environment instead.',
     });
   }
-  if (!/^[\w-]{20,}$/.test(key)) throw new AniError('usage', 'That does not look like a Gemini API key');
+  if (!/^[\w.-]{20,}$/.test(key)) throw new AniError('usage', 'That does not look like a Gemini API key');
   const command = `add-generic-password -U -s ${SERVICE} -a ${ACCOUNT} -w "${key}"\n`;
   const result = spawnSync('security', ['-i'], { input: command, encoding: 'utf8' });
   if (result.status !== 0) throw new AniError('internal', 'Failed to store the key in the keychain');

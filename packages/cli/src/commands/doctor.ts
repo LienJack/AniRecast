@@ -1,8 +1,17 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readlinkSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AGENTS_FILE, daemonStatus, geminiKeySource, inspectWorkspace, openWorkspace } from '@anirecast/core';
+import {
+  AGENTS_FILE,
+  daemonStatus,
+  geminiKeySource,
+  inspectWorkspace,
+  loadConfig,
+  openWorkspace,
+} from '@anirecast/core';
+import { resolveCodexCommand } from '@anirecast/daemon';
 import type { Command } from 'commander';
 import { type GlobalOptions, resolveWorkspaceRoot } from '../context.ts';
 import { command } from '../output.ts';
@@ -115,6 +124,53 @@ export function runDoctor(globals: GlobalOptions): { healthy: boolean; checks: C
         ws.close();
       }
     }
+  }
+  const codex = resolveCodexCommand(loadConfig().codex.binPath);
+  checks.push({
+    name: 'codex',
+    ok: Boolean(codex),
+    required: false,
+    detail: codex ? `${codex.version} (${codex.source}: ${codex.command})` : 'not found',
+    ...(codex ? {} : { hint: 'Install the Codex desktop app or CLI for review feedback auto-dispatch.' }),
+  });
+  if (process.platform === 'darwin') {
+    const loaded =
+      spawnSync('launchctl', ['print', `gui/${process.getuid?.() ?? 0}/dev.anirecast.daemon`], {
+        stdio: 'ignore',
+      }).status === 0;
+    checks.push({
+      name: 'launchd-agent',
+      ok: loaded,
+      required: false,
+      detail: loaded ? 'dev.anirecast.daemon loaded' : 'not installed',
+      ...(loaded ? {} : { hint: 'anirecast --workspace <dir> setup' }),
+    });
+  }
+  for (const [name, link, target] of [
+    [
+      'cli-link',
+      path.join(os.homedir(), '.local', 'bin', 'anirecast'),
+      path.join(REPO_ROOT, 'bin', 'anirecast'),
+    ],
+    [
+      'codex-skill',
+      path.join(os.homedir(), '.codex', 'skills', 'anirecast'),
+      path.join(REPO_ROOT, 'skills', 'anirecast'),
+    ],
+  ] as const) {
+    let ok = false;
+    try {
+      ok = path.resolve(path.dirname(link), readlinkSync(link)) === target;
+    } catch {
+      ok = false;
+    }
+    checks.push({
+      name,
+      ok,
+      required: false,
+      detail: ok ? `${link} → ${target}` : `${link} missing`,
+      ...(ok ? {} : { hint: 'anirecast setup' }),
+    });
   }
   return { healthy: checks.every((c) => c.ok || !c.required), checks };
 }
