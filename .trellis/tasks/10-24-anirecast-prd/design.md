@@ -151,7 +151,7 @@ AniRecast/
 | 資料表 | 重點欄位 |
 | --- | --- |
 | `sources` | id、url、site、title、duration_ms、width、height、fps、file_path、info_path、status |
-| `projects` | id、slug、name、source_id、status、settings_json |
+| `projects` | id、slug、name、source_id、status、generation_tier（draft／preview／final，預設 draft）、settings_json |
 | `clips` | id、project_id、in_frame、out_frame、fps_num/den、file_path、audio_path、version、is_active |
 | `shots` | id、clip_id、order_index、start_frame、end_frame、mode（`replace` 換角／`clean` 去字／`keep` 沿用原片／`exclude` 排除）、mode_source（auto／user）、remove_other_overlays（是否連片名與其他疊字一起去掉）、status、rep_frame、description、camera_json |
 | `text_overlays` | id、shot_id、keyframe_id、bbox、text、category（`staff_credit`／`title_or_other`／`in_scene`）、remove（依類別預設，可以逐筆修改） |
@@ -164,7 +164,7 @@ AniRecast/
 | `shot_cast_overrides` | shot_id、cast_member_id、persona_id 或 `keep` |
 | `personas`／`persona_images` | 名稱、描述、標籤；圖片路徑、視角、是否為主圖 |
 | `boards` | id、shot_id、version、status、path、prompt、model、params_json、inputs_json（路徑 + sha256）、parent_id、remote_json、cost_usd、created_by |
-| `takes` | 同 boards，另加 board_id、segment_index、frames_in、frames_out、conform_json |
+| `takes` | 同 boards，另加 board_id、tier（draft／preview／final）、segment_index、frames_in、frames_out、conform_json |
 | `reviews` | id、target_type（board／take／render）、target_id、verdict（approve／changes／regenerate／keep_original）、comment、annotations_json |
 | `agent_tasks` | id、kind（`review_feedback`／`cast_review`）、review_id、shot_id 或 project_id、payload_json（cast_review 的待判定項目與對照圖路徑）、status（open／claimed／done／needs_user／cancelled）、claimed_by、result_note、result_target_id |
 | `codex_threads` | scope（`shot`／`project_cast`）、scope_id、thread_id、created_at |
@@ -284,7 +284,17 @@ Codex 用 CLI 做決定：`anirecast cast merge|split|assign --reason "…" --co
 2. **請求**：
    - `replace`：`[video uri, 通過的分鏡圖, 人設主圖…, 文字]`。提示詞依官方建議保持簡短：「Replace … with the character in <IMAGE_REF_0>. Remove the overlaid credit text at <位置>. Keep everything else the same: motion, timing, camera, background, lighting, style, in-scene text.」
    - `clean`：`[video uri, 文字]`：「Remove the overlaid credit text at <位置>. Keep everything else the same.」
-   - `response_format.resolution`：預設 `1080p`。M0 若顯示「720p 加本機放大」畫質相當且比較便宜，就改用那個做法；放大方式（ffmpeg lanczos，或動漫專用的超解析模型）也在 M0 決定。
+   - `response_format.resolution` 依**生成檔位**決定（PRD F9）：
+
+     | 檔位 | Omni 輸出 | 上傳的輸入 | 對齊後尺寸 |
+     | --- | --- | --- | --- |
+     | `draft` | `360p`；接上真實接口時試一次 `480p`，API 接受就改用 | 854×480 | 854×480 |
+     | `preview` | `720p` | 1280×720 | 1280×720 |
+     | `final` | `1080p`，或 `720p` 加本機放大（M0 決定；放大方式 ffmpeg lanczos 或動漫超解析，也在 M0 決定） | 1280×720 或 1920×1080（M0 決定） | 1920×1080 |
+
+   - `takes.tier` 記錄檔位。
+   - 「升級」是一個新的 take：沿用上一檔 take 的 `inputs_json` 和提示詞，只換檔位；`parent_id` 指向上一檔的 take，結果需要再次評審。
+   - 合成時，成片的檔位等於所有被採用 take 的最低檔位；正式成片要求全部是 `final`。
 3. **校驗**：輸出幀數必須等於輸入幀數；不相等時標示 `conform_mismatch`，不允許通過（可重試）。
 4. **對齊**：把時間戳改回原幀率（例如 23.976），統一成 1920×1080，去掉音軌，存成 `takes/tNNN.mp4`。
 5. **超過 10 秒的分鏡**：拆成 ≤10 秒的段，從第 2 段起加上前一段輸出的尾幀作為額外參考，生成後再接回。拆點優先選在動作較小的位置。

@@ -10,6 +10,7 @@
   - 每一筆付費呼叫都記在 [research/spend-ledger.md](research/spend-ledger.md)；達到上限就停用真實 API，改用 fake provider。
   - 自動化測試一律不打 Gemini 或 Codex。
 - **commit**：每一步在 `pnpm typecheck && pnpm test && pnpm lint` 全綠後 commit，作者 LienJack；不 push。
+- **生成檔位**：開發與實驗一律用 `draft`（Omni 360p），大致完成才用 `preview`（720p），`final`（1080p）只在最後跑一次（2026-10-25 你的要求）。
 - **開發用 Workspace** 放在 repo 內的 `./workspaces/`（已 gitignore），不碰 `mediaHub`。預設路徑寫在設定裡，不寫死在程式碼。
 - **daemon**：開發期用背景行程手動跑；launchd LaunchAgent 到 S12 才安裝，安裝時會告知。
 - **金鑰**：接受 `GEMINI_API_KEY` 或 `GEMINI_OMNI_API_KEY`；開發時用 `--env-file=.env` 帶入；`auth set-key` 從 stdin 讀，不從參數讀。
@@ -17,12 +18,12 @@
 
 ## 步驟
 
-### S0 Python sidecar 風險驗證 — done: （本次 commit）
+### S0 Python sidecar 風險驗證 — done: a7e7c06
 - 產出：`python/`（uv，Python 3.12），依賴 dghs-imgutils 0.19、scenedetect 0.7.2、scikit-learn、onnxruntime 1.31。
 - 驗證：imgutils 頭部與人物偵測可用，熱啟動每張 0.1–1.3 秒。CCIP 門檻 0.178：原角色 A 和人設 P 差 0.28–0.38（不同人）；同一個 P 在分鏡圖和人設表之間差 0.08–0.09（同一人）。
 - 注意：imgutils 會在執行時試圖用 pip 安裝 onnxruntime，所以必須在 `pyproject.toml` 明確宣告。
 
-### S1 Monorepo 骨架 — done:
+### S1 Monorepo 骨架 — done: 3b28baf
 - 產出：pnpm workspace、`tsconfig.base.json`、Biome、Vitest。
   - packages：`shared`、`core`、`media`、`providers`、`cli`；
   - apps：`daemon`、`web`（先放佔位）。
