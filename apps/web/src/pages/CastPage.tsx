@@ -1,7 +1,9 @@
-import { Link, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import {
+  ArrowLeftIcon,
   BanIcon,
   CheckIcon,
+  ChevronRightIcon,
   CombineIcon,
   PencilIcon,
   ScanFaceIcon,
@@ -138,6 +140,56 @@ function LookPolicySelect({ look }: { look: Look }) {
   );
 }
 
+/** Which persona replaces this character everywhere (or keep the original). */
+function PersonaSelect({ cast, personas }: { cast: CastMember; personas: Persona[] }) {
+  const map = useAction((personaId: string | null) => api.post(`/api/cast/${cast.id}/map`, { personaId }), {
+    success: (_r, id) => (id ? '已對應人設，受影響分鏡的處理方式已更新' : '已設為不替換'),
+  });
+  const persona = personas.find((p) => p.id === cast.personaId);
+  return (
+    <div className="flex items-center gap-1.5">
+      {persona ? (
+        <Thumb
+          src={fileUrl(persona.images.find((i) => i.isPrimary)?.path ?? persona.images[0]?.path)}
+          alt={persona.name}
+          className="size-7 rounded"
+        />
+      ) : null}
+      <Select value={cast.personaId ?? NONE} onValueChange={(v) => map.mutate(v === NONE ? null : v)}>
+        <SelectTrigger size="sm" className="w-40" aria-label={`「${cast.label}」換成的人設`}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NONE}>不替換</SelectItem>
+          {personas.map((p) => (
+            <SelectItem key={p.id} value={p.id}>
+              {p.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+/** Avatar of a character: its chosen thumbnail, else its first appearance. */
+function castThumb(cast: CastMember, shots: Map<string, OverviewShot>): string | undefined {
+  return (
+    fileUrl(cast.thumbPath) ??
+    (cast.tracklets[0] ? trackletImage(cast.tracklets[0], shots.get(cast.tracklets[0].shotId)) : undefined)
+  );
+}
+
+/**
+ * Look names as shown: clustering names looks A, B, … per character, so after merges several can share a
+ * name; those are numbered instead.
+ */
+function lookNames(looks: Look[]): Map<string, string> {
+  const count = new Map<string, number>();
+  for (const l of looks) count.set(l.label, (count.get(l.label) ?? 0) + 1);
+  return new Map(looks.map((l, i) => [l.id, (count.get(l.label) ?? 0) > 1 ? `造型 ${i + 1}` : l.label]));
+}
+
 function CastCard({
   cast,
   others,
@@ -159,9 +211,6 @@ function CastCard({
   const [mergeInto, setMergeInto] = useState<CastMember | null>(null);
   const [dropping, setDropping] = useState(false);
 
-  const map = useAction((personaId: string | null) => api.post(`/api/cast/${cast.id}/map`, { personaId }), {
-    success: (_r, id) => (id ? '已對應人設，受影響分鏡的處理方式已更新' : '已設為不替換'),
-  });
   const rename = useAction((l: string) => api.post(`/api/cast/${cast.id}/rename`, { label: l }), {
     success: '已重新命名',
     onSuccess: () => setEditing(false),
@@ -206,10 +255,8 @@ function CastCard({
       return next;
     });
   const ids = [...selected];
-  const persona = personas.find((p) => p.id === cast.personaId);
-  const thumb =
-    fileUrl(cast.thumbPath) ??
-    (cast.tracklets[0] ? trackletImage(cast.tracklets[0], shots.get(cast.tracklets[0].shotId)) : undefined);
+  const thumb = castThumb(cast, shots);
+  const names = lookNames(cast.looks);
   const groups: Array<{ look: Look | null; tracklets: Tracklet[] }> = [
     ...cast.looks.map((look) => ({ look, tracklets: cast.tracklets.filter((t) => t.lookId === look.id) })),
     {
@@ -286,28 +333,7 @@ function CastCard({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Field label="換成人設">
-            <div className="flex items-center gap-1.5">
-              {persona ? (
-                <Thumb
-                  src={fileUrl(persona.images.find((i) => i.isPrimary)?.path ?? persona.images[0]?.path)}
-                  alt={persona.name}
-                  className="size-7 rounded"
-                />
-              ) : null}
-              <Select value={cast.personaId ?? NONE} onValueChange={(v) => map.mutate(v === NONE ? null : v)}>
-                <SelectTrigger size="sm" className="w-40" aria-label="對應人設">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>不替換</SelectItem>
-                  {personas.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <PersonaSelect cast={cast} personas={personas} />
           </Field>
           <Field label="合併進另一個角色">
             <Select
@@ -394,7 +420,10 @@ function CastCard({
         {groups.map((g) => (
           <div key={g.look?.id ?? 'none'} className="flex flex-col gap-1.5">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium text-xs">{g.look ? `造型：${g.look.label}` : '未分造型'}</span>
+              <span className="font-medium text-xs">
+                {g.look ? `造型：${names.get(g.look.id) ?? g.look.label}` : '未分造型'}
+                <span className="ml-1 font-normal text-muted-foreground">{g.tracklets.length} 次出場</span>
+              </span>
               {g.look?.description ? (
                 <span className="text-muted-foreground text-xs">{g.look.description}</span>
               ) : null}
@@ -431,6 +460,68 @@ function CastCard({
   );
 }
 
+/** One line per character: who it is, how much it appears, which persona replaces it. Details open its shots. */
+function CastRow({
+  cast,
+  personas,
+  shots,
+  projectRef,
+}: {
+  cast: CastMember;
+  personas: Persona[];
+  shots: Map<string, OverviewShot>;
+  projectRef: string;
+}) {
+  const navigate = useNavigate();
+  const open = () =>
+    void navigate({ to: '/projects/$ref/cast/$castId', params: { ref: projectRef, castId: cast.id } });
+  const preview = cast.tracklets.slice(0, 8);
+  return (
+    <Card className="flex-row flex-wrap items-center gap-3 p-3">
+      <button
+        type="button"
+        onClick={open}
+        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        aria-label={`查看「${cast.label}」的詳情`}
+      >
+        <Thumb src={castThumb(cast, shots)} alt={cast.label} className="size-14 shrink-0 rounded-md" />
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="truncate font-semibold">{cast.label}</span>
+          <span className="text-muted-foreground text-xs">
+            {cast.shotIds.length} 個分鏡 · {cast.tracklets.length} 次出場 · {cast.looks.length} 個造型
+          </span>
+        </div>
+        <div className="ml-2 hidden min-w-0 gap-1 overflow-hidden lg:flex" aria-hidden>
+          {preview.map((t) => (
+            <Thumb
+              key={t.id}
+              src={trackletImage(t, shots.get(t.shotId))}
+              alt=""
+              className="size-9 shrink-0 rounded"
+            />
+          ))}
+          {cast.tracklets.length > preview.length ? (
+            <span className="self-center px-1 text-muted-foreground text-xs">
+              +{cast.tracklets.length - preview.length}
+            </span>
+          ) : null}
+        </div>
+      </button>
+      <div className="flex items-center gap-2">
+        <PersonaSelect cast={cast} personas={personas} />
+        <Button size="sm" variant="outline" onClick={open}>
+          詳情
+          <ChevronRightIcon />
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+/** Mapped characters first, then by how often they appear; characters with no appearances last. */
+const byImportance = (a: CastMember, b: CastMember) =>
+  Number(Boolean(b.personaId)) - Number(Boolean(a.personaId)) || b.tracklets.length - a.tracklets.length;
+
 export function CastPage() {
   const { ref } = useParams({ from: '/projects/$ref' });
   const cast = useCast(ref);
@@ -447,6 +538,9 @@ export function CastPage() {
   if (overview.isError) return <ErrorState error={overview.error} />;
   const shots = new Map(overview.data.shots.map((s) => [s.id, s]));
   const castTasks = overview.data.openTasks.filter((t) => t.kind === 'cast_review');
+  const sorted = [...cast.data].sort(byImportance);
+  const present = sorted.filter((c) => c.tracklets.length > 0);
+  const empty = sorted.filter((c) => c.tracklets.length === 0);
   const mapped = cast.data.filter((c) => c.personaId).length;
   return (
     <div className="flex flex-col">
@@ -454,8 +548,9 @@ export function CastPage() {
         title="角色表"
         description={
           <span>
-            {cast.data.length} 個片中角色，{mapped}{' '}
-            個已對應人設。把出場片段拖到另一個角色即可改歸屬；你做的修正會鎖定（
+            {present.length} 個片中角色，{mapped}{' '}
+            個已對應人設。在這裡選要換成的人設；按「詳情」看每個造型的出場片段，
+            拆開、合併或改歸屬。你做的修正會鎖定（
             <UserRoundIcon className="inline size-3" />
             你），之後重跑分群或 Codex 判斷都不會推翻。
           </span>
@@ -475,7 +570,7 @@ export function CastPage() {
           </>
         }
       />
-      <div className="flex flex-col gap-3 p-5">
+      <div className="flex flex-col gap-2 p-5">
         {castTasks.length ? (
           <div className="flex flex-col gap-2">
             <span className="font-medium text-xs">Codex 同一人識別判斷</span>
@@ -490,21 +585,20 @@ export function CastPage() {
             <span className="text-xs">（識別結果的裁切圖尚未提供時，以分鏡中間幀代替。）</span>
           </EmptyState>
         ) : null}
-        {cast.data.map((c) => (
-          <CastCard
-            key={c.id}
-            cast={c}
-            others={cast.data.filter((o) => o.id !== c.id)}
-            personas={personas.data ?? []}
-            shots={shots}
-            projectRef={ref}
-          />
+        {present.map((c) => (
+          <CastRow key={c.id} cast={c} personas={personas.data ?? []} shots={shots} projectRef={ref} />
         ))}
-        {cast.data.length ? (
-          <div className="flex items-center gap-2 text-muted-foreground text-xs">
-            <CombineIcon className="size-3.5" />
-            合併：在角色卡右上角選「合併進另一個角色」；拆開：勾選出場片段後按「拆成新角色」。
-          </div>
+        {empty.length ? (
+          <details className="mt-2 text-muted-foreground text-xs">
+            <summary className="cursor-pointer select-none">
+              沒有出場片段的角色（{empty.length}）：出場都被併走或標成不是角色
+            </summary>
+            <div className="mt-2 flex flex-col gap-2">
+              {empty.map((c) => (
+                <CastRow key={c.id} cast={c} personas={personas.data ?? []} shots={shots} projectRef={ref} />
+              ))}
+            </div>
+          </details>
         ) : null}
       </div>
       <ConfirmDialog
@@ -521,6 +615,56 @@ export function CastPage() {
           重新偵測角色（較慢；預設只重新分群）
         </Label>
       </ConfirmDialog>
+    </div>
+  );
+}
+
+/** One character in full: appearances grouped by look, with split, merge and reassignment. */
+export function CastDetailPage() {
+  const { ref, castId } = useParams({ from: '/projects/$ref/cast/$castId' });
+  const cast = useCast(ref);
+  const overview = useOverview(ref);
+  const personas = usePersonas();
+  if (cast.isPending || overview.isPending) return <Loading />;
+  if (cast.isError) return <ErrorState error={cast.error} />;
+  if (overview.isError) return <ErrorState error={overview.error} />;
+  const current = cast.data.find((c) => c.id === castId);
+  const back = (
+    <Button asChild size="sm" variant="ghost">
+      <Link to="/projects/$ref/cast" params={{ ref }}>
+        <ArrowLeftIcon />
+        角色表
+      </Link>
+    </Button>
+  );
+  if (!current)
+    return (
+      <div className="flex flex-col gap-3 p-5">
+        <div>{back}</div>
+        <EmptyState>這個角色已經不存在（可能被合併進另一個角色）。</EmptyState>
+      </div>
+    );
+  const shots = new Map(overview.data.shots.map((s) => [s.id, s]));
+  return (
+    <div className="flex flex-col">
+      <PageHeader
+        title={current.label}
+        description="勾選出場片段可以拆成新角色、改歸屬或標成不是角色；把片段拖到「改歸屬到」也行。你的修正會鎖定。"
+        actions={back}
+      />
+      <div className="flex flex-col gap-3 p-5">
+        <CastCard
+          cast={current}
+          others={cast.data.filter((o) => o.id !== current.id)}
+          personas={personas.data ?? []}
+          shots={shots}
+          projectRef={ref}
+        />
+        <div className="flex items-center gap-2 text-muted-foreground text-xs">
+          <CombineIcon className="size-3.5" />
+          合併：右上角選「合併進另一個角色」；拆開：勾選出場片段後按「拆成新角色」。
+        </div>
+      </div>
     </div>
   );
 }

@@ -18,6 +18,7 @@ const page = {
   clip: lazyRouteComponent(() => import('@/pages/ClipPage'), 'ClipPage'),
   shots: lazyRouteComponent(() => import('@/pages/ShotsPage'), 'ShotsPage'),
   cast: lazyRouteComponent(() => import('@/pages/CastPage'), 'CastPage'),
+  castDetail: lazyRouteComponent(() => import('@/pages/CastPage'), 'CastDetailPage'),
   reviewIndex: lazyRouteComponent(() => import('@/pages/ReviewPage'), 'ReviewIndexPage'),
   review: lazyRouteComponent(() => import('@/pages/ReviewPage'), 'ReviewPage'),
   renders: lazyRouteComponent(() => import('@/pages/RendersPage'), 'RendersPage'),
@@ -56,6 +57,11 @@ const overviewRoute = createRoute({
 const clipRoute = createRoute({ getParentRoute: () => projectRoute, path: 'clip', component: page.clip });
 const shotsRoute = createRoute({ getParentRoute: () => projectRoute, path: 'shots', component: page.shots });
 const castRoute = createRoute({ getParentRoute: () => projectRoute, path: 'cast', component: page.cast });
+const castDetailRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'cast/$castId',
+  component: page.castDetail,
+});
 const reviewIndexRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: 'review',
@@ -83,6 +89,7 @@ const routeTree = rootRoute.addChildren([
     clipRoute,
     shotsRoute,
     castRoute,
+    castDetailRoute,
     reviewIndexRoute,
     reviewRoute,
     rendersRoute,
