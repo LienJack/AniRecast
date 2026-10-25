@@ -51,6 +51,7 @@ Web UI 可以做完整流程。用 CLI 的話：
 anirecast source add "<網址>" --wait                  # 或 source import <檔案>
 anirecast project create --source <sourceId> --name "My OP"
 anirecast clip set my-op --in 0:00 --out 1:30         # 自動切分鏡 → Flash 分析 → 同一人識別
+anirecast jobs watch --until-idle                     # 背景分析跑完才有角色表（Web 的任務中心也看得到）
 anirecast persona add --name Shiro --ref shiro.png --description "銀髮、青綠外套"
 anirecast cast list my-op
 anirecast cast map <castId> --persona shiro
