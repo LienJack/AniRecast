@@ -31,10 +31,29 @@
 
 ## 未驗證／限制
 
-1. **桌面端的實際畫面我看不到。** 只能確認預設清單裡有，而桌面版的側邊欄應該用的就是這份清單（app bundle 裡呼叫 `thread/list` 時用的是互動型篩選，並且 `useStateDbOnly: true`）。需要你自己看一眼。
-2. **執行中能不能在桌面端即時看到，未驗證。** 對話在 AniRecast 自己的 app-server 程序裡跑；桌面版可能要跑完、或重新整理後才看得到。而且兩個程序同時寫同一個 thread 有風險。所以規則是：**即時進度在 AniRecast Web 看；桌面端在跑完之後閱讀或接續對話；處理中的 thread 不要在桌面端發訊息。**
-3. **`codex://threads/<id>` 深層連結**是從 app bundle 找到的，官方沒有文件；只在 macOS 桌面版 26.1013 確認存在。Bundle 裡在 `win32` 平台會跳過 `setAsDefaultProtocolClient`，Windows 可能改由安裝程式註冊，**未驗證**。
-4. **Thread 只存在各台電腦自己的 `~/.codex`。** A 電腦的 thread id 在 B 電腦不存在。所以 AniRecast 必須自己保存 Codex 的回報（最後訊息、改動摘要），Codex thread 只是「這台電腦上的檢視」。
+1. ~~桌面端的實際畫面~~ → 已由下一節「桌面端側邊欄與專案歸屬」實測解決。
+2. **執行中能不能在桌面端即時看到，未驗證。** 對話在 AniRecast 自己的 app-server 程序裡跑，桌面端收不到那個程序的即時通知。而且兩個程序同時寫同一個 thread 有風險。所以規則是：**即時進度在 AniRecast Web 看；桌面端在跑完之後閱讀或接續對話；處理中的 thread 不要在桌面端發訊息。**
+3. **`codex://threads/<id>` 深層連結**：官方沒有文件，從 app bundle 找到。**macOS 桌面版 26.1013 實測可用**，直接跳到該 thread，內容完整。Bundle 裡在 `win32` 平台會跳過 `setAsDefaultProtocolClient`，Windows 待 M7 驗證。
+4. Codex 紀錄只要求在本機桌面端看得到，不處理跨電腦遷移（2026-10-24 你確認的範圍）。
+
+## 桌面端側邊欄與專案歸屬（2026-10-25 實測，你在桌面端確認）
+
+- **只看工作目錄不夠。** 你把 `/Users/alex/Documents/lien/AniRecast` 加為專案之後，工作目錄就是這個路徑的測試 thread 仍然**沒有**出現在專案底下，而是出現在「最近項目」。
+- **桌面端怎麼決定 thread 屬於哪個專案**：
+  - 舊方式：記在 `~/.codex/.codex-global-state.json` 的 `thread-project-assignments`。
+  - 新方式：由 app-server 管理的 `thread.projectId`，存在 `state_5.sqlite` 的 `threads.project_id`。
+  - 你的桌面端目前狀態是 `projectsMigrated: true`、`threadAssignmentsMigrated: false`（還有 63 個 thread 歸屬待遷移）。
+- **外部建立的 thread 不會被自動歸入專案。** 你機器上 94 個 Python SDK／exec 建的 thread 沒有一個被歸入專案。專案存在之後才建立的新 thread，60 秒內也沒有被登記。
+- **有效的做法（實測，你確認看到了）**：
+  - `initialize` 時宣告 `capabilities.experimentalApi = true`；
+  - 用 `project/list` 依根目錄找到專案 id（例如 AniRecast 專案是 `01a171da-…`）；
+  - 用 `thread/metadata/update { threadId, projectId }` 指派，thread 就出現在該專案底下。
+  - 實驗性的 `ThreadStartParams.projectId` 可以在建立時直接指定（schema 有，尚未單獨實測）。
+  - 指派成功時，app-server 會發出 `thread/project/updated` 通知。
+- **實驗性 API 還有** `project/create|read|update|delete|import|move` 和 `thread/list { projectId }`。其中 `project/create` 也許能自動替 Workspace 建立桌面端專案、省掉手動加入那一步，**未驗證**。
+- **桌面端自己的 app-server**（pid 3076）以 stdio 啟動、由桌面端獨占。`codex app-server proxy` 需要的 daemon 控制 socket（`~/.codex/app-server-control/app-server-control.sock`）不存在，所以外部程式無法接上桌面端的 app-server。
+- **`codex://new?prompt=…&path=…&projectId=…`** 會在指定專案開新 thread，並把提示詞預先填進輸入框（看起來不會自動送出）。這是備案。
+- 實驗性 API 可能隨 Codex 改版變動，所以 AniRecast 啟動時要做自我檢查（見 design.md §8.4）。
 
 ## 沙箱與 CLI 通訊（Mac，Codex 0.163 seatbelt 沙箱）
 
@@ -51,9 +70,9 @@
   - CLI 可以據此判斷自己在沙箱內，不要在沙箱裡啟動 daemon：沙箱裡啟動的 daemon 會繼承沙箱，連不到 Gemini。
   - CLI 也可以把 `CODEX_THREAD_ID` 記進版本的 `created_by`。
 - 你的桌面端 thread 實際用的設定：81 個裡有 75 個是 `sandbox: disabled` + `approval: never`，5 個是 managed restricted + never，1 個是 managed restricted + on-request。所以**在你這台電腦上，手動模式本來就不會被擋**。改用 SQLite 是為了換電腦、限制較嚴的設定，以及刻意保持沙箱的自動派發都能穩定運作，不是只為了繞過這台電腦的設定。
-- 桌面端的專案記錄在 `~/.codex/state_5.sqlite` 的 `projects` / `project_roots`（內部格式），app-server 沒有新增專案的 API。目前 AniRecast 的路徑不在任何專案底下。推測桌面端只在側邊欄顯示工作目錄落在已知專案底下的 thread，**這點待你確認**。
+- 桌面端的專案記錄在 `~/.codex/state_5.sqlite` 的 `projects` / `project_roots`。專案歸屬見下一節。
 - Drizzle 0.45.4 沒有 `node:sqlite` driver（有 better-sqlite3 和 sqlite-proxy）。實測用的是 Node 內建的 `node:sqlite`。
 
 ## 測試 thread
 
-- `01a171cb-6289-79f3-beab-28c95832600d`，名稱「AniRecast 自動派發測試（可刪除）」，cwd 是 AniRecast repo。保留到你在桌面端確認看得到為止，之後刪除。
+所有測試 thread 都已經用 `thread/delete` 刪除（2026-10-25），包括「AniRecast 自動派發測試」和「AniRecast 專案歸屬測試」。探測腳本放在 [`codex-dispatch/`](codex-dispatch/)。

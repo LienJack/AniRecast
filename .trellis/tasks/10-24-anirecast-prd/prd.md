@@ -206,7 +206,8 @@ flowchart LR
 驗收：
 - [ ] 在 Web 送出一筆意見後，不需要任何手動操作，Codex 就開始處理；Web 即時顯示進度；完成後出現新版本和 Codex 的說明。
 - [ ] 同一分鏡第二次送出意見時，Codex 接在同一個 thread 裡處理，並且看得到前一輪的內容。
-- [ ] 在 Codex 桌面端的清單裡看得到「AniRecast · …」thread，點進去是完整的處理過程。
+- [ ] 在 Codex 桌面端的 **Workspace 專案底下**看得到「AniRecast · …」thread，點進去是完整的處理過程。
+- [ ] 在 Web 點「在 Codex 打開」，桌面端直接跳到該分鏡的 thread。
 - [ ] Codex 沒安裝、沒登入，或設定的模型不支援時，Web 顯示具體原因，任務留在佇列中，不會靜默失敗。
 
 ### F11 合成（P0）
@@ -252,7 +253,7 @@ flowchart LR
   - API key 是否有效、模型是否可用；
   - AniRecast 服務是否在執行；
   - 找到哪個 codex、版本多少，並實際跑一輪探測、顯示錯誤原文；
-  - Workspace 根目錄有沒有 `AGENTS.md`；是否已加入 Codex 桌面端專案（盡力檢查，檢查不到時提示手動確認）。
+  - Workspace 根目錄有沒有 `AGENTS.md`；是否已加入 Codex 桌面端專案（透過 Codex app-server 的專案清單檢查）。
 
 ## 7. 非功能需求
 

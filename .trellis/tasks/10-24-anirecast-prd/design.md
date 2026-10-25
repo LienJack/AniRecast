@@ -274,9 +274,17 @@ anirecast cost <p> [--shot <id>]
 1. **找 codex 執行檔**：依序看設定檔指定的路徑 → 桌面版內建的 codex（macOS：`/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`；Windows 在 M7 確認）→ PATH，取版本最新的那個。
    - 實測 PATH 上的 0.156 會因為 `config.toml` 的模型被拒絕，所以不能直接用 PATH。
    - `doctor` 和設定頁會用選到的執行檔真的跑一輪探測，把錯誤原文顯示出來。
-2. **啟動**：daemon 常駐一個 `codex app-server` 子程序（`initialize` 時 `clientInfo.name = "anirecast"`）；程序掛掉就重啟。
+2. **啟動**：daemon 常駐一個 `codex app-server` 子程序，程序掛掉就重啟。
+   - `initialize` 時設 `clientInfo.name = "anirecast"`、`capabilities.experimentalApi = true`，專案歸屬需要用到實驗性 API。
+   - **啟動自我檢查**：`project/list` 能呼叫，而且找得到根目錄等於 Workspace 根目錄的專案 → 記下該專案的 `projectId`。
+     - 找不到專案時：Web 和 `doctor` 提示「請在 Codex 桌面端把 Workspace 資料夾加為專案」。
+     - `project/list` 不能用（例如 Codex 改版）：降級，thread 不指派專案，會出現在桌面端的「最近項目」，Web 的「在 Codex 打開」照常可用，並顯示降級警告。
 3. **一個分鏡對應一個 thread**：資料表 `codex_threads(shot_id, thread_id, created_at)`。Codex 紀錄只要求在本機桌面端看得到，不處理跨電腦遷移。
-   - 這台電腦沒有該分鏡的 thread 時：`thread/start`（cwd 是 Workspace 根目錄、`sandbox: workspace-write`、`approvalPolicy: never`），再用 `thread/name/set` 命名為「AniRecast · <項目> · <分鏡序號>」。
+   - 該分鏡還沒有 thread 時：
+     - `thread/start`：cwd 是 Workspace 根目錄、`projectId` 是第 2 步找到的專案、`sandbox: workspace-write`、`approvalPolicy: never`。
+     - 用 `thread/name/set` 命名為「AniRecast · <項目> · <分鏡序號>」。
+     - 再讀一次 thread，確認 `projectId` 已經寫上；沒寫上就補呼叫 `thread/metadata/update { threadId, projectId }`。後者已實測可以讓 thread 出現在桌面端專案底下。
+   - **只看 cwd 不夠**：實測桌面端不會依工作目錄自動把外部建立的 thread 歸進專案，一定要明確指派 `projectId`。
    - 每一輪的 `turn/start` 都明確帶上 `sandboxPolicy: { type: workspaceWrite, networkAccess: false, writableRoots: [<Workspace 根目錄>] }`。Codex 只能寫 Workspace、不能連網，靠 CLI 寫 SQLite 和 daemon 溝通（已實測可行）。
    - 已經有 thread 時：`thread/resume`。
    - `thread/resume` 失敗時（例如 thread 被刪掉），直接開一個新 thread，不另外補前幾輪的內容。
@@ -291,7 +299,7 @@ anirecast cost <p> [--shot <id>]
 6. **併發**：agent 通道一次只跑一輪；同一分鏡處理中時，新的意見排在後面。
    - agent 通道與生成通道分開：Codex 那一輪會執行 `board generate --wait` 等生成完成，兩者共用名額會互相卡死。
    - CLI 從環境變數 `CODEX_THREAD_ID` 取得 thread id，記進 `jobs.requested_by` 和版本的 `created_by`，Web 就能從版本連回 Codex thread。
-7. **「在 Codex 打開」**：連結是 `codex://threads/<thread_id>`。這是從桌面版 app bundle 找到的路由，官方沒有文件，目前只在 macOS 桌面版 26.1013 確認存在。連結打不開時，改為提供可複製的 thread id 和 `codex resume <id>` 指令。
+7. **「在 Codex 打開」**：連結是 `codex://threads/<thread_id>`。官方沒有文件，**macOS 桌面版 26.1013 實測可用**。連結打不開時，改為提供可複製的 thread id 和 `codex resume <id>` 指令。
 8. **處理中**：Web 顯示鎖定提示，提醒不要在桌面端對同一個 thread 發訊息，避免兩個程序同時寫入。
 
 **手動模式（備用）**：在 Codex 桌面端打開 **Workspace 專案**，說「處理評審」，Codex 依照 Workspace 的 `AGENTS.md` 和 skill，用 `anirecast tasks next --claim` 處理。設定裡可以暫停自動派發。
@@ -299,9 +307,9 @@ anirecast cost <p> [--shot <id>]
 
 **每台電腦一次性設定**：在 Codex 桌面端把 Workspace 資料夾加為專案。
 
-- 理由：桌面端的專案存在內部資料庫，app-server 沒有新增專案的 API，所以只能由你手動加入。
-- 效果：派發出去的 thread 會出現在這個專案底下，手動模式也有寫入權限。
-- `doctor` 以唯讀方式盡力檢查（讀桌面端的內部資料，格式可能變動）；檢查不到時就提示你手動確認。
+- 效果：AniRecast 因此拿得到專案 id，派發出去的 thread 會出現在這個專案底下；手動模式也有寫入權限。
+- `doctor` 透過 app-server 的 `project/list` 檢查，不讀桌面端的內部檔案。
+- 實驗性的 `project/create` 也許能讓 AniRecast 自動建立這個專案，省掉手動那一步。M3 再驗證，確認桌面端會顯示才採用。
 
 ## 9. Web 頁面
 
