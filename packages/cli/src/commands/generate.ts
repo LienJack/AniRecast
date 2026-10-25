@@ -5,6 +5,7 @@ import {
   answerAgentTask,
   approvedTake,
   askUser,
+  assertNotBlockedOut,
   assertQuota,
   cancelAgentTask,
   claimAgentTask,
@@ -176,6 +177,8 @@ export function registerGenerate(program: Command): void {
                 ? staged.filter((id) => safetyBlockCount(ws.db, id) >= config.limits.maxSafetyBlocks)
                 : [];
             const ready = staged.filter((id) => !blockedOut.includes(id));
+            // Named shots that keep getting blocked say so before any quota message.
+            if (!opts.all) for (const id of ready) assertNotBlockedOut(ws.db, config, id, opts.retryBlocked);
             // Check the whole batch against today's quota before queueing any of it.
             if (config.provider !== 'fake' && process.env.ANIRECAST_PROVIDER !== 'fake')
               assertQuota(ws.db, config, config.models.video, ready.length, { includePending: true });
