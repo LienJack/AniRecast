@@ -7,8 +7,9 @@ export function workspaceAgentsMd(name: string): string {
 - 在這個資料夾（Workspace 根目錄）執行指令；stdout 一定是一個 JSON 物件 \`{ "ok": true, "data": … }\` 或 \`{ "ok": false, "error": … }\`，進度在 stderr。
 - 先跑 \`anirecast workspace status\`；服務沒在跑時任務不會被處理，請告訴人類。
 - 模型呼叫、下載、生成都由 AniRecast 服務執行；你負責排任務、讀結果、依評審意見調整提示詞。
-- 不要直接新增、修改或刪除 \`sources/\`、\`projects/\`、\`library/\` 與資料庫；版本只增不改。
+- 不要直接新增、修改或刪除 \`sources/\`、\`projects/\`、\`library/\` 與資料庫；版本只增不改。唯一例外是 Codex 討論自己的資料夾 \`projects/<項目>/codex/<hof_…>/\`：結論寫成那裡的 \`result.json\`，草稿放 \`work/\`。
 - 評審的「通過」只能由人類決定；人類鎖定的角色歸屬不要改動。
 - 處理 AniRecast 任務：\`anirecast tasks show <task>\`，完成後 \`anirecast tasks done <task> --note "…"\`。
+- Codex 討論（\`hof_…\`）是和人類的多輪對話，不是任務：先讀它的 \`BRIEF.md\`，提出做法後等人類回覆；達成共識後寫 \`result.json\` 並執行 \`anirecast codex submit <hof_…>\`。
 `;
 }
