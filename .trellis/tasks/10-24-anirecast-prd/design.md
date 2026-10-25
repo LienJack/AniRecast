@@ -517,3 +517,32 @@ anirecast cost <p> [--shot <id>]
 4. **顏色統計對齊**：每個生成的分鏡對齊原片的色彩統計（ffmpeg，不需要額外請求）。原片的切點本來就銜接自然，各自對齊原片，銜接就跟原片一樣。
 5. **鄰近分鏡錨定**：分鏡單獨生成時，加入上一個已核准分鏡視頻的最後一幀當參考。
 6. **銜接檢查**：把原片和生成版的切點前後幀並排，交給 JEV 判斷角色、服裝、顏色是否一致；有問題的交給 Codex 處理，最後由人工在成片頁確認。
+
+### 13.6 Codex 討論（導出／導入）
+
+- **用途**：網頁上一句評審意見講不清的問題（例如一直被擋的分鏡、角色設計方向、整個項目的畫風），改成在 Codex 單獨開對話，討論好幾輪。
+- **導出**：
+  - 可以導出的對象：分鏡、分鏡圖或分鏡視頻的某個版本、角色設計、人設、角色、等待回覆的自動任務，或整個項目。
+  - 導出時在 `projects/<slug>/codex/<id>/` 寫入 `BRIEF.md`（問題、現況、各版本和提示詞、圖片路徑、結論格式）和 `context.json`。
+  - 同時在 Codex App 開一個具名對話，歸在 workspace 所屬的 project 底下。Codex 先讀資料、提出 2–3 個做法，然後停下來等人回覆。
+  - 也可以複製提示詞，貼到任何 Codex 對話使用。
+- **對話歸屬**：daemon 只負責第一輪。第一輪結束後 app-server 就關閉，之後不再 resume 這個 thread，避免兩個程序同時在同一個對話上執行 turn。後續討論在 Codex App 進行。
+- **交回**：
+  - Codex 把結論寫進 `result.json`，內容包括 `summary`、`actions`、`versions`，再執行 `anirecast codex submit <id>`。
+  - submit 會檢查每個 id 都存在於這個項目，有問題就一次列出全部，讓 Codex 在對話裡修正。
+  - 可以重複送出，以最後一次為準。
+- **導入**：
+  - 在討論頁逐項勾選。`approve` 預設不勾；需要送出模型請求的項目會標示「付費」。
+  - 導入一定由人操作，Codex 會被拒絕。
+  - 導入時走原本的排隊函式，所以預算、每日配額、安全擋下上限都照常生效；導入前不會改任何東西，也不會花錢。
+  - 每一項各自成功或失敗；已成功的項目不會重複執行。
+- **可導入的動作**：`design.note`、`design.generate`、`board.generate`、`take.generate`、`take.still`、`shot.mode`、`shots.merge`（不強制）、`style.notes`、`approve`、`task.answer`、`task.close`。場景重新設計完成後再加對應的動作。
+- **資料表**：`handoffs`（schema v6），欄位為 id、project、target_type、target_id、topic、status（open → submitted → imported／closed）、dir、thread_id、result_json、applied_json。
+
+### 13.7 外部參考：hypit（2026-10-25 評估）
+
+- **結論**：hypit-ai/hypit 是用 Codex／Claude Code skill 加自家 DSL 做真人短影音的工具，不是動畫逐鏡換角。它的授權是改過的 Apache-2.0，禁止商業再散布，因此只借做法，不引入程式碼或依賴。
+- **可借的做法**：
+  - Seedance 提示詞分三段：每個參考負責什麼（subject）、從參考影片取什麼（transfer）、明確不要照抄什麼（exclude）。fal 的 Seedance 提示詞目前只有 `Edit @Video1.`，可以改成這種結構。
+  - 項目共用的畫風區塊和每鏡的光影指示分開寫，不混在一起。這與 13.3 的注入方式一致。
+  - hypit 寫的 Seedance 2.5 上限是 4–30 秒、30 張參考圖、10 支參考影片。若 fal 上查證一致，備援路線的段落可以超過 10 秒。
