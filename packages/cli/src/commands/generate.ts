@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import {
   type AgentTaskStatus,
   actorFromEnv,
-  addReview,
   answerAgentTask,
   approvedTake,
   askUser,
@@ -10,18 +9,13 @@ import {
   claimAgentTask,
   claimNextAgentTask,
   completeAgentTask,
-  createAgentTask,
-  createBoard,
   createRender,
-  createTake,
   enqueueJob,
   findActiveClip,
   type GenerationTier,
-  getAgentTask,
   getBoard,
   getProject,
   getRender,
-  getShot,
   getTake,
   listAgentTasks,
   listBoards,
@@ -30,13 +24,15 @@ import {
   listShots,
   listTakes,
   loadConfig,
-  planBoard,
-  planTake,
   projectCacheDir,
   projectOfShot,
+  queueBoard,
+  queueTake,
   shotStage,
   spendBreakdown,
+  submitReview,
   TIERS,
+  taskContext,
   totalSpend,
   type Workspace,
 } from '@anirecast/core';
@@ -75,67 +71,6 @@ async function waitAll(ws: Workspace, jobIds: string[], wait?: boolean) {
   const jobs = [];
   for (const id of jobIds) jobs.push(unwrapJob(await waitForJob(ws, id)));
   return { jobs };
-}
-
-export function queueBoard(
-  ws: Workspace,
-  shotId: string,
-  actor: string,
-  opts: { extra?: string; fromBoardId?: string } = {},
-) {
-  const plan = planBoard(ws, shotId, opts);
-  const board = createBoard(ws.db, {
-    shotId,
-    prompt: plan.prompt,
-    model: loadConfig().models.image,
-    params: plan.params,
-    inputs: plan.inputs,
-    parentId: opts.fromBoardId ?? null,
-    createdBy: actor,
-  });
-  const job = enqueueJob(ws.db, {
-    type: 'board.generate',
-    lane: 'generate',
-    projectId: projectOfShot(ws.db, shotId).id,
-    payload: { boardId: board.id },
-    requestedBy: actor,
-    maxAttempts: 2,
-  });
-  return { board, job };
-}
-
-export function queueTake(
-  ws: Workspace,
-  shotId: string,
-  tier: GenerationTier,
-  actor: string,
-  opts: { extra?: string; fromTakeId?: string; force?: boolean } = {},
-) {
-  const plan = planTake(ws, shotId, tier, opts);
-  const take = createTake(
-    ws.db,
-    {
-      shotId,
-      tier,
-      boardId: plan.boardId,
-      prompt: plan.prompt,
-      model: loadConfig().models.video,
-      params: plan.params,
-      inputs: plan.inputs,
-      parentId: opts.fromTakeId ?? null,
-      createdBy: actor,
-    },
-    { force: Boolean(opts.force) },
-  );
-  const job = enqueueJob(ws.db, {
-    type: 'take.generate',
-    lane: 'generate',
-    projectId: projectOfShot(ws.db, shotId).id,
-    payload: { takeId: take.id },
-    requestedBy: actor,
-    maxAttempts: 2,
-  });
-  return { take, job };
 }
 
 export function registerGenerate(program: Command): void {
@@ -292,50 +227,35 @@ export function registerGenerate(program: Command): void {
     );
 
   const review = program.command('review').description('Human review of boards and takes');
-  const target = (ws: Workspace, id: string): { type: 'board' | 'take'; shotId: string } =>
-    id.startsWith('brd_')
-      ? { type: 'board', shotId: getBoard(ws.db, id).shotId }
-      : { type: 'take', shotId: getTake(ws.db, id).shotId };
   review
     .command('approve <version>')
     .option('--comment <text>')
     .action(
       command((id: string, opts: { comment?: string }) =>
         withWorkspace(globals(), (ws) =>
-          addReview(ws.db, {
-            targetType: target(ws, id).type,
+          submitReview(ws, {
             targetId: id,
             verdict: 'approve',
             comment: opts.comment ?? null,
-            createdBy: actorFromEnv(),
+            actor: actorFromEnv(),
           }),
         ),
       ),
     );
   review
     .command('request-changes <version>')
-    .requiredOption('--comment <text>', 'what to change (handed to Codex)')
+    .description('Reject with a comment; an agent task hands the comment to Codex')
+    .requiredOption('--comment <text>', 'what to change')
     .action(
       command((id: string, opts: { comment: string }) =>
-        withWorkspace(globals(), (ws) => {
-          const t = target(ws, id);
-          const r = addReview(ws.db, {
-            targetType: t.type,
+        withWorkspace(globals(), (ws) =>
+          submitReview(ws, {
             targetId: id,
             verdict: 'changes',
             comment: opts.comment,
-            createdBy: actorFromEnv(),
-          });
-          const task = createAgentTask(ws.db, {
-            kind: 'review_feedback',
-            projectId: projectOfShot(ws.db, t.shotId).id,
-            shotId: t.shotId,
-            reviewId: r.id,
-            payload: { targetType: t.type, targetId: id, comment: opts.comment },
-            createdBy: actorFromEnv(),
-          });
-          return { review: r, task };
-        }),
+            actor: actorFromEnv(),
+          }),
+        ),
       ),
     );
   review
@@ -345,18 +265,8 @@ export function registerGenerate(program: Command): void {
     .action(
       command((id: string, opts: { wait?: boolean }) =>
         withWorkspace(globals(), async (ws) => {
-          const t = target(ws, id);
-          addReview(ws.db, {
-            targetType: t.type,
-            targetId: id,
-            verdict: 'regenerate',
-            createdBy: actorFromEnv(),
-          });
-          const q =
-            t.type === 'board'
-              ? queueBoard(ws, t.shotId, actorFromEnv(), { fromBoardId: id })
-              : queueTake(ws, t.shotId, getTake(ws.db, id).tier, actorFromEnv(), { fromTakeId: id });
-          return { queued: 'board' in q ? q.board : q.take, ...(await waitAll(ws, [q.job.id], opts.wait)) };
+          const result = submitReview(ws, { targetId: id, verdict: 'regenerate', actor: actorFromEnv() });
+          return { ...result, ...(result.queued ? await waitAll(ws, [result.queued.jobId], opts.wait) : {}) };
         }),
       ),
     );
@@ -366,12 +276,7 @@ export function registerGenerate(program: Command): void {
     .action(
       command((id: string) =>
         withWorkspace(globals(), (ws) =>
-          addReview(ws.db, {
-            targetType: target(ws, id).type,
-            targetId: id,
-            verdict: 'keep_original',
-            createdBy: actorFromEnv(),
-          }),
+          submitReview(ws, { targetId: id, verdict: 'keep_original', actor: actorFromEnv() }),
         ),
       ),
     );
@@ -521,44 +426,4 @@ export function registerGenerate(program: Command): void {
     .action(
       command((id: string) => withWorkspace(globals(), (ws) => cancelAgentTask(ws.db, id, actorFromEnv()))),
     );
-}
-
-/** Everything Codex needs to act on a task, with absolute paths so it can look at the images. */
-export function taskContext(ws: Workspace, taskId: string) {
-  const task = getAgentTask(ws.db, taskId);
-  const shot = task.shotId ? getShot(ws.db, task.shotId) : null;
-  const payload = task.payload as { targetType?: 'board' | 'take'; targetId?: string };
-  const target = payload.targetId
-    ? payload.targetType === 'board'
-      ? getBoard(ws.db, payload.targetId)
-      : getTake(ws.db, payload.targetId)
-    : null;
-  const abs = (rel: string | null | undefined) => (rel ? ws.abs(rel) : null);
-  return {
-    task,
-    shot,
-    target: target && {
-      ...target,
-      absPath: abs(target.path),
-      inputs: target.inputs.map((i) => ({ ...i, absPath: abs(i.path) })),
-    },
-    history: shot
-      ? {
-          boards: listBoards(ws.db, shot.id).map((b) => ({ id: b.id, version: b.version, status: b.status })),
-          takes: listTakes(ws.db, shot.id).map((t) => ({
-            id: t.id,
-            version: t.version,
-            tier: t.tier,
-            status: t.status,
-          })),
-        }
-      : null,
-    reviews: payload.targetId ? listReviews(ws.db, payload.targetId) : [],
-    next:
-      payload.targetType === 'board'
-        ? 'Revise with `anirecast board generate <project> --from <boardId> --extra "<instructions>" --wait`, look at the result, then `anirecast tasks done <task> --note "…" --result <newBoardId>`.'
-        : payload.targetType === 'take'
-          ? 'Revise with `anirecast take generate <project> --from <takeId> --extra "<instructions>" --wait`, look at the result, then `anirecast tasks done <task> --note "…" --result <newTakeId>`.'
-          : 'Follow the task payload.',
-  };
 }

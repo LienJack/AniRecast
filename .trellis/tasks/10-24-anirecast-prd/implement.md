@@ -72,7 +72,7 @@
   - 分鏡處理方式的自動判定（design §6）。
 - 驗證：單元測試涵蓋處理方式判定與 stale 傳播。
 
-### S7 分鏡圖 → 分鏡視頻 → 合成 → 對比（fake 端到端）— done: (S7 commit)
+### S7 分鏡圖 → 分鏡視頻 → 合成 → 對比（fake 端到端）— done: 3a0cfe9
 - 產出：
   - `board generate`、`take generate`（換角、去字）；
   - 對齊：幀數校驗、24fps 重新標記與還原、1080p、去音軌；
@@ -81,7 +81,7 @@
   - `review approve|request-changes|keep-original`。
 - 驗證：用 fake provider 端到端跑完。斷言每鏡幀數一致、成片 1920×1080、總幀數等於節選、音訊長度相符。
 
-### S8 Codex 派發 — done:
+### S8 Codex 派發 — done: 20a082f、b2f639a（真實 Codex 整合測試通過，見 research/codex-dispatch-visibility.md）
 - 產出：
   - `agent_tasks`、`tasks next|list|done|ask`；
   - app-server 用戶端：找 codex 執行檔、啟動時用 `experimentalApi` 自我檢查、依根目錄找到專案 id；

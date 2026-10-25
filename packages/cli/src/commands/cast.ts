@@ -13,7 +13,6 @@ import {
   listTextOverlays,
   mapCast,
   markNotCharacter,
-  markShotGenerationStale,
   mergeCast,
   type OverlayCategory,
   type PersonaView,
@@ -24,6 +23,7 @@ import {
   setOverlayRemoval,
   setPrimaryImage,
   setShotCastOverride,
+  settleCast,
   splitCast,
   updatePersona,
   type Workspace,
@@ -48,12 +48,8 @@ const decision = (opts: { reason?: string; confidence?: string }) => ({
   ...(opts.confidence ? { confidence: Number(opts.confidence) } : {}),
 });
 
-/** After any cast change: recompute automatic shot modes and stale the affected shots' versions. */
-function settle(ws: Workspace, projectId: string, staleShots: string[], reason: string) {
-  const actor = actorFromEnv();
-  const stale = staleShots.reduce((n, id) => n + markShotGenerationStale(ws.db, id, reason, actor), 0);
-  return { modeChanges: recomputeShotModes(ws.db, projectId, actor), staleVersions: stale };
-}
+const settle = (ws: Workspace, projectId: string, staleShots: string[], reason: string) =>
+  settleCast(ws, projectId, staleShots, reason, actorFromEnv());
 
 export function registerCast(program: Command): void {
   const globals = () => program.opts<GlobalOptions>();

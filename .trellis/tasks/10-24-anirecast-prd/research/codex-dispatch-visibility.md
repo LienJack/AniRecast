@@ -76,3 +76,16 @@
 ## 測試 thread
 
 所有測試 thread 都已經用 `thread/delete` 刪除（2026-10-25），包括「AniRecast 自動派發測試」和「AniRecast 專案歸屬測試」。探測腳本放在 [`codex-dispatch/`](codex-dispatch/)。
+
+## S8 真實整合測試（2026-10-25，耗用少量 Codex 額度，生成用 fake provider，不花 Gemini 費用）
+
+- 開發用 Workspace：`workspaces/dev-codex`（gitignore），位置在桌面端 AniRecast 專案的根目錄底下。
+- 情境：1 個換角分鏡，分鏡圖已通過，分鏡視頻 v1 待評審。送出意見「讓整體色調更溫暖一點（偏橘黃），其他保持不變」。
+- 派發器選用桌面版內建的 codex `0.163.0-alpha.10.2`，用 `project/list` 找到 AniRecast 專案 `01a171da-…`。建立的 thread「AniRecast · Codex Test · 分鏡 1」的 `project_id` 正確，**出現在桌面端的 AniRecast 專案底下**。
+- Codex 在沙箱裡（關閉網路，只能寫 Workspace）執行了 12 個指令，全部 exit 0：
+  - `anirecast tasks show`、`workspace status`、讀 SKILL.md；
+  - 兩次 `take generate --from … --extra …`，以及檢查結果。
+- 結果：fake provider 只做色相偏移，兩次都不符合「稍微偏暖」。Codex 依 skill 規則停下來，用 `tasks ask` 把任務轉成「需要你回覆」，並在問題中指出目前用的是測試供應器。全程約 1 分鐘。
+- 觀察：
+  - Codex 先用 `rg` 找 SKILL.md 再讀，表示 `skill` 輸入不一定會自動帶入內容；但指示裡已經寫了 skill 名稱，它會自己找到。
+  - Codex 也讀了你全域 `~/.codex/AGENTS.md` 指定的檔案管理規範，這是預期內的行為。
