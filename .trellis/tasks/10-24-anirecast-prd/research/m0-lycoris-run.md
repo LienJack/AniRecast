@@ -64,6 +64,8 @@
 
 限制：計數是以 Workspace 為單位，Google 的配額卻是整個 Cloud 專案共用。用同一把 key 跑其他 Workspace 時，本地的數字會偏低。不過只要 Google 回報「配額用完」，daemon 就會停止送出。
 
+「用分鏡圖做靜態鏡頭」已實作（90a0c3b）：`anirecast take still <project> <shot...>` 或評審台上的按鈕。這是那 17 個被擋鏡頭的選項 2，不呼叫模型、不收費。要不要用、用在哪些鏡頭，由使用者決定，還沒套用到任何鏡頭。
+
 ## 暫存檔
 
 `~/.cache/ranolabs/sessions/2026-10-25-nas-anime-recast/`：只留評審拼圖（boards_sheet.py、takes_sheet.py），以及探測和比對用的 omni_probe.ts、plan_diff.ts。重試腳本已被系統的保護取代，刪除；原片和參考圖副本都已在 workspace 裡，也已刪除。NAS 已卸載。M0 跑完 final 合成後，整個資料夾刪除。
