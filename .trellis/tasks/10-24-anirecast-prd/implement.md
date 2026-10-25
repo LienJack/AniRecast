@@ -132,4 +132,9 @@
 ## 回滾點
 
 - 每一步都是獨立的 commit；有問題就 `git revert` 那一步。
+- 保留的開發資料（gitignore）：
+  - `workspaces/fixture-op` 和 `workspaces/.config-real`：S11 付費生成的結果（USD 1.93），作為回歸用 fixture；
+  - `workspaces/dev-codex` 和 `workspaces/.config`：Codex 桌面端測試 thread 所用的 workspace（fake provider）。
+  - 退場條件：用真實 OP 跑完 M0 並評審後即可刪除。素材與證據另存於
+    `~/RanoLabs/research/anirecast/2026-10-25-fixture-op/`。
 - 開發期不會修改 `~/.codex` 的設定，也不會修改 mediaHub；LaunchAgent 用 `anirecast setup --uninstall` 移除。
