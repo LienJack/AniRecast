@@ -1,6 +1,11 @@
-import { type AniEvent, APP_VERSION, listJobs, type Workspace } from '@anirecast/core';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { type AniEvent, APP_VERSION, type Workspace } from '@anirecast/core';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { registerRoutes } from './api/routes.ts';
 import type { AgentDispatcher } from './codex/dispatcher.ts';
 import type { EventsHub } from './events-hub.ts';
 import type { JobRunner } from './runner.ts';
@@ -11,11 +16,21 @@ export interface ServerDeps {
   runner: JobRunner;
   startedAt: number;
   dispatcher?: AgentDispatcher | undefined;
+  /** Exit so launchd restarts the daemon on the newly selected workspace. */
+  onSwitchWorkspace?: () => void;
 }
 
 /** HTTP API for the Web UI only. The CLI talks to the workspace database directly. */
-export function createApp({ workspace, hub, runner, startedAt, dispatcher }: ServerDeps): Hono {
+export function createApp({
+  workspace,
+  hub,
+  runner,
+  startedAt,
+  dispatcher,
+  onSwitchWorkspace,
+}: ServerDeps): Hono {
   const app = new Hono();
+  registerRoutes(app, workspace, { onSwitchWorkspace: onSwitchWorkspace ?? (() => {}) });
 
   app.get('/api/health', (c) =>
     c.json({
@@ -35,8 +50,6 @@ export function createApp({ workspace, hub, runner, startedAt, dispatcher }: Ser
     }),
   );
 
-  app.get('/api/jobs', (c) => c.json({ ok: true, data: listJobs(workspace.db, { limit: 200 }) }));
-
   app.get('/api/events', (c) =>
     streamSSE(c, async (stream) => {
       const since = Number(c.req.query('since') ?? c.req.header('Last-Event-ID') ?? Number.NaN);
@@ -55,5 +68,10 @@ export function createApp({ workspace, hub, runner, startedAt, dispatcher }: Ser
     }),
   );
 
+  const webDist = fileURLToPath(new URL('../../web/dist/', import.meta.url));
+  if (existsSync(webDist)) {
+    app.use('/*', serveStatic({ root: path.relative(process.cwd(), webDist) || '.' }));
+    app.get('*', serveStatic({ path: path.join(path.relative(process.cwd(), webDist), 'index.html') }));
+  }
   return app;
 }

@@ -130,7 +130,17 @@ export async function startDaemon(options: StartOptions): Promise<DaemonHandle> 
   dispatcher?.start();
   log(`codex auto-dispatch: ${dispatcher ? 'on' : 'off'}`);
 
-  const app = createApp({ workspace, hub, runner, startedAt, dispatcher });
+  const app = createApp({
+    workspace,
+    hub,
+    runner,
+    startedAt,
+    dispatcher,
+    onSwitchWorkspace: () => {
+      log('workspace switched; restarting');
+      void stop().then(() => process.exit(0));
+    },
+  });
   const host = options.host ?? config.daemon.host;
   const server: ServerType = await new Promise((resolve) => {
     const s = serve({ fetch: app.fetch, hostname: host, port: options.port ?? config.daemon.port }, () =>
