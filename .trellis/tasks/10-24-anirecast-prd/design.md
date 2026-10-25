@@ -1,4 +1,4 @@
-# AniRecast 技術設計（草稿 v0.3）
+# AniRecast 技術設計（草稿 v0.4）
 
 搭配 [prd.md](prd.md) 閱讀。這份文件記錄「怎麼做」；需求、驗收標準和待決問題以 PRD 為準。平台：macOS 先做，Windows 在 M7；Workspace 格式從第一天起就跨平台。
 
@@ -101,7 +101,7 @@ AniRecast/
 ## 4. Workspace 資料夾規範
 
 ```text
-<任意名稱>/                         # 例如 ~/AniRecast-Workspace
+<任意名稱>/                         # 這台 Mac 的預設：/Users/alex/Documents/lien/mediaHub
 ├── anirecast.workspace.json        # manifest：格式版本、workspaceId、建立時間、最低系統版本
 ├── anirecast.db                    # SQLite（WAL），所有索引與狀態（路徑一律相對 Workspace 根目錄）
 ├── AGENTS.md                       # 給 Codex：用 anirecast CLI 操作、評審規則、禁止直接改媒體檔（系統產生，可更新）
@@ -152,7 +152,8 @@ AniRecast/
 | `sources` | id、url、site、title、duration_ms、width、height、fps、file_path、info_path、status |
 | `projects` | id、slug、name、source_id、status、settings_json |
 | `clips` | id、project_id、in_frame、out_frame、fps_num/den、file_path、audio_path、version、is_active |
-| `shots` | id、clip_id、order_index、start_frame、end_frame、mode（`replace`／`keep`／`exclude`）、status、rep_frame、description、camera_json |
+| `shots` | id、clip_id、order_index、start_frame、end_frame、mode（`replace` 換角／`clean` 去字／`keep` 沿用原片／`exclude` 排除）、mode_source（auto／user）、remove_other_overlays（是否連片名與其他疊字一起去掉）、status、rep_frame、description、camera_json |
+| `text_overlays` | id、shot_id、keyframe_id、bbox、text、category（`staff_credit`／`title_or_other`／`in_scene`）、remove（依類別預設，可以逐筆修改） |
 | `keyframes` | id、shot_id、frame、role、path |
 | `cast_members` | id、project_id、label、description、thumb_path、persona_id（null = 不替換） |
 | `detections` | id、shot_id、keyframe_id、cast_member_id、bbox、attrs_json、confidence |
@@ -194,7 +195,14 @@ stateDiagram-v2
   stale --> board_pending
 ```
 
+`mode = clean`（去字）的分鏡沒有分鏡圖階段，直接從 `take_generating` 開始，之後的評審、退回、通過都與上圖相同；它沒有「退回分鏡圖」這條路。
+
 `mode = keep` 的分鏡直接視為完成，合成時使用原片段。
+
+**處理方式的自動判定**（`mode_source = auto` 時；角色對應或字幕偵測一變就重算；你手動設過的分鏡不會被覆蓋）：
+- 有對應到人設的片中角色 → `replace`；
+- 否則，有任何 `remove = true` 的疊加字幕 → `clean`；
+- 否則 → `keep`。
 
 **Agent 任務**：`open → claimed → done`；或 `claimed → needs_user → open`（你回覆之後）；或 `cancelled`。`claimed` 超過 30 分鐘沒有回報時自動退回 `open`，避免卡住。
 
@@ -203,24 +211,35 @@ stateDiagram-v2
 ### 7.1 分鏡偵測
 `clip.mp4` 交給 Python sidecar，用 AdaptiveDetector 產生剪接點（以幀號表示）。之後用 ffmpeg 輸出每個分鏡的 `source.mp4` 和關鍵幀，並把長度超過 10 秒的分鏡標示出來。
 
-### 7.2 角色辨識
-每個分鏡的 first、mid、last 三幀交給 Flash 視覺模型，輸出結構化 JSON：人物清單（外觀、位置框、顯眼程度）和分鏡描述。接著把所有分鏡的人物裁切圖和描述一次交給模型歸併成角色表。最後由你在 Web 上確認、合併、拆分。
+### 7.2 角色與字幕辨識
+每個分鏡的 first、mid、last 三幀交給 Flash 視覺模型，輸出結構化 JSON，包含：
+- 人物清單：外觀、位置框、顯眼程度；
+- **疊加字幕清單**：文字、位置框、類別。工作人員字幕的 `remove` 預設為 true；片名與其他疊字預設為 false；場景內文字固定為 false。三幀的結果合併：任何一幀出現就算這個分鏡有。
+- 分鏡描述。
+
+接著把所有分鏡的人物裁切圖和描述一次交給模型歸併成角色表。最後由你在 Web 上確認、合併、拆分。字幕類別判錯時，可以在 Web 上逐筆修改。
 
 ### 7.3 分鏡圖（Nano Banana 2.1）
 - 輸入：代表幀、對應人設的參考圖（每次請求的角色圖合計 ≤5 張，所以一個分鏡兩個人設時，每個人設最多 2 張）。
 - 提示詞模板：「Image 1 是原分鏡；Image N 是角色 X 的參考。把 <位置／外觀描述> 的人換成 X，其他保持不變：構圖、姿勢、光線、背景、畫風」，再加上你和 Codex 的修改意見。
+- 有要去掉的疊加字幕時，加上：「去掉位於 <bbox> 的疊加文字（<文字內容>），補上原本被遮住的背景；場景裡的文字保持不變」。
+- 只有 `replace` 分鏡生成分鏡圖。
 - 預設輸出 16:9、2K。
 - 你要求修改時，Codex 可以選擇用 `previous_interaction_id` 做多輪修改（便宜、穩定），或從頭生成。兩種方式都會在 provenance 裡留下可以完整重放的輸入。
 
 ### 7.4 分鏡視頻（Omni 編輯）
-1. **前處理**：把 `source.mp4` 轉成 1280×720、**重新標記為 24fps 固定幀率**（只改時間戳，幀數不變），再上傳到 Files API。上傳的 URI 存進 cache，48 小時內可以重用。
-2. **請求**：`[video uri, 通過的分鏡圖, 人設主圖…, 文字]`。提示詞依官方建議保持簡短：「Replace … with the character in <IMAGE_REF_0>. Keep everything else the same: motion, timing, camera, background, lighting, style.」
+1. **前處理**：把 `source.mp4` **重新標記為 24fps 固定幀率**（只改時間戳，幀數不變），再上傳到 Files API。上傳的 URI 存進 cache，48 小時內可以重用。
+   - 上傳 720p 還是原始的 1080p，M0 比較後決定。
+2. **請求**：
+   - `replace`：`[video uri, 通過的分鏡圖, 人設主圖…, 文字]`。提示詞依官方建議保持簡短：「Replace … with the character in <IMAGE_REF_0>. Remove the overlaid credit text at <位置>. Keep everything else the same: motion, timing, camera, background, lighting, style, in-scene text.」
+   - `clean`：`[video uri, 文字]`：「Remove the overlaid credit text at <位置>. Keep everything else the same.」
+   - `response_format.resolution`：預設 `1080p`。M0 若顯示「720p 加本機放大」畫質相當且比較便宜，就改用那個做法；放大方式（ffmpeg lanczos，或動漫專用的超解析模型）也在 M0 決定。
 3. **校驗**：輸出幀數必須等於輸入幀數；不相等時標示 `conform_mismatch`，不允許通過（可重試）。
-4. **對齊**：把時間戳改回原幀率（例如 23.976），縮放到成片解析度，去掉音軌，存成 `takes/tNNN.mp4`。
+4. **對齊**：把時間戳改回原幀率（例如 23.976），統一成 1920×1080，去掉音軌，存成 `takes/tNNN.mp4`。
 5. **超過 10 秒的分鏡**：拆成 ≤10 秒的段，從第 2 段起加上前一段輸出的尾幀作為額外參考，生成後再接回。拆點優先選在動作較小的位置。
 
 ### 7.5 合成
-依分鏡順序取「通過版本」或原片段，用 ffmpeg concat 接起來（統一編碼參數，重新編碼一次），再 mux 上 `clip/audio.wav`。草稿合成會在畫面角落加上「草稿」浮水印。合成完成後驗證總幀數與節選相同。
+依分鏡順序取「通過版本」或原片段，統一成 1920×1080 後用 ffmpeg concat 接起來（統一編碼參數，重新編碼一次），再 mux 上 `clip/audio.wav`。來源不是 1080p 時，原片段也一起縮放到 1080p。草稿合成會在畫面角落加上「草稿」浮水印。合成完成後驗證總幀數與節選相同、解析度是 1920×1080。
 
 ### 7.6 對比
 - **匯出檔**：ffmpeg `hstack` 把原片和成片左右並排，附原音軌。
@@ -341,6 +360,16 @@ anirecast cost <p> [--shot <id>]
 - 視覺模型的位置框精度是否足以支撐「多人同框只換一人」。
 - 每次請求可以放幾張參考圖、參考圖順序與 `<IMAGE_REF_n>` 的對應關係。
 - PySceneDetect 對閃白和快速剪輯的漏判率；是否需要 M1 就加入 TransNetV2。
+- **去字**：
+  - Omni 能不能乾淨地去掉工作人員字幕，包括字幕壓在角色身上、淡入淡出、捲動字幕的情況；
+  - 場景內文字會不會被誤刪；
+  - 換角和去字放在同一次請求，品質是否會比分兩次差。
+- **1080p**：比較同一個分鏡的三種做法：
+  - Omni `1080p` 輸出；
+  - Omni `720p` 輸出加 ffmpeg lanczos 放大；
+  - Omni `720p` 輸出加動漫超解析模型放大。
+  - 比較項目：與原片相鄰分鏡的清晰度差異、價格、耗時。同時確認上傳 1080p 原片會不會改善結果。
+- Flash 視覺模型分辨「疊加字幕」和「場景內文字」的準確度。
 
 ## 12. 留給 M7（Windows）確認的技術點
 
