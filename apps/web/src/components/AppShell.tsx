@@ -151,7 +151,7 @@ function ProjectNav({ projectRef }: { projectRef: string }) {
           badge={
             <span className="flex gap-1">
               <CountBadge n={summary?.openTasks ?? 0} />
-              <CountBadge n={summary?.needsUser ?? 0} tone="warning" />
+              <CountBadge n={(summary?.needsUser ?? 0) + (summary?.discussions ?? 0)} tone="warning" />
             </span>
           }
         >

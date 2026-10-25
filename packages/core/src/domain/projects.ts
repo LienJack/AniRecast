@@ -1,5 +1,5 @@
 import { AniError, newId } from '@anirecast/shared';
-import { all, type Db, fromJson, one, run, tx } from '../db.ts';
+import { all, type Db, fromJson, one, run, toJson, tx } from '../db.ts';
 import { appendEvent } from '../events.ts';
 import { slugify, uniqueSlug } from '../naming.ts';
 import { getSource } from './sources.ts';
@@ -91,6 +91,38 @@ export function createProject(
       payload: { name: input.name, slug },
     });
     return project;
+  });
+}
+
+/** Merges keys into the project's settings (a key set to null is removed). */
+export function updateProjectSettings(
+  db: Db,
+  ref: string,
+  patch: Record<string, unknown>,
+  actor: string,
+  now: number = Date.now(),
+): Project {
+  return tx(db, () => {
+    const project = getProject(db, ref);
+    const settings: Record<string, unknown> = { ...project.settings };
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null) delete settings[k];
+      else settings[k] = v;
+    }
+    run(db, 'UPDATE projects SET settings_json = :settings, updated_at = :now WHERE id = :id', {
+      id: project.id,
+      settings: toJson(settings),
+      now,
+    });
+    appendEvent(db, {
+      actor,
+      kind: 'project.settings_changed',
+      entityType: 'project',
+      entityId: project.id,
+      projectId: project.id,
+      payload: { keys: Object.keys(patch) },
+    });
+    return getProject(db, project.id);
   });
 }
 

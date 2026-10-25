@@ -1,7 +1,7 @@
 // Stand-in for `codex app-server`: speaks just enough JSON-RPC for the dispatcher and plays Codex by
 // running the real anirecast CLI (from the thread's cwd, as a Codex thread) to finish the task.
 import { spawnSync } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 
@@ -47,6 +47,23 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         method: 'item/agentMessage/delta',
         params: { threadId: params.threadId, delta: `處理 ${taskId}` },
       });
+      const discussion = /Codex 討論 (hof_[0-9a-z]+)/.exec(text)?.[1];
+      const brief = /先讀 (\S+)\/BRIEF\.md/.exec(text)?.[1];
+      if (discussion && brief) {
+        writeFileSync(
+          path.join(brief, 'result.json'),
+          JSON.stringify({
+            summary: 'mock 結論',
+            actions: [{ type: 'style.notes', text: 'thick outlines' }],
+          }),
+        );
+        const r = spawnSync(process.execPath, [CLI, 'codex', 'submit', discussion], {
+          cwd: params.cwd,
+          env: { ...process.env, CODEX_THREAD_ID: params.threadId, CODEX_SANDBOX: 'seatbelt' },
+          encoding: 'utf8',
+        });
+        log({ submit: JSON.parse(r.stdout || 'null'), status: r.status });
+      }
       if (taskId && process.env.MOCK_SKIP_DONE !== '1') {
         const r = spawnSync(process.execPath, [CLI, 'tasks', 'done', taskId, '--note', 'mock note'], {
           cwd: params.cwd,

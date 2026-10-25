@@ -395,6 +395,13 @@ export function projectSummaries(ws: Workspace) {
       renders: renders.length,
       openTasks: tasks.length,
       needsUser: tasks.filter((t) => t.status === 'needs_user').length,
+      // Codex discussions whose conclusion is waiting to be imported.
+      discussions:
+        all<{ n: number }>(
+          ws.db,
+          `SELECT COUNT(*) AS n FROM handoffs WHERE project_id = :projectId AND status = 'submitted'`,
+          { projectId: project.id },
+        )[0]?.n ?? 0,
       step,
     };
   });

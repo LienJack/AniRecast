@@ -14,6 +14,7 @@ import {
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { CompareSlider, type CompareSliderHandle } from '@/components/CompareSlider';
+import { DiscussInCodex } from '@/components/codex';
 import {
   ConfirmDialog,
   EmptyState,
@@ -467,6 +468,16 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
         }
         actions={
           <>
+            <DiscussInCodex
+              projectRef={projectRef}
+              targetType={current ? (target?.type ?? 'shot') : 'shot'}
+              targetId={current?.id ?? shot.id}
+              what={
+                current
+                  ? `分鏡 #${shot.orderIndex + 1} 的${target?.type === 'board' ? '分鏡圖' : '分鏡視頻'} v${current.version}`
+                  : `分鏡 #${shot.orderIndex + 1}`
+              }
+            />
             <OpenInCodex threadId={d.codexThreadId} />
             <Button
               size="sm"

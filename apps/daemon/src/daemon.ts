@@ -19,6 +19,7 @@ import { createProvider, type Provider } from '@anirecast/providers';
 import { AniError } from '@anirecast/shared';
 import { type ServerType, serve } from '@hono/node-server';
 import type { CodexCommand } from './codex/binary.ts';
+import { CodexDiscussions } from './codex/discussions.ts';
 import { AgentDispatcher } from './codex/dispatcher.ts';
 import { EventsHub } from './events-hub.ts';
 import { createHandlers } from './handlers/index.ts';
@@ -131,6 +132,13 @@ export async function startDaemon(options: StartOptions): Promise<DaemonHandle> 
     : undefined;
   dispatcher?.start();
   log(`codex auto-dispatch: ${dispatcher ? 'on' : 'off'}`);
+  // Discussions work whether or not auto-dispatch is on: the human asks for each one.
+  const discussions = new CodexDiscussions({
+    workspace,
+    config,
+    log,
+    command: typeof options.dispatch === 'object' ? options.dispatch.command : undefined,
+  });
 
   const app = createApp({
     workspace,
@@ -138,6 +146,7 @@ export async function startDaemon(options: StartOptions): Promise<DaemonHandle> 
     runner,
     startedAt,
     dispatcher,
+    discussions,
     onSwitchWorkspace: () => {
       log('workspace switched; restarting');
       void stop().then(() => process.exit(0));
@@ -165,6 +174,7 @@ export async function startDaemon(options: StartOptions): Promise<DaemonHandle> 
     stopped = true;
     clearInterval(heartbeatTimer);
     dispatcher?.stop();
+    discussions.stop();
     await runner.stop();
     hub.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));

@@ -1,6 +1,7 @@
 import { Link, useParams } from '@tanstack/react-router';
 import { RotateCcwIcon, SquareIcon } from 'lucide-react';
 import { useState } from 'react';
+import { DiscussionBadge } from '@/components/codex';
 import { EmptyState, ErrorState, Loading, PageHeader, Tag } from '@/components/common';
 import { ActorLink, TaskCard } from '@/components/domain';
 import { Button } from '@/components/ui/button';
@@ -14,6 +15,7 @@ import {
   qk,
   useAction,
   useCost,
+  useDiscussions,
   useHealth,
   useJobs,
   useOverview,
@@ -201,10 +203,66 @@ export function ProjectTasksPage() {
   const overview = useOverview(ref);
   if (overview.isPending) return <Loading />;
   if (overview.isError) return <ErrorState error={overview.error} />;
-  return <TasksPage projectId={overview.data.project.id} projectName={overview.data.project.name} />;
+  return (
+    <TasksPage
+      projectId={overview.data.project.id}
+      projectName={overview.data.project.name}
+      projectRef={ref}
+    />
+  );
 }
 
-export function TasksPage({ projectId, projectName }: { projectId?: string; projectName?: string } = {}) {
+/** The project's Codex discussions, newest first; a conclusion waiting to be imported stands out. */
+function DiscussionsCard({ projectRef }: { projectRef: string }) {
+  const discussions = useDiscussions(projectRef);
+  const [showClosed, setShowClosed] = useState(false);
+  const list = (discussions.data ?? []).filter((h) => showClosed || h.status !== 'closed');
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Codex 討論</CardTitle>
+        <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setShowClosed((v) => !v)}>
+          {showClosed ? '隱藏已結束' : '包含已結束'}
+        </Button>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {discussions.isError ? <ErrorState error={discussions.error} className="m-0" /> : null}
+        {list.map((h) => (
+          <Link
+            key={h.id}
+            to="/projects/$ref/codex/$discussionId"
+            params={{ ref: projectRef, discussionId: h.id }}
+            className="flex flex-col gap-1 rounded-md border bg-background/40 p-2.5 hover:border-foreground/30"
+          >
+            <span className="flex items-center gap-1.5">
+              <DiscussionBadge status={h.status} />
+              <span className="truncate font-medium text-xs">{h.targetLabel}</span>
+              <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+                {formatAgo(h.updatedAt)}
+              </span>
+            </span>
+            <span className="line-clamp-2 text-muted-foreground text-xs">{h.topic}</span>
+          </Link>
+        ))}
+        {discussions.data && !list.length ? (
+          <span className="text-muted-foreground text-xs">
+            還沒有討論。遇到一句意見說不清的問題，在分鏡、角色設計或角色頁按「和 Codex 討論」。
+          </span>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+export function TasksPage({
+  projectId,
+  projectName,
+  projectRef,
+}: {
+  projectId?: string;
+  projectName?: string;
+  projectRef?: string;
+} = {}) {
   const allJobs = useJobs();
   const allTasks = useTasks();
   const projects = useProjects();
@@ -234,7 +292,7 @@ export function TasksPage({ projectId, projectName }: { projectId?: string; proj
     <div className="flex flex-col">
       <PageHeader
         title={projectName ? `任務中心 · ${projectName}` : '任務中心'}
-        description="這個項目的背景任務（偵測、生成、合成）、Codex Agent 任務和成本。"
+        description="這個項目的背景任務（偵測、生成、合成）、Codex 討論、Codex Agent 任務和成本。"
       />
       <div className="grid gap-4 p-5 xl:grid-cols-[minmax(0,1fr)_380px]">
         <Card className="min-w-0">
@@ -278,6 +336,7 @@ export function TasksPage({ projectId, projectName }: { projectId?: string; proj
           </CardContent>
         </Card>
         <div className="flex flex-col gap-4">
+          {projectRef ? <DiscussionsCard projectRef={projectRef} /> : null}
           <Card>
             <CardHeader>
               <CardTitle>Agent 任務</CardTitle>

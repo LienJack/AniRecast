@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { ExternalLinkIcon, LockIcon, SendIcon, XIcon } from 'lucide-react';
 import { useState } from 'react';
+import { DiscussInCodex } from '@/components/codex';
 import { Tag, Thumb } from '@/components/common';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -183,15 +184,24 @@ export function TaskCard({
             placeholder="回覆 Codex…"
             className="min-h-12 text-xs"
           />
-          <Button
-            size="sm"
-            className="self-end"
-            disabled={!answer.trim() || answerTask.isPending}
-            onClick={() => answerTask.mutate(answer.trim())}
-          >
-            <SendIcon />
-            回覆
-          </Button>
+          <div className="flex flex-wrap justify-end gap-1.5">
+            <DiscussInCodex
+              projectRef={task.projectId}
+              targetType="task"
+              targetId={task.id}
+              what="這個任務"
+              label="改到 Codex 討論"
+              variant="ghost"
+            />
+            <Button
+              size="sm"
+              disabled={!answer.trim() || answerTask.isPending}
+              onClick={() => answerTask.mutate(answer.trim())}
+            >
+              <SendIcon />
+              回覆
+            </Button>
+          </div>
         </div>
       ) : null}
       {task.answer ? <div className="text-muted-foreground text-xs">你的回覆：{task.answer}</div> : null}

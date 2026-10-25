@@ -6,6 +6,8 @@ import type {
   AssetKind,
   CastMember,
   CostSummary,
+  DiscussionView,
+  Handoff,
   Health,
   Job,
   Persona,
@@ -41,6 +43,8 @@ export const qk = {
   tasks: ['tasks'] as const,
   projectTasks: (ref: string) => ['project', ref, 'tasks'] as const,
   designs: (ref: string) => ['project', ref, 'designs'] as const,
+  discussions: (ref: string) => ['project', ref, 'codex'] as const,
+  discussion: (id: string) => ['codex', id] as const,
   cost: ['cost'] as const,
 };
 
@@ -104,6 +108,16 @@ export const useDesigns = (ref: string) =>
   useQuery({
     queryKey: qk.designs(ref),
     queryFn: () => api.get<PersonaDesigns[]>(`/api/projects/${encodeURIComponent(ref)}/designs`),
+  });
+export const useDiscussions = (ref: string) =>
+  useQuery({
+    queryKey: qk.discussions(ref),
+    queryFn: () => api.get<Handoff[]>(`/api/projects/${encodeURIComponent(ref)}/codex`),
+  });
+export const useDiscussion = (id: string) =>
+  useQuery({
+    queryKey: qk.discussion(id),
+    queryFn: () => api.get<DiscussionView>(`/api/codex/${encodeURIComponent(id)}`),
   });
 export const useJobs = () =>
   useQuery({ queryKey: qk.jobs, queryFn: () => api.get<Job[]>('/api/jobs?limit=200') });

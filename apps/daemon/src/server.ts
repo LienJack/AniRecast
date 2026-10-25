@@ -6,6 +6,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { registerRoutes } from './api/routes.ts';
+import type { CodexDiscussions } from './codex/discussions.ts';
 import type { AgentDispatcher } from './codex/dispatcher.ts';
 import type { EventsHub } from './events-hub.ts';
 import type { JobRunner } from './runner.ts';
@@ -16,6 +17,7 @@ export interface ServerDeps {
   runner: JobRunner;
   startedAt: number;
   dispatcher?: AgentDispatcher | undefined;
+  discussions?: CodexDiscussions | undefined;
   /** Exit so launchd restarts the daemon on the newly selected workspace. */
   onSwitchWorkspace?: () => void;
 }
@@ -27,10 +29,11 @@ export function createApp({
   runner,
   startedAt,
   dispatcher,
+  discussions,
   onSwitchWorkspace,
 }: ServerDeps): Hono {
   const app = new Hono();
-  registerRoutes(app, workspace, { onSwitchWorkspace: onSwitchWorkspace ?? (() => {}) });
+  registerRoutes(app, workspace, { onSwitchWorkspace: onSwitchWorkspace ?? (() => {}), discussions });
 
   app.get('/api/health', (c) =>
     c.json({

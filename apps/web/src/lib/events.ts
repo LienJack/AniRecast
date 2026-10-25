@@ -103,6 +103,7 @@ function keysFor(e: AniEvent): QueryKey[] {
   if (t === 'persona') return [['personas'], shot, project];
   if (t === 'agent_task') return e.kind.startsWith('agent.') ? [] : [qk.tasks, project, shot];
   if (t === 'workspace' || t === 'daemon') return [qk.workspace, qk.health];
+  if (t === 'handoff') return [project, ['codex']];
   if (['clip', 'shot', 'board', 'take', 'render', 'cast', 'tracklet', 'look', 'overlay'].includes(t))
     return [project, shot];
   return [project, shot];

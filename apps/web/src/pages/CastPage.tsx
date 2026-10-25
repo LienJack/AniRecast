@@ -13,6 +13,7 @@ import {
   XIcon,
 } from 'lucide-react';
 import { type DragEvent, useState } from 'react';
+import { DiscussInCodex } from '@/components/codex';
 import {
   ConfirmDialog,
   EmptyState,
@@ -652,7 +653,17 @@ export function CastDetailPage() {
       <PageHeader
         title={current.label}
         description="勾選出場片段可以拆成新角色、改歸屬或標成不是角色；把片段拖到「改歸屬到」也行。你的修正會鎖定。"
-        actions={back}
+        actions={
+          <>
+            <DiscussInCodex
+              projectRef={ref}
+              targetType="cast"
+              targetId={current.id}
+              what={`角色「${current.label}」`}
+            />
+            {back}
+          </>
+        }
       />
       <div className="flex flex-col gap-3 p-5">
         <CastCard

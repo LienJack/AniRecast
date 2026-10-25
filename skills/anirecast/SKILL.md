@@ -1,7 +1,7 @@
 ---
 
 name: anirecast
-description: Operate an AniRecast workspace (replacing characters in anime openings shot by shot) through the `anirecast` CLI, and process AniRecast agent tasks — review feedback on storyboard frames or shot videos, and same-person identification checks. Use inside an AniRecast workspace, or when asked to handle AniRecast feedback, shots, cast, personas, boards, takes or renders.
+description: Operate an AniRecast workspace (replacing characters in anime openings shot by shot) through the `anirecast` CLI, process AniRecast agent tasks — review feedback on storyboard frames, shot videos or character designs, same-person and shot-boundary checks — and hold Codex discussions (`hof_…`) with the human. Use inside an AniRecast workspace, or when asked to handle AniRecast feedback, shots, cast, personas, boards, takes or renders.
 ---
 
 # AniRecast
@@ -15,6 +15,8 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
 - Run commands from the workspace root (it contains `anirecast.workspace.json`). Every command prints one
   JSON object on stdout: `{"ok":true,"data":…}` or `{"ok":false,"error":{code,message,hint}}`. Progress is on stderr.
 - Only use the CLI. Never edit, move or delete files under `sources/`, `projects/`, `library/` or the database.
+  The one exception is a Codex discussion's own folder (`projects/<project>/codex/<id>/`): write `result.json`
+  there and keep scratch files in its `work/`.
 - You have no network. If a command says `daemon_not_running`, stop and tell the human.
 - Never approve a version. Approval is the human's call; say what you recommend instead.
 - `budget_exceeded`: stop and ask. `provider_rejected` (often a content filter): rephrase at most twice, then
@@ -85,6 +87,25 @@ merged. Each comes with a sheet: two frames before the cut, a red bar, two frame
 - A cut someone already decided by hand is locked (`anirecast shots boundaries <project>` shows `locked`); leave it.
 - Finish with `anirecast tasks done <task> --note "…"` listing what you merged, kept and split.
 
+## Codex discussions (Codex 討論)
+
+A discussion is not a task. The human exported a hard problem from the web (a shot that keeps being blocked, a
+character design, the style of the whole project…) to talk it through with you over several rounds, in this
+thread or one they opened themselves. It has an id `hof_…` and a folder with `BRIEF.md` (the question, the
+current state, image paths, the result format) and `context.json`.
+
+1. Read `BRIEF.md` and look at the images. Reply in Traditional Chinese: what the problem is, your judgement, and
+   2–3 options with their cost, quota use and risk. Then stop and wait for the human. Do not act on your own.
+2. Keep discussing until the human agrees on what to do. Anything that sends a model request (design, board or
+   take generation) needs the human's go-ahead first, with a rough cost; then you may try it with the CLI
+   (`--wait`) and look at the result together. Quota, budget and safety-block rules apply as always.
+3. Do not approve (the CLI refuses) and do not run `anirecast tasks done` / `tasks ask` here.
+4. When the human agrees, write the conclusion to `result.json` in the discussion folder: a `summary` for the
+   human, `actions` to import (format and action types in `BRIEF.md`; ids must exist in the project) and
+   `versions` you generated while discussing. Then `anirecast codex submit <hof_id>`. If it lists problems,
+   fix the file and submit again; the last submission wins. Tell the human it is ready to import in the web.
+5. The human ticks which actions to import. Recommend approving a version with an `approve` action; they decide.
+
 ## Writing prompt revisions
 
 - Short and concrete; prompts that describe too much change too much. End with "Keep everything else the same."
@@ -106,4 +127,5 @@ anirecast cost <project>                    # spend so far
 anirecast quota                             # requests left today per model (Omni: 100/day on API tier 2)
 anirecast shots boundaries <project>        # every cut: same moment or cut, who decided, how sure
 anirecast design list <project>             # character designs: note, latest and approved sheet per kind
+anirecast codex show <hof_id>               # a discussion: question, folder, submitted result, what was imported
 ```

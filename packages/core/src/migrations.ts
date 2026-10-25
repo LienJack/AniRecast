@@ -518,6 +518,30 @@ ALTER TABLE shots ADD COLUMN lighting TEXT;
 ALTER TABLE takes ADD COLUMN segment_id TEXT;
 `,
   },
+  {
+    version: 6,
+    name: 'codex discussions',
+    // A hard problem taken to its own multi-round Codex conversation. The conclusion comes back as actions the
+    // human ticks and imports. target_type has no CHECK: new kinds of things to discuss keep coming.
+    sql: `
+CREATE TABLE handoffs (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  target_type TEXT NOT NULL,
+  target_id TEXT,
+  topic TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('open', 'submitted', 'imported', 'closed')),
+  dir TEXT NOT NULL,
+  thread_id TEXT,
+  result_json TEXT,
+  applied_json TEXT,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX handoffs_project ON handoffs(project_id, status);
+`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

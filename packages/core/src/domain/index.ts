@@ -7,6 +7,7 @@ export * from './codex.ts';
 export * from './costs.ts';
 export * from './designs.ts';
 export * from './generation.ts';
+export * from './handoffs.ts';
 export * from './identity.ts';
 export * from './modes.ts';
 export * from './overlays.ts';

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { registerCast } from './commands/cast.ts';
+import { registerCodex } from './commands/codex.ts';
 import { registerDoctor } from './commands/doctor.ts';
 import { registerGenerate } from './commands/generate.ts';
 import { registerJobs } from './commands/jobs.ts';
@@ -26,6 +27,7 @@ registerJobs(program);
 registerMedia(program);
 registerCast(program);
 registerGenerate(program);
+registerCodex(program);
 registerDoctor(program);
 registerServe(program);
 registerSetup(program);

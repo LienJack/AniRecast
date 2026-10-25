@@ -9,6 +9,7 @@ import {
   WandIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { DiscussInCodex } from '@/components/codex';
 import { EmptyState, ErrorState, Loading, PageHeader, Tag, Thumb } from '@/components/common';
 import { ActorLink, VersionBadge } from '@/components/domain';
 import { Button } from '@/components/ui/button';
@@ -189,6 +190,14 @@ function SheetPanel({
               <RefreshCwIcon />
               重新生成
             </Button>
+            <DiscussInCodex
+              projectRef={projectRef}
+              targetType="design"
+              targetId={v.id}
+              what={`${personaName} 的${text.title} v${v.version}`}
+              label="Codex 討論"
+              variant="ghost"
+            />
           </div>
           <Textarea
             value={comment}
@@ -315,6 +324,12 @@ function PersonaCard({
               物料庫原圖
             </Link>
           </Button>
+          <DiscussInCodex
+            projectRef={projectRef}
+            targetType="persona"
+            targetId={persona.id}
+            what={`${persona.name} 的角色設計`}
+          />
           {missing ? (
             <Button size="sm" disabled={generateAll.isPending} onClick={() => generateAll.mutate(undefined)}>
               <SparklesIcon />

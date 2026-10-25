@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -8,10 +8,13 @@ import {
   addPersonaImage,
   answerAgentTask,
   apiKeySource,
+  applyHandoff,
   assertQuota,
   assignTracklet,
   cancelAgentTask,
+  closeHandoff,
   createClip,
+  createHandoff,
   createPersona,
   createProject,
   createRender,
@@ -22,14 +25,19 @@ import {
   findActiveClip,
   type GenerationTier,
   getActiveClip,
+  getAgentTask,
+  getBoard,
   getCastMember,
   getDesign,
+  getHandoff,
   getJob,
   getPersona,
   getProject,
   getRender,
   getSource,
   getTake,
+  type HandoffTarget,
+  handoffPrompt,
   initWorkspace,
   inspectWorkspace,
   type KeyedProvider,
@@ -37,6 +45,7 @@ import {
   latestEventSeq,
   listAgentTasks,
   listCast,
+  listHandoffs,
   listJobs,
   listPersonas,
   listProjects,
@@ -59,6 +68,7 @@ import {
   queueStillTake,
   queueTake,
   quotaOverview,
+  readHandoffResultFile,
   readLock,
   recomputeShotModes,
   rememberWorkspace,
@@ -78,6 +88,7 @@ import {
   spendBreakdown,
   splitCast,
   splitShot,
+  submitHandoff,
   submitReview,
   TIERS,
   taskContext,
@@ -91,6 +102,7 @@ import {
 import { parseTimecode, probe } from '@anirecast/media';
 import { AniError, type ErrorCode, toEnvelopeError } from '@anirecast/shared';
 import type { Context, Hono } from 'hono';
+import type { CodexDiscussions } from '../codex/discussions.ts';
 import { serveWorkspaceFile } from './files.ts';
 
 const USER = 'user';
@@ -158,7 +170,11 @@ function shotsForMode(
  * JSON API for the Web UI. Every mutation uses the same core use cases as the CLI, with actor "user".
  * `onSwitchWorkspace` lets the process restart onto another workspace (launchd brings it back).
  */
-export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspace: () => void }): void {
+export function registerRoutes(
+  app: Hono,
+  ws: Workspace,
+  opts: { onSwitchWorkspace: () => void; discussions?: CodexDiscussions | undefined },
+): void {
   // ---- workspace -------------------------------------------------------------------------------
   app.get('/api/workspace', (c) =>
     handle(c, () => {
@@ -658,6 +674,88 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
   );
 
   // ---- tasks, jobs, cost -----------------------------------------------------------------------
+  // ---- Codex discussions: export a hard problem to its own Codex thread, import the conclusion ---------
+  const discussionView = (handoffId: string) => {
+    const h = getHandoff(ws.db, handoffId);
+    const id = h.targetId;
+    const targetShotId = !id
+      ? null
+      : h.targetType === 'shot'
+        ? id
+        : h.targetType === 'board'
+          ? getBoard(ws.db, id).shotId
+          : h.targetType === 'take'
+            ? getTake(ws.db, id).shotId
+            : h.targetType === 'task'
+              ? getAgentTask(ws.db, id).shotId
+              : null;
+    return {
+      handoff: h,
+      prompt: handoffPrompt(ws, h),
+      folder: ws.abs(h.dir),
+      resultFileExists: existsSync(ws.abs(`${h.dir}/result.json`)),
+      targetShotId,
+    };
+  };
+  const openThread = async (id: string) => {
+    if (!opts.discussions) return { threadId: null, openError: 'Codex 對話服務沒有啟動' };
+    try {
+      return { threadId: (await opts.discussions.open(id)).threadId, openError: null };
+    } catch (error) {
+      const e = toEnvelopeError(error);
+      return { threadId: null, openError: e.hint ? `${e.message}（${e.hint}）` : e.message };
+    }
+  };
+  app.get('/api/projects/:ref/codex', (c) =>
+    handle(c, () => listHandoffs(ws.db, getProject(ws.db, c.req.param('ref')).id)),
+  );
+  app.post('/api/projects/:ref/codex', async (c) =>
+    handle(c, async () => {
+      const b = await body<{
+        targetType: HandoffTarget;
+        targetId?: string;
+        topic: string;
+        openThread?: boolean;
+      }>(c);
+      const h = createHandoff(ws, {
+        projectRef: c.req.param('ref'),
+        targetType: b.targetType,
+        targetId: b.targetId ?? null,
+        topic: b.topic ?? '',
+        actor: USER,
+      });
+      const opened = b.openThread === false ? { threadId: null, openError: null } : await openThread(h.id);
+      return { ...discussionView(h.id), ...opened };
+    }),
+  );
+  app.get('/api/codex/:id', (c) => handle(c, () => discussionView(c.req.param('id'))));
+  app.post('/api/codex/:id/open', (c) =>
+    handle(c, async () => ({
+      ...(await openThread(c.req.param('id'))),
+      ...discussionView(c.req.param('id')),
+    })),
+  );
+  app.post('/api/codex/:id/reload', (c) =>
+    handle(c, () => {
+      const h = getHandoff(ws.db, c.req.param('id'));
+      submitHandoff(ws, h.id, readHandoffResultFile(ws, h), USER);
+      return discussionView(h.id);
+    }),
+  );
+  app.post('/api/codex/:id/import', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ indices?: number[] }>(c);
+      applyHandoff(ws, c.req.param('id'), { ...(b.indices ? { indices: b.indices } : {}), actor: USER });
+      return discussionView(c.req.param('id'));
+    }),
+  );
+  app.post('/api/codex/:id/close', (c) =>
+    handle(c, () => {
+      closeHandoff(ws.db, c.req.param('id'), USER);
+      return discussionView(c.req.param('id'));
+    }),
+  );
+
   app.get('/api/tasks', (c) => {
     const status = c.req.query('status') as AgentTaskStatus | undefined;
     const ref = c.req.query('project');

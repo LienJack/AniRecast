@@ -7,6 +7,8 @@ import {
   createProject,
   createSource,
   getAgentTask,
+  getHandoff,
+  getProject,
   initWorkspace,
   openWorkspace,
   updateSource,
@@ -41,7 +43,7 @@ async function setup() {
     log: () => {},
   });
   cleanups.push(() => daemon.stop());
-  return { root, projectId: project.id, mockLog: process.env.MOCK_LOG };
+  return { root, projectId: project.id, mockLog: process.env.MOCK_LOG, url: daemon.url };
 }
 
 async function waitFor<T>(fn: () => T | undefined, timeoutMs = 20_000): Promise<T> {
@@ -136,6 +138,48 @@ describe('codex dispatcher (mock app-server)', () => {
         return x.status === 'needs_user' ? x : undefined;
       });
       expect(t.question).toMatch(/沒有標記完成/);
+    } finally {
+      ws.close();
+    }
+  }, 40_000);
+});
+
+describe('codex discussions (mock app-server)', () => {
+  it("opens a named thread, returns before the kickoff ends, and imports only on the human's request", async () => {
+    const { root, projectId, mockLog, url } = await setup();
+    const res = await fetch(`${url}/api/projects/${projectId}/codex`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ targetType: 'project', topic: '整體畫風怎麼統一？' }),
+    });
+    const created = (await res.json()) as {
+      data: { handoff: { id: string }; threadId: string | null; openError: string | null; folder: string };
+    };
+    expect(created.data.openError).toBeNull();
+    expect(created.data.threadId).toMatch(/^thr_mock_/);
+    const id = created.data.handoff.id;
+
+    // The mock plays Codex in the kickoff turn: it writes result.json and runs `anirecast codex submit`.
+    const ws = openWorkspace(root, { role: 'cli' });
+    try {
+      const submitted = await waitFor(() => {
+        const h = getHandoff(ws.db, id);
+        return h.status === 'submitted' ? h : undefined;
+      });
+      expect(submitted.result?.submittedBy).toBe(`codex:${created.data.threadId}`);
+      const calls = readFileSync(mockLog, 'utf8')
+        .trim()
+        .split('\n')
+        .map((l) => JSON.parse(l));
+      const named = calls.filter((c) => c.method === 'thread/name/set').map((c) => c.params.name);
+      expect(named).toContain('AniRecast · Dispatch · 討論 · 整個項目');
+      expect(calls.some((c) => c.method === 'thread/resume')).toBe(false);
+
+      const imported = await fetch(`${url}/api/codex/${id}/import`, { method: 'POST', body: '{}' });
+      expect(((await imported.json()) as { data: { handoff: { status: string } } }).data.handoff.status).toBe(
+        'imported',
+      );
+      expect(getProject(ws.db, projectId).settings.styleNotes).toBe('thick outlines');
     } finally {
       ws.close();
     }

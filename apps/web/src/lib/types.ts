@@ -6,6 +6,7 @@ import type {
   AgentTask,
   Board,
   designOverview,
+  Handoff,
   Job,
   LocalConfig,
   LockInfo,
@@ -29,6 +30,10 @@ export type {
   Design,
   DesignKind,
   GenerationTier,
+  Handoff,
+  HandoffResult,
+  HandoffStatus,
+  HandoffTarget,
   InspectResult,
   Job,
   JobStatus,
@@ -140,4 +145,15 @@ export interface SettingsInfo {
   budget: LocalConfig['budget'];
   codex: { autoDispatch: boolean };
   quota: QuotaStatus[];
+}
+
+/** `GET /api/codex/:id`: a Codex discussion with what the page needs around it. */
+export interface DiscussionView {
+  handoff: Handoff;
+  prompt: string;
+  folder: string;
+  resultFileExists: boolean;
+  targetShotId: string | null;
+  threadId?: string | null;
+  openError?: string | null;
 }

@@ -24,6 +24,7 @@ const page = {
   cast: lazyRouteComponent(() => import('@/pages/CastPage'), 'CastPage'),
   castDetail: lazyRouteComponent(() => import('@/pages/CastPage'), 'CastDetailPage'),
   design: lazyRouteComponent(() => import('@/pages/DesignPage'), 'DesignPage'),
+  discussion: lazyRouteComponent(() => import('@/pages/DiscussionPage'), 'DiscussionPage'),
   reviewIndex: lazyRouteComponent(() => import('@/pages/ReviewPage'), 'ReviewIndexPage'),
   review: lazyRouteComponent(() => import('@/pages/ReviewPage'), 'ReviewPage'),
   renders: lazyRouteComponent(() => import('@/pages/RendersPage'), 'RendersPage'),
@@ -111,6 +112,11 @@ const designRoute = createRoute({
   path: 'design',
   component: page.design,
 });
+const discussionRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'codex/$discussionId',
+  component: page.discussion,
+});
 const reviewIndexRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: 'review',
@@ -145,6 +151,7 @@ const routeTree = rootRoute.addChildren([
     castRoute,
     castDetailRoute,
     designRoute,
+    discussionRoute,
     reviewIndexRoute,
     reviewRoute,
     rendersRoute,

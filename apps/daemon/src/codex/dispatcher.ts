@@ -48,6 +48,48 @@ export interface DispatcherOptions {
 
 const ACTOR = 'dispatcher';
 
+/** Starts `codex app-server` for the workspace; `anirecast` and `node` must resolve inside Codex's sandboxed shell. */
+export async function startCodexClient(
+  workspace: Workspace,
+  command: CodexCommand,
+): Promise<AppServerClient> {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: [path.join(REPO_ROOT, 'bin'), path.dirname(process.execPath), process.env.PATH ?? ''].join(
+      path.delimiter,
+    ),
+  };
+  delete env.CODEX_SANDBOX;
+  const client = new AppServerClient({
+    command: command.command,
+    args: command.args,
+    env,
+    cwd: workspace.root,
+  });
+  await client.start();
+  return client;
+}
+
+/** The Codex desktop project whose root is the workspace or one of its ancestors (experimental API). */
+export async function desktopProjectId(client: AppServerClient, root: string): Promise<string | null> {
+  const res = await client.request<{ data: Array<{ id: string; roots: Array<{ path: string }> }> }>(
+    'project/list',
+    {
+      limit: 200,
+    },
+  );
+  const match = res.data
+    .flatMap((p) => p.roots.map((r) => ({ id: p.id, root: path.resolve(r.path) })))
+    .filter((p) => root === p.root || root.startsWith(`${p.root}${path.sep}`))
+    .sort((a, b) => b.root.length - a.root.length)[0];
+  return match?.id ?? null;
+}
+
+export const codexCommandMissing = () =>
+  new AniError('dependency_missing', 'Codex CLI not found', {
+    hint: 'Install the Codex desktop app or CLI, or set codex.binPath.',
+  });
+
 /** Hands open agent tasks to Codex through `codex app-server`, one turn at a time (design §8.4). */
 export class AgentDispatcher {
   private readonly opts: Required<Omit<DispatcherOptions, 'command'>> & { command: CodexCommand | undefined };
@@ -127,27 +169,9 @@ export class AgentDispatcher {
   private async ensureClient(): Promise<AppServerClient> {
     if (this.client && !this.client.exited) return this.client;
     const command = this.opts.command ?? resolveCodexCommand(this.opts.config.codex.binPath);
-    if (!command) {
-      throw new AniError('dependency_missing', 'Codex CLI not found', {
-        hint: 'Install the Codex desktop app or CLI, or set codex.binPath.',
-      });
-    }
+    if (!command) throw codexCommandMissing();
     this.status.codex = { command: command.command, version: command.version, source: command.source };
-    // `anirecast` and `node` must resolve inside Codex's sandboxed shell.
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      PATH: [path.join(REPO_ROOT, 'bin'), path.dirname(process.execPath), process.env.PATH ?? ''].join(
-        path.delimiter,
-      ),
-    };
-    delete env.CODEX_SANDBOX;
-    const client = new AppServerClient({
-      command: command.command,
-      args: command.args,
-      env,
-      cwd: this.opts.workspace.root,
-    });
-    await client.start();
+    const client = await startCodexClient(this.opts.workspace, command);
     client.onNotification((n) => {
       if (n.method === 'account/rateLimits/updated') this.status.rateLimits = n.params;
     });
@@ -161,16 +185,8 @@ export class AgentDispatcher {
     if (this.projectId !== undefined) return this.projectId;
     const root = this.opts.workspace.root;
     try {
-      const res = await client.request<{ data: Array<{ id: string; roots: Array<{ path: string }> }> }>(
-        'project/list',
-        { limit: 200 },
-      );
-      const match = res.data
-        .flatMap((p) => p.roots.map((r) => ({ id: p.id, root: path.resolve(r.path) })))
-        .filter((p) => root === p.root || root.startsWith(`${p.root}${path.sep}`))
-        .sort((a, b) => b.root.length - a.root.length)[0];
-      this.projectId = match?.id ?? null;
-      if (!match)
+      this.projectId = await desktopProjectId(client, root);
+      if (!this.projectId)
         this.event('agent.warning', null, {
           message:
             'Workspace is not under any Codex desktop project; threads will appear under Recent instead.',

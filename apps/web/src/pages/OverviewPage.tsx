@@ -2,6 +2,7 @@ import { Link, useParams } from '@tanstack/react-router';
 import { CheckCircle2Icon, CircleDashedIcon, CircleDotIcon, ImageIcon, VideoIcon } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { DiscussInCodex } from '@/components/codex';
 import { ConfirmDialog, EmptyState, ErrorState, Loading, PageHeader, Tag, Thumb } from '@/components/common';
 import { ModeBadge, StageBadge, TaskCard } from '@/components/domain';
 import { Button } from '@/components/ui/button';
@@ -127,6 +128,7 @@ export function OverviewPage() {
         }
         actions={
           <>
+            <DiscussInCodex projectRef={ref} targetType="project" what="整個項目" />
             <span className="text-muted-foreground text-xs">生成檔位</span>
             <Select value={tier} onValueChange={(v) => setTier.mutate(v as GenerationTier)}>
               <SelectTrigger size="sm" aria-label="生成檔位">
