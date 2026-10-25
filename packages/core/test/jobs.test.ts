@@ -78,6 +78,17 @@ describe('jobs', () => {
     ws.close();
   });
 
+  it('does not retry an interrupted job whose cancel was already requested', () => {
+    const ws = fresh();
+    const { db } = ws;
+    const job = enqueueJob(db, { type: 'x', lane: 'io', requestedBy: 'user' });
+    claimNextJob(db, 'io', 'dead-worker');
+    requestCancel(db, job.id, 'user');
+    expect(recoverInterruptedJobs(db)).toBe(1);
+    expect(getJob(db, job.id).status).toBe('cancelled');
+    ws.close();
+  });
+
   it('sees a job enqueued by another process while holding the database open', () => {
     const ws = fresh();
     const dbFile = path.join(ws.root, 'anirecast.db');

@@ -305,6 +305,11 @@ export function listJobs(db: Db, filter: ListJobsFilter = {}): Job[] {
 export function recoverInterruptedJobs(db: Db): number {
   const stuck = all<JobRow>(db, `SELECT * FROM jobs WHERE status = 'running'`);
   for (const row of stuck) {
+    // A cancel that the worker never got to observe (e.g. stuck in a blocking read) still wins.
+    if (row.cancel_requested === 1) {
+      markCancelled(db, row.id);
+      continue;
+    }
     // One free retry for an interruption; a job that keeps killing the daemon fails on its second run.
     const retryable = row.attempts < 2;
     if (retryable) {
