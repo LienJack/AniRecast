@@ -1,0 +1,25 @@
+{
+  "name": "anirecast",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "anirecast": "node --disable-warning=ExperimentalWarning packages/cli/src/main.ts",
+    "daemon": "node --disable-warning=ExperimentalWarning apps/daemon/src/main.ts",
+    "dev:web": "pnpm --filter @anirecast/web dev",
+    "build:web": "pnpm --filter @anirecast/web build",
+    "typecheck": "tsc -p tsconfig.json && pnpm --filter @anirecast/web typecheck",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "format": "biome check --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.3",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
