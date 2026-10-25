@@ -568,7 +568,7 @@ export function CastPage() {
               size="sm"
               variant="outline"
               disabled={tidy.isPending}
-              title="JEV 看每個角色和每個造型的裁切：同一人合併、相同服裝的造型合併、混進來的別人交給 Codex（約 USD 0.02）"
+              title="JEV 看每個角色和每個造型的裁切：同一人合併、相同服裝的造型合併、混進來的別人交給 Codex（約 USD 0.1）"
               onClick={() => tidy.mutate(undefined)}
             >
               <CombineIcon />用 JEV 合併相似角色與造型
