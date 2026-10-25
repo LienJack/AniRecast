@@ -102,6 +102,9 @@ importers:
 
   packages/providers:
     dependencies:
+      '@anirecast/media':
+        specifier: workspace:*
+        version: link:../media
       '@anirecast/shared':
         specifier: workspace:*
         version: link:../shared

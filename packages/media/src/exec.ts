@@ -64,9 +64,13 @@ export function exec(cmd: string, args: string[], opts: ExecOptions = {}): Promi
       if (code === 0) return resolve({ stdout, stderr });
       const tail = stderr.trim().split('\n').slice(-8).join('\n');
       reject(
-        new AniError('internal', `${cmd} exited with code ${code}`, {
-          details: { args, stderr: tail, stdout: stdout.slice(-4000) },
-        }),
+        new AniError(
+          'internal',
+          `${cmd} exited with code ${code}${tail ? `: ${tail.split('\n').at(-1)}` : ''}`,
+          {
+            details: { args, stderr: tail, stdout: stdout.slice(-4000) },
+          },
+        ),
       );
     });
   });

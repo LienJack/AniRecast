@@ -1,0 +1,58 @@
+import type { ImageSize, Usage, VideoResolution } from './types.ts';
+
+/** USD per 1M tokens, from ai.google.dev pricing (checked 2026-10-25; Flash prices rise 2027-01-01). */
+const TOKEN_PRICES: Record<string, { input: number; output: number }> = {
+  'gemini-omni-1.1-flash': { input: 1.5, output: 17.5 },
+  'gemini-omni-flash-preview': { input: 1.5, output: 17.5 },
+  'gemini-nano-banana-2.1': { input: 1.5, output: 0 },
+  'gemini-3.8-flash': { input: 0.75, output: 3.75 },
+  'gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
+};
+
+/** Per-image output price for Nano Banana 2.1. */
+export const IMAGE_PRICE: Record<ImageSize, number> = { '1K': 0.0336, '2K': 0.0504, '4K': 0.113 };
+
+/**
+ * Omni output tokens per second. 360p and 720p are measured (2026-10-25: 1,931 and 5,792);
+ * 1080p and 4k are not published or measured yet, so they reuse 720p as a floor. 480p is rejected by the API.
+ */
+export const OMNI_OUTPUT_TOKENS_PER_SECOND: Record<VideoResolution, number> = {
+  '360p': 1931,
+  '480p': 1931,
+  '720p': 5792,
+  '1080p': 5792,
+  '4k': 5792,
+};
+/** Uploaded video input tokens per second, measured by input height (360p: 1,786; 720p: 5,851). */
+export function omniInputTokensPerSecond(inputHeight: number): number {
+  return inputHeight <= 400 ? 1786 : 5851;
+}
+export const OMNI_INPUT_TOKENS_PER_SECOND = 5851;
+
+export function tokenCost(model: string, usage: Pick<Usage, 'inputTokens' | 'outputTokens'>): number {
+  const price = TOKEN_PRICES[model] ?? { input: 1.5, output: 17.5 };
+  return (usage.inputTokens * price.input + usage.outputTokens * price.output) / 1_000_000;
+}
+
+export function imageCost(model: string, size: ImageSize, inputTokens: number): number {
+  return IMAGE_PRICE[size] + tokenCost(model, { inputTokens, outputTokens: 0 });
+}
+
+export function estimateVideoEditCost(
+  model: string,
+  seconds: number,
+  resolution: VideoResolution,
+  refImages = 2,
+): number {
+  const inputTokens = seconds * OMNI_INPUT_TOKENS_PER_SECOND + refImages * 1100 + 200;
+  const outputTokens = seconds * OMNI_OUTPUT_TOKENS_PER_SECOND[resolution];
+  return tokenCost(model, { inputTokens, outputTokens });
+}
+
+export function estimateImageCost(model: string, size: ImageSize, refImages: number): number {
+  return imageCost(model, size, refImages * 1120 + 200);
+}
+
+export function estimateVisionCost(model: string, images: number): number {
+  return tokenCost(model, { inputTokens: images * 1100 + 800, outputTokens: 1500 });
+}

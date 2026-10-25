@@ -7,6 +7,8 @@ export interface LocalConfig {
   workspace: string | null;
   recentWorkspaces: string[];
   daemon: { host: string; port: number };
+  /** `fake` runs the whole pipeline offline at zero cost (tests, dev past the budget). */
+  provider: 'gemini' | 'fake';
   models: { image: string; video: string; vision: string };
   /** Hard cap on paid provider spend recorded in the workspace cost ledger. null = no cap. */
   budget: { capUsd: number | null };
@@ -18,6 +20,7 @@ export const DEFAULT_CONFIG: LocalConfig = {
   workspace: null,
   recentWorkspaces: [],
   daemon: { host: '127.0.0.1', port: 7878 },
+  provider: 'gemini',
   models: { image: 'gemini-nano-banana-2.1', video: 'gemini-omni-1.1-flash', vision: 'gemini-3.8-flash' },
   budget: { capUsd: null },
   concurrency: { generate: 2, media: 2, io: 2 },

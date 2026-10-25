@@ -48,7 +48,7 @@
   - HTTP：`/api/health`、`/api/events`（SSE）。
 - 驗證：整合測試。CLI 排一個 noop job → daemon 執行 → `jobs watch` 看得到完成的 event。
 
-### S4 來源、節選、分鏡 — done: (S4 commit)
+### S4 來源、節選、分鏡 — done: f1d545a
 - 產出：
   - `source import <file>`、`source add <url>`（yt-dlp job）；
   - `project create`；
@@ -57,7 +57,7 @@
   - `shots split|merge|set`。
 - 驗證：用 ffmpeg 合成一支已知剪接點的影片（色塊加 drawtext），斷言剪接點位置、每個分鏡的幀範圍首尾相接，以及幀數總和。
 
-### S5 Provider 層與成本 — done:
+### S5 Provider 層與成本 — done: (S5 commit)
 - 產出：介面 `ImageGen`、`VideoEdit`、`VisionAnalyze`、`FilesUpload`。
   - `fake` 實作：影片做帶色調的重編碼並保持幀數相同；JSON 回傳罐頭資料。
   - `gemini` 實作：Interactions API 與 Files API，去掉 `steps[].signature`。
