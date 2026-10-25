@@ -89,6 +89,24 @@ describe('board prompt: who is on screen', () => {
     expect(prompt).not.toContain('people to replace');
   });
 
+  it('draws the board from the keyframe where the character is, not an empty representative frame', () => {
+    const { ws, projectId, shotId, personaId } = fixture();
+    const late = 'projects/op/kf-late.jpg';
+    writeFileSync(ws.abs(late), 'late frame');
+    setKeyframes(ws.db, shotId, [
+      { frame: 12, role: 'mid', path: 'projects/op/kf.jpg' },
+      { frame: 22, role: 'last', path: late },
+    ]);
+    const girl = createCastMember(ws.db, { projectId, label: 'girl' }, 'daemon');
+    detect(ws, createTracklet(ws.db, { shotId, castMemberId: girl.id }).id, 22, [0.7, 0.1, 0.8, 0.3]);
+    mapCast(ws.db, girl.id, personaId, 'user');
+    recomputeShotModes(ws.db, projectId);
+    const plan = planBoard(ws, shotId);
+    expect(plan.inputs[0]?.path).toBe(late);
+    expect(plan.prompt).toContain('Replace the person on the right');
+    ws.close();
+  });
+
   it('keeps every view of a character in a collage frame', () => {
     const prompt = boardFor((ws, shotId, castId) => {
       for (const x of [0.05, 0.3, 0.55, 0.8])

@@ -8,7 +8,7 @@ import { approvedBoard, getBoard, getTake, type InputRef } from './generation.ts
 import { type Bbox, overlaysToRemove, type TextOverlay } from './overlays.ts';
 import { getPersona, type Persona } from './personas.ts';
 import type { GenerationTier } from './projects.ts';
-import { getShot, listKeyframes, type Shot } from './shots.ts';
+import { getShot, type Keyframe, listKeyframes, type Shot } from './shots.ts';
 import { placeTracklet, replacementSignature } from './signature.ts';
 
 /** Nano Banana 2.1 accepts at most five character reference images per request. */
@@ -34,26 +34,53 @@ const nested = (inner: number[], outer: number[]): boolean => {
   return cx >= outer[0]! && cx <= outer[2]! && cy >= outer[1]! && cy <= outer[3]!;
 };
 
-/**
- * The instances of one character that are actually on screen together, judged at the detection frame closest
- * to the representative frame. One person whose track split during the shot counts once; a collage or
- * character-sheet frame showing them several times counts every view.
- */
-function onScreenTogether(ws: Workspace, shot: Shot, entries: ShotCastEntry[]): ShotCastEntry[] {
-  if (entries.length < 2) return entries;
-  const dets = entries.flatMap((e) =>
+interface Det {
+  entry: ShotCastEntry;
+  frame: number;
+  box: number[] | null;
+}
+
+const area = (b: number[] | null): number => (b ? (b[2]! - b[0]!) * (b[3]! - b[1]!) : 0);
+
+function detectionsOf(ws: Workspace, entries: ShotCastEntry[]): Det[] {
+  return entries.flatMap((e) =>
     all<{ frame: number; head_bbox_json: string | null }>(
       ws.db,
       'SELECT frame, head_bbox_json FROM detections WHERE tracklet_id = :id',
       { id: e.tracklet.id },
     ).map((d) => ({ entry: e, frame: d.frame, box: fromJson<number[] | null>(d.head_bbox_json, null) })),
   );
-  if (dets.length === 0) return entries;
-  const ref = dets.reduce((b, d) =>
-    Math.abs(d.frame - shot.repFrame) < Math.abs(b.frame - shot.repFrame) ? d : b,
-  );
-  const atRef = dets.filter((d) => d.frame === ref.frame).sort((a, b) => area(b.box) - area(a.box));
-  const kept: typeof atRef = [];
+}
+
+/**
+ * The frame the board is drawn from: the keyframe showing the most people to replace, nearest the
+ * representative frame on ties. A character who only walks in late is then on the frame the model sees.
+ */
+function boardKeyframe(ws: Workspace, shot: Shot, dets: Det[]): Keyframe {
+  const frames = listKeyframes(ws.db, shot.id);
+  if (frames.length === 0)
+    throw new AniError('conflict', 'Shot has no keyframes yet', {
+      hint: 'Wait for shot preparation to finish.',
+    });
+  const shown = (frame: number) => new Set(dets.filter((d) => d.frame === frame).map((d) => d.entry)).size;
+  return frames.reduce((best, k) => {
+    const diff = shown(k.frame) - shown(best.frame);
+    if (diff !== 0) return diff > 0 ? k : best;
+    return Math.abs(k.frame - shot.repFrame) < Math.abs(best.frame - shot.repFrame) ? k : best;
+  });
+}
+
+/**
+ * The instances of one character that are on screen together, judged at the detection frame closest to the
+ * board frame. One person whose track split during the shot counts once, and so does one head detected twice
+ * at two sizes; a collage or character-sheet frame showing them several times counts every view.
+ */
+function onScreenTogether(group: ShotCastEntry[], dets: Det[], frame: number): ShotCastEntry[] {
+  const own = dets.filter((d) => group.includes(d.entry));
+  if (group.length < 2 || own.length === 0) return group;
+  const ref = own.reduce((b, d) => (Math.abs(d.frame - frame) < Math.abs(b.frame - frame) ? d : b));
+  const atRef = own.filter((d) => d.frame === ref.frame).sort((a, b) => area(b.box) - area(a.box));
+  const kept: Det[] = [];
   for (const d of atRef) {
     if (kept.some((k) => k.entry === d.entry || (d.box && k.box && nested(d.box, k.box)))) continue;
     kept.push(d);
@@ -61,22 +88,29 @@ function onScreenTogether(ws: Workspace, shot: Shot, entries: ShotCastEntry[]): 
   return kept.map((k) => k.entry);
 }
 
-const area = (b: number[] | null): number => (b ? (b[2]! - b[0]!) * (b[3]! - b[1]!) : 0);
-
-function personasInShot(ws: Workspace, shotId: string, perPersonaCap: number): PersonaUse[] {
-  const shot = getShot(ws.db, shotId);
+/** Who to replace in a shot, grouped by persona, and the keyframe to show the image model. */
+function castInShot(
+  ws: Workspace,
+  shot: Shot,
+  perPersonaCap: number,
+): { uses: PersonaUse[]; keyframe: Keyframe } {
+  const mapped = shotCast(ws.db, shot.id).filter((e) => e.personaId);
+  const dets = detectionsOf(ws, mapped);
+  const keyframe = boardKeyframe(ws, shot, dets);
   const byCast = new Map<string, ShotCastEntry[]>();
-  for (const e of shotCast(ws.db, shotId)) {
-    if (!e.personaId) continue;
+  for (const e of mapped) {
     const key = `${e.personaId}\u0000${e.cast?.id ?? e.tracklet.id}`;
     byCast.set(key, [...(byCast.get(key) ?? []), e]);
   }
   const byPersona = new Map<string, ShotCastEntry[]>();
   for (const group of byCast.values()) {
     const personaId = group[0]!.personaId!;
-    byPersona.set(personaId, [...(byPersona.get(personaId) ?? []), ...onScreenTogether(ws, shot, group)]);
+    byPersona.set(personaId, [
+      ...(byPersona.get(personaId) ?? []),
+      ...onScreenTogether(group, dets, keyframe.frame),
+    ]);
   }
-  return [...byPersona.entries()].map(([personaId, entries]) => {
+  const uses = [...byPersona.entries()].map(([personaId, entries]) => {
     const persona = getPersona(ws.db, personaId);
     if (persona.images.length === 0) {
       throw new AniError('conflict', `Persona "${persona.name}" has no reference image`, {
@@ -85,12 +119,13 @@ function personasInShot(ws: Workspace, shotId: string, perPersonaCap: number): P
     }
     return { persona, entries, imagePaths: persona.images.slice(0, perPersonaCap).map((i) => i.path) };
   });
+  return { uses, keyframe };
 }
 
 /** "the person on the left (long black hair; navy sailor uniform)" — position and looks, not just a name. */
-function describeWho(ws: Workspace, shot: Shot, use: PersonaUse): string {
+function describeWho(ws: Workspace, frame: number, use: PersonaUse): string {
   const parts = use.entries.map((e) => {
-    const placed = placeTracklet(ws.db, e.tracklet.id, shot.repFrame);
+    const placed = placeTracklet(ws.db, e.tracklet.id, frame);
     const where =
       placed.position === 'center'
         ? 'the person in the middle'
@@ -128,18 +163,6 @@ const KEEP_FRAME =
 const KEEP_VIDEO =
   'Keep everything else the same: motion, timing, camera movement, background, lighting and the 2D anime style.';
 
-function repKeyframe(ws: Workspace, shot: Shot): string {
-  const frames = listKeyframes(ws.db, shot.id);
-  if (frames.length === 0)
-    throw new AniError('conflict', 'Shot has no keyframes yet', {
-      hint: 'Wait for shot preparation to finish.',
-    });
-  const nearest = frames.reduce((best, k) =>
-    Math.abs(k.frame - shot.repFrame) < Math.abs(best.frame - shot.repFrame) ? k : best,
-  );
-  return nearest.path;
-}
-
 const withHashes = (ws: Workspace, refs: Array<Omit<InputRef, 'sha256'>>): InputRef[] =>
   refs.map((r) => ({ ...r, sha256: sha256File(ws.abs(r.path)) }));
 
@@ -159,9 +182,9 @@ export function planBoard(
   if (shot.mode !== 'replace')
     throw new AniError('conflict', `Shot ${shotId} is ${shot.mode}; boards are for replace shots`);
   const base = opts.fromBoardId ? getBoard(ws.db, opts.fromBoardId) : undefined;
-  const uses = personasInShot(ws, shotId, 2);
+  const { uses, keyframe } = castInShot(ws, shot, 2);
   if (uses.length === 0) throw new AniError('conflict', 'No persona is mapped to anyone in this shot');
-  const refs: Array<Omit<InputRef, 'sha256'>> = [{ role: 'frame', path: repKeyframe(ws, shot) }];
+  const refs: Array<Omit<InputRef, 'sha256'>> = [{ role: 'frame', path: keyframe.path }];
   const lines = ['Image 1 is a frame from an anime opening.'];
   let next = 2;
   for (const use of uses) {
@@ -171,7 +194,7 @@ export function planBoard(
     next += imgs.length;
     lines.push(
       `${label} show the character "${use.persona.name}"${use.persona.description ? ` (${use.persona.description})` : ''}.`,
-      `Replace ${describeWho(ws, shot, use)} in Image 1 with this character. ${lookInstruction(use, label)}`,
+      `Replace ${describeWho(ws, keyframe.frame, use)} in Image 1 with this character. ${lookInstruction(use, label)}`,
     );
   }
   const layout = layoutInstruction(uses);
@@ -223,13 +246,13 @@ export function planTake(
       boardId = board.id;
       refs.push({ role: 'board', path: board.path });
     }
-    const uses = personasInShot(ws, shotId, 1);
+    const { uses, keyframe } = castInShot(ws, shot, 1);
     let idx = boardId ? 1 : 0;
     for (const use of uses) {
       refs.push({ role: `persona:${use.persona.id}`, path: use.imagePaths[0]! });
       const look = lookInstruction(use, `<IMAGE_REF_${idx}>`);
       lines.push(
-        `Replace ${describeWho(ws, shot, use)} with the character "${use.persona.name}" shown in ${boardId ? '<IMAGE_REF_0> and ' : ''}<IMAGE_REF_${idx}>. ${look}`,
+        `Replace ${describeWho(ws, keyframe.frame, use)} with the character "${use.persona.name}" shown in ${boardId ? '<IMAGE_REF_0> and ' : ''}<IMAGE_REF_${idx}>. ${look}`,
       );
       idx++;
     }
