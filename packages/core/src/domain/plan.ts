@@ -453,7 +453,7 @@ export function planDesign(
     lines.push(
       `${span(n('tile:'))} is a grid of ${who}'s ${what} in this opening, read left to right, top to bottom: ${cells
         .map((c, i) => `${i + 1}. ${c.item.label}${c.item.description ? ` (${c.item.description})` : ''}`)
-        .join('; ')}.`,
+        .join('; ')}. Take only the ${kind === 'expressions' ? 'expression' : 'pose'} from each cell — not its background, props in the scene, other people or the original's clothes.`,
     );
   } else {
     if (n('original:').length) lines.push(`${span(n('original:'))} show ${who} as this opening draws her.`);

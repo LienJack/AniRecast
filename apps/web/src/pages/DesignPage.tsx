@@ -427,7 +427,7 @@ function AnalysisPanel({ projectRef, entry }: { projectRef: string; entry: Bindi
         variant={analysis?.data ? 'outline' : 'default'}
         disabled={running || analyze.isPending}
         onClick={() => analyze.mutate(false)}
-        title="約 USD 0.01"
+        title="約 USD 0.03"
       >
         <ScanSearchIcon />
         {analysis?.data ? '重新分析' : '分析原片'}
