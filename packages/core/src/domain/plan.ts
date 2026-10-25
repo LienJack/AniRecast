@@ -351,15 +351,17 @@ function replacedBodyCrop(ws: Workspace, projectId: string, personaId: string): 
 function personaRefsFor(persona: Persona, kind: DesignKind): string[] {
   const imgs = persona.images;
   const by = (view: PersonaImage['view']) => imgs.find((i) => i.view === view);
+  // Captions name what a page shows ("P03 表情範圍 · expression range"); they win over view and order.
+  const labelled = (re: RegExp) => imgs.find((i) => re.test(i.label));
   const full = imgs.find((i) => i.isPrimary) ?? by('full') ?? imgs[0];
-  const sheet = by('sheet');
+  const sheet = labelled(/turnaround|三視圖|設定/i) ?? by('sheet');
   const others = imgs.filter((i) => i.view === 'other');
   const pair =
     kind === 'turnaround'
       ? [full, sheet]
       : kind === 'expressions'
-        ? [by('face') ?? full, others[0] ?? sheet]
-        : [full, others[1] ?? others[0] ?? sheet];
+        ? [by('face') ?? labelled(/head|頭部/i) ?? full, labelled(/expression|表情/i) ?? others[0] ?? sheet]
+        : [full, labelled(/pose|acting|動作|表演/i) ?? others[1] ?? others[0] ?? sheet];
   return [...new Set(pair.filter((i): i is PersonaImage => Boolean(i)).map((i) => i.path))];
 }
 

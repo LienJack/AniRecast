@@ -95,6 +95,7 @@ import {
   totalSpend,
   trashSource,
   updatePersona,
+  updatePersonaImage,
   updateShot,
   type Verdict,
   type Workspace,
@@ -521,6 +522,7 @@ export function registerRoutes(
           {
             view: (form.view as PersonaView) ?? 'other',
             ...(form.primary === 'true' ? { primary: true } : {}),
+            ...(typeof form.label === 'string' && form.label.trim() ? { label: form.label } : {}),
             width: size?.width ?? null,
             height: size?.height ?? null,
           },
@@ -533,6 +535,11 @@ export function registerRoutes(
   );
   app.post('/api/persona-images/:id/primary', (c) =>
     handle(c, () => setPrimaryImage(ws, c.req.param('id'), USER)),
+  );
+  app.patch('/api/persona-images/:id', async (c) =>
+    handle(c, async () =>
+      updatePersonaImage(ws, c.req.param('id'), await body<{ label?: string; view?: PersonaView }>(c), USER),
+    ),
   );
 
   // ---- generation & review ---------------------------------------------------------------------

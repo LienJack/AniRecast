@@ -1,6 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, PlusIcon, StarIcon, UploadIcon } from 'lucide-react';
+import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
+  ArrowLeftIcon,
+  PencilIcon,
+  PlusIcon,
+  StarIcon,
+  UploadIcon,
+} from 'lucide-react';
 import { useId, useRef, useState } from 'react';
 import { EmptyState, ErrorState, Field, Loading, PageHeader, Tag, Thumb } from '@/components/common';
 import { Button } from '@/components/ui/button';
@@ -20,7 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { api, fileUrl } from '@/lib/api';
-import { MAX_PERSONA_IMAGES, PERSONA_VIEW_LABEL, PERSONA_VIEWS } from '@/lib/labels';
+import { PERSONA_VIEW_LABEL, PERSONA_VIEWS } from '@/lib/labels';
 import { useAction, usePersonas } from '@/lib/queries';
 import type { AssetKind, Persona, PersonaImage, PersonaView } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -149,44 +157,61 @@ function CreateDialog({
   );
 }
 
+/** Uploads one or many images; one file can carry a caption, several are captioned by file name. */
 function UploadForm({ persona }: { persona: Persona }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const fileId = useId();
-  const [file, setFile] = useState<File | null>(null);
-  const [view, setView] = useState<PersonaView>('full');
+  const [files, setFiles] = useState<File[]>([]);
+  const [view, setView] = useState<PersonaView>('other');
+  const [label, setLabel] = useState('');
   const [primary, setPrimary] = useState(persona.images.length === 0);
   const upload = useAction(
-    () => {
-      const form = new FormData();
-      if (file) form.append('file', file);
-      form.append('view', view);
-      form.append('primary', String(primary));
-      return api.upload<PersonaImage>(`/api/personas/${persona.id}/images`, form);
+    async () => {
+      for (const [i, file] of files.entries()) {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('view', view);
+        form.append('primary', String(primary && i === 0));
+        form.append(
+          'label',
+          files.length === 1 && label.trim() ? label.trim() : file.name.replace(/\.[^.]+$/, ''),
+        );
+        await api.upload<PersonaImage>(`/api/personas/${persona.id}/images`, form);
+      }
+      return files.length;
     },
     {
-      success: '已上傳參考圖',
+      success: (n) => `已上傳 ${n} 張參考圖`,
       invalidate: INVALIDATE,
       onSuccess: () => {
-        setFile(null);
+        setFiles([]);
+        setLabel('');
         setPrimary(false);
         if (fileRef.current) fileRef.current.value = '';
       },
     },
   );
-  const full = persona.images.length >= MAX_PERSONA_IMAGES;
   return (
     <div className="flex flex-col gap-2 rounded-md border bg-background/40 p-2.5">
-      <Label htmlFor={fileId}>
-        上傳參考圖（{persona.images.length}/{MAX_PERSONA_IMAGES}）
-      </Label>
+      <Label htmlFor={fileId}>上傳參考圖（目前 {persona.images.length} 張，不限數量，可一次選多張）</Label>
       <Input
         id={fileId}
         ref={fileRef}
         type="file"
+        multiple
         accept="image/png,image/jpeg,image/webp"
-        disabled={full}
-        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        onChange={(e) => setFiles([...(e.target.files ?? [])])}
       />
+      {files.length <= 1 ? (
+        <Input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="說明這張圖是什麼，例如「表情範圍」「表演動作」（生成時用來挑參考圖）"
+          aria-label="圖片說明"
+        />
+      ) : (
+        <span className="text-muted-foreground text-xs">多張上傳時，以檔名當說明，之後可以逐張修改。</span>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <Select value={view} onValueChange={(v) => setView(v as PersonaView)}>
           <SelectTrigger size="sm" aria-label="視角">
@@ -207,15 +232,65 @@ function UploadForm({ persona }: { persona: Persona }) {
         <Button
           size="sm"
           className="ml-auto"
-          disabled={!file || full || upload.isPending}
+          disabled={!files.length || upload.isPending}
           onClick={() => upload.mutate(undefined)}
         >
           <UploadIcon />
-          上傳
+          上傳{files.length > 1 ? ` ${files.length} 張` : ''}
         </Button>
       </div>
-      {full ? <span className="text-amber-300 text-xs">已達 {MAX_PERSONA_IMAGES} 張上限。</span> : null}
     </div>
+  );
+}
+
+/** The caption under a reference image; click the pencil to change it. */
+function ImageCaption({ img }: { img: PersonaImage }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(img.label);
+  const save = useAction(() => api.patch(`/api/persona-images/${img.id}`, { label: text.trim() }), {
+    success: '已更新說明',
+    invalidate: INVALIDATE,
+    onSuccess: () => setEditing(false),
+  });
+  if (editing)
+    return (
+      <form
+        className="flex min-w-0 flex-1 gap-1"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save.mutate(undefined);
+        }}
+      >
+        <Input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          className="h-7 text-xs"
+          aria-label="圖片說明"
+          autoFocus
+        />
+        <Button size="sm" type="submit" disabled={save.isPending}>
+          存
+        </Button>
+      </form>
+    );
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-muted-foreground">
+      <span className="truncate" title={img.label || undefined}>
+        {img.label || '（沒有說明）'} · {PERSONA_VIEW_LABEL[img.view]}
+      </span>
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        aria-label="修改說明"
+        title="修改說明"
+        onClick={() => {
+          setText(img.label);
+          setEditing(true);
+        }}
+      >
+        <PencilIcon />
+      </Button>
+    </span>
   );
 }
 
@@ -235,7 +310,7 @@ function PersonaEditor({ persona }: { persona: Persona }) {
   });
   const gallery = persona.images.map((img) => ({
     src: fileUrl(img.path) ?? '',
-    alt: `${persona.name} · ${PERSONA_VIEW_LABEL[img.view]}`,
+    alt: `${persona.name} · ${img.label || PERSONA_VIEW_LABEL[img.view]}`,
   }));
   return (
     <div className="grid gap-5 p-5 lg:grid-cols-[360px_minmax(0,1fr)]">
@@ -279,7 +354,7 @@ function PersonaEditor({ persona }: { persona: Persona }) {
               >
                 <Thumb
                   src={fileUrl(img.path)}
-                  alt={`${persona.name} · ${PERSONA_VIEW_LABEL[img.view]}`}
+                  alt={`${persona.name} · ${img.label || PERSONA_VIEW_LABEL[img.view]}`}
                   fit="contain"
                   className="aspect-[3/4] w-full"
                   zoom
@@ -291,8 +366,8 @@ function PersonaEditor({ persona }: { persona: Persona }) {
                   </span>
                 ) : null}
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-muted-foreground">{PERSONA_VIEW_LABEL[img.view]}</span>
+              <div className="flex items-center justify-between gap-1">
+                <ImageCaption img={img} />
                 {!img.isPrimary ? (
                   <Button
                     size="icon-sm"

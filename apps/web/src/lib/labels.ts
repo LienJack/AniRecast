@@ -25,7 +25,6 @@ export const PERSONA_VIEWS: readonly PersonaView[] = [
   'other',
 ];
 export const OVERLAY_CATEGORIES: readonly OverlayCategory[] = ['staff_credit', 'title_or_other', 'in_scene'];
-export const MAX_PERSONA_IMAGES = 5;
 /** Omni accepts at most 10 s per request; longer shots are generated in segments. */
 export const OMNI_MAX_SECONDS = 10;
 

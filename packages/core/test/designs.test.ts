@@ -11,6 +11,7 @@ import {
   createTracklet,
   designOverview,
   getDesign,
+  getPersona,
   initWorkspace,
   listAgentTasks,
   listJobs,
@@ -84,6 +85,32 @@ describe('character design', () => {
     const [turnaround] = queued;
     expect(turnaround!.design.prompt).toContain('Adaptation for this project: covered shoulders, looser cut');
     expect(turnaround!.design.inputs.map((i) => i.role)).toEqual([`persona:${personaId}`, 'style']);
+    ws.close();
+  });
+
+  it('takes any number of library images and picks references by their captions', () => {
+    const { ws, projectId, personaId } = fixture();
+    const pages = [
+      'P01 主設定三視圖',
+      'P02 頭部角度',
+      'P03 表情範圍',
+      'P05 手與鞋',
+      'P08 表演動作',
+      'P09 配色與光影',
+    ];
+    for (const label of pages) {
+      const file = path.join(tempDir(), `${label}.png`);
+      writeFileSync(file, label);
+      addPersonaImage(ws, personaId, file, { label }, 'user');
+    }
+    const [turnaround, expressions, poses] = queueDesign(ws, projectId, personaId, 'user');
+    const labelOf = (p: string) => getPersona(ws.db, personaId).images.find((i) => i.path === p)?.label;
+    const refs = (d: typeof turnaround) =>
+      d!.design.inputs.filter((i) => i.role.startsWith('persona:')).map((i) => labelOf(i.path));
+    expect(getPersona(ws.db, personaId).images).toHaveLength(7);
+    expect(refs(turnaround)).toEqual(['', 'P01 主設定三視圖']);
+    expect(refs(expressions)).toEqual(['P02 頭部角度', 'P03 表情範圍']);
+    expect(refs(poses)).toEqual(['', 'P08 表演動作']);
     ws.close();
   });
 

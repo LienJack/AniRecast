@@ -17,8 +17,6 @@ export const PERSONA_VIEWS: readonly PersonaView[] = [
   'sheet',
   'other',
 ];
-/** Nano Banana 2.1 takes at most 5 character images per request, so more references per persona are not useful. */
-export const MAX_PERSONA_IMAGES = 5;
 
 export interface PersonaImage {
   id: string;
@@ -29,6 +27,8 @@ export interface PersonaImage {
   width: number | null;
   height: number | null;
   sha256: string;
+  /** What the image shows ("P03 表情範圍"); the planner uses it to pick references for each kind of sheet. */
+  label: string;
 }
 
 /** What a library entry is: a character (persona to swap in), an item or a scene. */
@@ -69,6 +69,7 @@ interface ImageRow {
   width: number | null;
   height: number | null;
   sha256: string;
+  label: string | null;
 }
 
 export const personaDir = (slug: string): string => `library/personas/${slug}`;
@@ -89,6 +90,7 @@ function images(db: Db, personaId: string): PersonaImage[] {
     width: r.width,
     height: r.height,
     sha256: r.sha256,
+    label: r.label ?? '',
   }));
 }
 
@@ -211,19 +213,25 @@ export function updatePersona(
   return persona;
 }
 
-/** Copies a reference image into the library. The first image becomes primary. */
+/**
+ * Copies a reference image into the library (no limit on how many; requests pick from them). The first image
+ * becomes primary.
+ */
 export function addPersonaImage(
   ws: Workspace,
   ref: string,
   file: string,
-  opts: { view?: PersonaView; primary?: boolean; width?: number | null; height?: number | null },
+  opts: {
+    view?: PersonaView;
+    primary?: boolean;
+    width?: number | null;
+    height?: number | null;
+    label?: string;
+  },
   actor: string,
   now: number = Date.now(),
 ): Persona {
   const p = getPersona(ws.db, ref);
-  if (p.images.length >= MAX_PERSONA_IMAGES) {
-    throw new AniError('conflict', `A persona can have at most ${MAX_PERSONA_IMAGES} reference images`);
-  }
   const ext = path.extname(file).toLowerCase();
   if (!['.png', '.jpg', '.jpeg', '.webp'].includes(ext))
     throw new AniError('usage', `Unsupported image type: ${ext}`);
@@ -240,8 +248,8 @@ export function addPersonaImage(
       run(ws.db, 'UPDATE persona_images SET is_primary = 0 WHERE persona_id = :id', { id: p.id });
     run(
       ws.db,
-      `INSERT INTO persona_images (id, persona_id, path, view, is_primary, width, height, sha256, created_at)
-       VALUES (:id, :personaId, :path, :view, :primary, :width, :height, :sha256, :now)`,
+      `INSERT INTO persona_images (id, persona_id, path, view, is_primary, width, height, sha256, label, created_at)
+       VALUES (:id, :personaId, :path, :view, :primary, :width, :height, :sha256, :label, :now)`,
       {
         id,
         personaId: p.id,
@@ -251,6 +259,7 @@ export function addPersonaImage(
         width: opts.width ?? null,
         height: opts.height ?? null,
         sha256,
+        label: opts.label?.trim() ?? '',
         now,
       },
     );
@@ -263,6 +272,44 @@ export function addPersonaImage(
       payload: { imageId: id, view: opts.view ?? 'other' },
     });
     return getPersona(ws.db, p.id);
+  });
+  writeMirror(ws, persona);
+  return persona;
+}
+
+/** Changes what an image is labelled as (caption and view). */
+export function updatePersonaImage(
+  ws: Workspace,
+  imageId: string,
+  patch: { label?: string; view?: PersonaView },
+  actor: string,
+): Persona {
+  const row = one<{ persona_id: string }>(
+    ws.db,
+    'SELECT persona_id FROM persona_images WHERE id = :imageId',
+    {
+      imageId,
+    },
+  );
+  if (!row) throw new AniError('not_found', `Image not found: ${imageId}`);
+  if (patch.view !== undefined && !PERSONA_VIEWS.includes(patch.view))
+    throw new AniError('usage', `View must be one of ${PERSONA_VIEWS.join(', ')}`);
+  const persona = tx(ws.db, () => {
+    if (patch.label !== undefined)
+      run(ws.db, 'UPDATE persona_images SET label = :label WHERE id = :imageId', {
+        imageId,
+        label: patch.label.trim(),
+      });
+    if (patch.view !== undefined)
+      run(ws.db, 'UPDATE persona_images SET view = :view WHERE id = :imageId', { imageId, view: patch.view });
+    appendEvent(ws.db, {
+      actor,
+      kind: 'persona.updated',
+      entityType: 'persona',
+      entityId: row.persona_id,
+      payload: { image: imageId, ...patch },
+    });
+    return getPersona(ws.db, row.persona_id);
   });
   writeMirror(ws, persona);
   return persona;

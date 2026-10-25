@@ -542,6 +542,12 @@ CREATE TABLE handoffs (
 CREATE INDEX handoffs_project ON handoffs(project_id, status);
 `,
   },
+  {
+    version: 7,
+    name: 'captions on library images',
+    // No more 5-image limit per library entry; a caption says what each image shows so requests can pick.
+    sql: `ALTER TABLE persona_images ADD COLUMN label TEXT NOT NULL DEFAULT '';`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

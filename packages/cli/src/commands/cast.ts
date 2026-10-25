@@ -28,6 +28,7 @@ import {
   settleCast,
   splitCast,
   updatePersona,
+  updatePersonaImage,
   type Workspace,
 } from '@anirecast/core';
 import { probe } from '@anirecast/media';
@@ -152,18 +153,44 @@ export function registerCast(program: Command): void {
     .command('image-add <persona> <file>')
     .option('--view <view>', 'front|side|back|face|full|sheet|other', 'other')
     .option('--primary', 'make it the primary reference')
+    .option('--label <text>', 'what the image shows, e.g. "P03 表情範圍"; used to pick references')
     .action(
-      command((ref: string, file: string, opts: { view: PersonaView; primary?: boolean }) =>
+      command((ref: string, file: string, opts: { view: PersonaView; primary?: boolean; label?: string }) =>
         withWorkspace(globals(), async (ws) => {
           const abs = path.resolve(file);
           return addPersonaImage(
             ws,
             ref,
             abs,
-            { view: opts.view, ...(opts.primary ? { primary: true } : {}), ...(await imageSize(abs)) },
+            {
+              view: opts.view,
+              ...(opts.primary ? { primary: true } : {}),
+              ...(opts.label ? { label: opts.label } : {}),
+              ...(await imageSize(abs)),
+            },
             actorFromEnv(),
           );
         }),
+      ),
+    );
+  persona
+    .command('image-update <imageId>')
+    .description('Change the caption or view of a reference image')
+    .option('--label <text>', 'caption')
+    .option('--view <view>', 'front|side|back|face|full|sheet|other')
+    .action(
+      command((id: string, opts: { label?: string; view?: PersonaView }) =>
+        withWorkspace(globals(), (ws) =>
+          updatePersonaImage(
+            ws,
+            id,
+            {
+              ...(opts.label !== undefined ? { label: opts.label } : {}),
+              ...(opts.view ? { view: opts.view } : {}),
+            },
+            actorFromEnv(),
+          ),
+        ),
       ),
     );
   persona
