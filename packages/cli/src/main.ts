@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import { registerCast } from './commands/cast.ts';
 import { registerDoctor } from './commands/doctor.ts';
 import { registerJobs } from './commands/jobs.ts';
 import { registerMedia } from './commands/media.ts';
@@ -21,6 +22,7 @@ const program = new Command()
 registerWorkspace(program);
 registerJobs(program);
 registerMedia(program);
+registerCast(program);
 registerDoctor(program);
 registerServe(program);
 

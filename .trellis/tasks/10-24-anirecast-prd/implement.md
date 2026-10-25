@@ -57,14 +57,14 @@
   - `shots split|merge|set`。
 - 驗證：用 ffmpeg 合成一支已知剪接點的影片（色塊加 drawtext），斷言剪接點位置、每個分鏡的幀範圍首尾相接，以及幀數總和。
 
-### S5 Provider 層與成本 — done: (S5 commit)
+### S5 Provider 層與成本 — done: 2456408
 - 產出：介面 `ImageGen`、`VideoEdit`、`VisionAnalyze`、`FilesUpload`。
   - `fake` 實作：影片做帶色調的重編碼並保持幀數相同；JSON 回傳罐頭資料。
   - `gemini` 實作：Interactions API 與 Files API，去掉 `steps[].signature`。
   - 成本帳本與花費上限保護：超過上限時拒絕真實呼叫。
 - 驗證：fake 的單元測試；gemini 的請求組裝與回應解析，用 `research/gemini-api-spike/*.response.json` 當固定測資。
 
-### S6 人設、角色、處理方式 — done:
+### S6 人設、角色、處理方式 — done: (S6 commit)
 - 產出：
   - `persona add|list|show|edit|archive`；
   - 資料表 `cast_members`／`looks`／`tracklets`／`cast_decisions`；
