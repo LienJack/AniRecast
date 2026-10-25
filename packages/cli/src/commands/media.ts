@@ -269,22 +269,31 @@ export function registerMedia(program: Command): void {
         }),
       ),
     );
-  shots.command('merge <first> <second>').action(
-    command((a: string, b: string) =>
-      withWorkspace(globals(), (ws) => {
-        const merged = mergeShots(ws.db, a, b, actorFromEnv());
-        const project = projectOfShot(ws.db, merged.id);
-        enqueueJob(ws.db, {
-          type: 'shots.prepare',
-          lane: 'media',
-          projectId: project.id,
-          payload: { shotIds: [merged.id] },
-          requestedBy: actorFromEnv(),
-        });
-        return merged;
-      }),
-    ),
-  );
+  shots
+    .command('merge <first> <second>')
+    .description('Merge two adjacent shots (one continuous moment cut into two)')
+    .option('--force', 'merge shots that already have boards or takes (they turn stale)')
+    .option('--reason <text>', 'why they belong together (kept with the merge)')
+    .action(
+      command((a: string, b: string, opts: { force?: boolean; reason?: string }) =>
+        withWorkspace(globals(), (ws) => {
+          const merged = mergeShots(ws.db, a, b, actorFromEnv(), Date.now(), {
+            force: opts.force === true,
+            ...(opts.reason ? { reason: opts.reason } : {}),
+          });
+          const project = projectOfShot(ws.db, merged.id);
+          recomputeShotModes(ws.db, project.id);
+          enqueueJob(ws.db, {
+            type: 'shots.prepare',
+            lane: 'media',
+            projectId: project.id,
+            payload: { shotIds: [merged.id] },
+            requestedBy: actorFromEnv(),
+          });
+          return merged;
+        }),
+      ),
+    );
   shots
     .command('set <shot>')
     .option('--mode <mode>', 'replace | clean | keep | exclude')

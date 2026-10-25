@@ -21,6 +21,7 @@ import {
   markNotCharacter,
   markShotGenerationStale,
   mergeCast,
+  mergeShots,
   recomputeShotModes,
   replaceAutoOverlays,
   replacementSignature,
@@ -170,6 +171,28 @@ describe('shot modes', () => {
     expect(second.flatMap((e) => frames(e.tracklet.id)).sort((x, y) => x - y)).toEqual([18, 20]);
     recomputeShotModes(ws.db, projectId);
     expect(getShot(ws.db, b.id).mode).toBe('replace');
+    ws.close();
+  });
+
+  it('merges two shots without losing what was attached to the second', () => {
+    const { ws, projectId, shotIds } = fixture();
+    const [s0, s1] = shotIds as [string, string];
+    const girl = createCastMember(ws.db, { projectId, label: 'girl' }, 'daemon');
+    const t = createTracklet(ws.db, { shotId: s1, castMemberId: girl.id });
+    replaceAutoOverlays(ws.db, s1, [{ bbox: [0.1, 0.8, 0.5, 0.9], text: '原画', category: 'staff_credit' }]);
+    run(
+      ws.db,
+      `INSERT INTO boards (id, shot_id, version, status, prompt, model, created_by, created_at)
+       VALUES ('b0', :s0, 1, 'approved', 'p', 'm', 'user', 1), ('b1', :s1, 1, 'ready', 'p', 'm', 'user', 2)`,
+      { s0, s1 },
+    );
+    expect(() => mergeShots(ws.db, s0, s1, 'user')).toThrow(/already have generated versions/);
+    const merged = mergeShots(ws.db, s0, s1, 'user', Date.now(), { force: true, reason: 'same moment' });
+    expect(merged).toMatchObject({ id: s0, startFrame: 0, endFrame: 47 });
+    expect(shotCast(ws.db, s0).map((e) => e.tracklet.id)).toEqual([t.id]);
+    expect(all(ws.db, 'SELECT shot_id FROM text_overlays')).toEqual([{ shot_id: s0 }]);
+    expect(getBoard(ws.db, 'b0')).toMatchObject({ status: 'stale', version: 1 });
+    expect(getBoard(ws.db, 'b1')).toMatchObject({ shotId: s0, status: 'stale', version: 2 });
     ws.close();
   });
 

@@ -315,8 +315,12 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
   );
   app.post('/api/shots/merge', async (c) =>
     handle(c, async () => {
-      const b = await body<{ first: string; second: string }>(c);
-      const merged = mergeShots(ws.db, b.first, b.second, USER);
+      const b = await body<{ first: string; second: string; force?: boolean; reason?: string }>(c);
+      const merged = mergeShots(ws.db, b.first, b.second, USER, Date.now(), {
+        force: b.force === true,
+        ...(b.reason ? { reason: b.reason } : {}),
+      });
+      recomputeShotModes(ws.db, projectOfShot(ws.db, merged.id).id);
       enqueueJob(ws.db, {
         type: 'shots.prepare',
         lane: 'media',

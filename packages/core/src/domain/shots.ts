@@ -291,12 +291,19 @@ export function splitShot(
   });
 }
 
+/**
+ * Merges two adjacent shots into the first. Everything attached to the second moves over: appearances,
+ * overlaid text, per-shot cast overrides and agent tasks. A shot with generated versions merges only with
+ * `force`; its ready and approved boards and takes turn stale (they were made for the old frame range), and
+ * the second shot's versions are renumbered after the first's so their history is kept.
+ */
 export function mergeShots(
   db: Db,
   firstId: string,
   secondId: string,
   actor: string,
   now: number = Date.now(),
+  opts: { force?: boolean; reason?: string } = {},
 ): Shot {
   return tx(db, () => {
     const a = getShot(db, firstId);
@@ -305,9 +312,50 @@ export function mergeShots(
     if (first.clipId !== second.clipId || first.endFrame + 1 !== second.startFrame) {
       throw new AniError('usage', 'Only adjacent shots of the same clip can be merged');
     }
+    let staleVersions = 0;
     if (shotHasGeneration(db, first.id) || shotHasGeneration(db, second.id)) {
-      throw new AniError('conflict', 'Cannot merge shots that already have generated versions');
+      if (!opts.force)
+        throw new AniError('conflict', 'Cannot merge shots that already have generated versions', {
+          hint: 'Use --force to merge anyway; their boards and takes turn stale.',
+        });
+      const busy = one<{ n: number }>(
+        db,
+        `SELECT (SELECT COUNT(*) FROM boards WHERE shot_id IN (:a, :b) AND status IN ('queued', 'generating'))
+              + (SELECT COUNT(*) FROM takes WHERE shot_id IN (:a, :b) AND status IN ('queued', 'generating')) AS n`,
+        { a: first.id, b: second.id },
+      );
+      if ((busy?.n ?? 0) > 0)
+        throw new AniError('conflict', 'A board or take of these shots is still generating', {
+          hint: 'Wait for it or cancel its job first.',
+        });
+      for (const table of ['boards', 'takes'] as const) {
+        staleVersions += run(
+          db,
+          `UPDATE ${table} SET status = 'stale' WHERE shot_id IN (:a, :b) AND status IN ('ready', 'approved')`,
+          { a: first.id, b: second.id },
+        ).changes;
+        run(
+          db,
+          `UPDATE ${table} SET shot_id = :a,
+             version = version + (SELECT COALESCE(MAX(version), 0) FROM ${table} WHERE shot_id = :a)
+           WHERE shot_id = :b`,
+          { a: first.id, b: second.id },
+        );
+      }
     }
+    const moved = run(db, 'UPDATE tracklets SET shot_id = :a WHERE shot_id = :b', {
+      a: first.id,
+      b: second.id,
+    }).changes;
+    run(db, 'UPDATE text_overlays SET shot_id = :a WHERE shot_id = :b', { a: first.id, b: second.id });
+    // An override set on either half applies to the merged shot; the first shot's wins on a clash.
+    run(
+      db,
+      `INSERT OR IGNORE INTO shot_cast_overrides (shot_id, cast_member_id, persona_id, keep)
+       SELECT :a, cast_member_id, persona_id, keep FROM shot_cast_overrides WHERE shot_id = :b`,
+      { a: first.id, b: second.id },
+    );
+    run(db, 'UPDATE agent_tasks SET shot_id = :a WHERE shot_id = :b', { a: first.id, b: second.id });
     run(db, 'DELETE FROM shots WHERE id = :id', { id: second.id });
     run(db, 'DELETE FROM keyframes WHERE shot_id = :id', { id: first.id });
     run(
@@ -329,7 +377,13 @@ export function mergeShots(
       entityType: 'shot',
       entityId: first.id,
       projectId: clip.projectId,
-      payload: { removed: second.id },
+      payload: {
+        removed: second.id,
+        atFrame: second.startFrame,
+        movedTracklets: moved,
+        staleVersions,
+        ...(opts.reason ? { reason: opts.reason } : {}),
+      },
     });
     return getShot(db, first.id);
   });
