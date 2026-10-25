@@ -1,0 +1,25 @@
+# Secrets (API keys live per machine, never in git or in a workspace folder)
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+coverage/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# AniRecast workspace data created during local development
+/workspaces/
+*.anirecast/
+
+# OS / editor
+.DS_Store
+*.log
