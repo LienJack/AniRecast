@@ -42,6 +42,12 @@ import { outPath, span } from './util.ts';
 const UPLOAD_REUSE_MS = 40 * 3_600_000;
 /** Omni accepts at most 10 s per uploaded video. */
 const OMNI_MAX_SECONDS = 10;
+/**
+ * Omni returns whole groups of 4 frames (75 in → 76 out, 33 in → 32 out on the Lycoris OP). Uploads are padded
+ * to the step by holding the last frame, and conform absorbs up to 3 frames at the end.
+ */
+const OMNI_FRAME_STEP = 4;
+const OMNI_END_TOLERANCE = 3;
 
 function ledger(ctx: JobContext, meta: ProviderCallMeta, projectId: string, tier: string | null): void {
   recordCost(ctx.workspace.db, {
@@ -171,8 +177,11 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
     const cache = projectCacheDir(project);
     const uploadRel = `${cache}/uploads/${shot.id}-${uploadHeight}p.mp4`;
     progress(0.05, 'preparing upload');
-    await scaleForUpload(ws.abs(video.path), outPath(ws, uploadRel), uploadHeight, { signal });
-    const uploadSha = `${video.sha256 ?? ''}:${uploadHeight}`;
+    await scaleForUpload(ws.abs(video.path), outPath(ws, uploadRel), uploadHeight, {
+      signal,
+      frameStep: OMNI_FRAME_STEP,
+    });
+    const uploadSha = `${video.sha256 ?? ''}:${uploadHeight}:step${OMNI_FRAME_STEP}`;
     const cachedFileUri = reusableUpload(ws, take, uploadSha);
 
     const result = await services.provider.editVideo({
@@ -202,7 +211,13 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
       conform = await conformTake(
         ws.abs(rawRel),
         outPath(ws, outRel),
-        { frames: shot.frameCount, fpsNum: clip.fpsNum, fpsDen: clip.fpsDen, ...size },
+        {
+          frames: shot.frameCount,
+          fpsNum: clip.fpsNum,
+          fpsDen: clip.fpsDen,
+          ...size,
+          endTolerance: OMNI_END_TOLERANCE,
+        },
         { signal },
       );
     } catch (error) {

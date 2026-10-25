@@ -134,7 +134,8 @@ describe('board → take → render with the fake provider', () => {
           take.id,
         ]);
         const shot = shots.find((s) => s.id === take.shotId)!;
-        expect(shown.take).toMatchObject({ status: 'ready', framesOut: shot.frameCount });
+        // Uploads are padded to Omni's 4-frame step; the conformed take is cut back to the shot exactly.
+        expect(shown.take).toMatchObject({ status: 'ready', framesOut: Math.ceil(shot.frameCount / 4) * 4 });
         expect(await probe(path.join(root, shown.take.path), { countFrames: true })).toMatchObject({
           frameCount: shot.frameCount,
           width: 640,

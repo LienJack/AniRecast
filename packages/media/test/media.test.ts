@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  conformTake,
   extractAudioSegment,
   extractFrame,
   extractVideoSegment,
@@ -10,6 +11,7 @@ import {
   parseTimecode,
   probe,
   runSidecar,
+  scaleForUpload,
 } from '../src/index.ts';
 import { FPS_DEN, FPS_NUM, synthesizeShots } from './fixtures.ts';
 
@@ -68,6 +70,38 @@ describe('media', () => {
     const a = await probe(path.join(dir, 'seg.mp4'));
     expect(a.durationMs).toBeGreaterThan(4100);
     await extractFrame(source, path.join(dir, 'f.jpg'), 80, FPS_NUM, FPS_DEN, { maxWidth: 320 });
+  }, 60_000);
+
+  it('pads uploads to a 4-frame step and absorbs small end differences when conforming', async () => {
+    const seg = path.join(dir, 'odd.mp4');
+    await extractVideoSegment(source, seg, {
+      startFrame: 0,
+      frameCount: 30,
+      fpsNum: FPS_NUM,
+      fpsDen: FPS_DEN,
+    });
+    const up = path.join(dir, 'up.mp4');
+    expect(await scaleForUpload(seg, up, 180, { frameStep: 4 })).toEqual({ frames: 30, padded: 2 });
+    expect((await probe(up, { countFrames: true })).frameCount).toBe(32);
+
+    const spec = { frames: 30, fpsNum: FPS_NUM, fpsDen: FPS_DEN, width: 320, height: 180, endTolerance: 3 };
+    const trimmed = await conformTake(up, path.join(dir, 'trim.mp4'), spec);
+    expect(trimmed).toMatchObject({ framesOut: 32, endAdjust: 2 });
+    expect((await probe(path.join(dir, 'trim.mp4'), { countFrames: true })).frameCount).toBe(30);
+
+    const short = path.join(dir, 'short.mp4');
+    await extractVideoSegment(source, short, {
+      startFrame: 0,
+      frameCount: 28,
+      fpsNum: FPS_NUM,
+      fpsDen: FPS_DEN,
+    });
+    expect(await conformTake(short, path.join(dir, 'held.mp4'), spec)).toMatchObject({ endAdjust: -2 });
+    expect((await probe(path.join(dir, 'held.mp4'), { countFrames: true })).frameCount).toBe(30);
+
+    await expect(conformTake(short, path.join(dir, 'x.mp4'), { ...spec, frames: 40 })).rejects.toThrow(
+      /28 frames, the shot has 40/,
+    );
   }, 60_000);
 
   it('detects the known cuts with the Python sidecar', async () => {

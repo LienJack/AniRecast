@@ -6,21 +6,29 @@ import { probe } from './probe.ts';
 
 const ensureDir = (file: string) => mkdirSync(path.dirname(file), { recursive: true });
 
-/** Scales a shot for upload; frame count and timing are untouched, audio dropped. */
+/**
+ * Scales a shot for upload, audio dropped. Timing is untouched; with `frameStep` the last frame is repeated
+ * until the count is a multiple of it (Omni returns whole groups of 4 frames), and conform trims them again.
+ */
 export async function scaleForUpload(
   input: string,
   output: string,
   height: number,
-  opts: FfmpegRunOptions = {},
-): Promise<void> {
+  opts: FfmpegRunOptions & { frameStep?: number } = {},
+): Promise<{ frames: number; padded: number }> {
   ensureDir(output);
+  const { frameStep, ...run } = opts;
+  const frames = (await probe(input, { countFrames: true, ...(run.signal ? { signal: run.signal } : {}) }))
+    .frameCount;
+  const padded = frameStep ? (frameStep - (frames % frameStep)) % frameStep : 0;
+  const pad = padded > 0 ? `,tpad=stop_mode=clone:stop=${padded}` : '';
   await ffmpeg(
     [
       '-i',
       input,
       '-an',
       '-vf',
-      `scale=-2:${height}:flags=lanczos,format=yuv420p`,
+      `scale=-2:${height}:flags=lanczos,format=yuv420p${pad}`,
       '-fps_mode',
       'passthrough',
       '-c:v',
@@ -31,8 +39,9 @@ export async function scaleForUpload(
       '16',
       output,
     ],
-    opts,
+    run,
   );
+  return { frames, padded };
 }
 
 export interface ConformSpec {
@@ -41,18 +50,25 @@ export interface ConformSpec {
   fpsDen: number;
   width: number;
   height: number;
+  /**
+   * Frames the generated clip may differ by at its end: extra frames are cut, missing ones repeat the last
+   * frame. 0 (default) makes any mismatch a hard failure.
+   */
+  endTolerance?: number;
 }
 
 export interface ConformResult {
   framesIn: number;
   framesOut: number;
+  /** framesOut − framesIn when it was absorbed at the end: positive = cut, negative = last frame repeated. */
+  endAdjust: number;
   sourceFps: string;
   sourceSize: string;
 }
 
 /**
- * Brings a generated clip back onto the clip's timeline: verifies the frame count first (a mismatch is a
- * hard failure, never silently padded), restamps to the clip rate, scales to the tier size, drops audio.
+ * Brings a generated clip back onto the clip's timeline: verifies the frame count first (beyond
+ * `endTolerance` a mismatch is a hard failure), restamps to the clip rate, scales to the tier size, drops audio.
  */
 export async function conformTake(
   raw: string,
@@ -61,12 +77,13 @@ export async function conformTake(
   opts: FfmpegRunOptions = {},
 ): Promise<ConformResult> {
   const p = await probe(raw, { countFrames: true, ...(opts.signal ? { signal: opts.signal } : {}) });
-  if (p.frameCount !== spec.frames) {
+  const endAdjust = p.frameCount - spec.frames;
+  if (Math.abs(endAdjust) > (spec.endTolerance ?? 0)) {
     throw new AniError(
       'provider_rejected',
       `Generated clip has ${p.frameCount} frames, the shot has ${spec.frames}`,
       {
-        hint: 'conform_mismatch: regenerate this take; mismatched takes are never stretched or padded.',
+        hint: 'conform_mismatch: regenerate this take; takes are never stretched, only trimmed or held at the end.',
         details: { conform_mismatch: true, framesIn: spec.frames, framesOut: p.frameCount },
       },
     );
@@ -79,7 +96,7 @@ export async function conformTake(
       raw,
       '-an',
       '-vf',
-      `setpts=N/(${rate}*TB),scale=${spec.width}:${spec.height}:flags=lanczos,setsar=1,format=yuv420p`,
+      `setpts=N/(${rate}*TB)${endAdjust < 0 ? `,tpad=stop_mode=clone:stop=${-endAdjust}` : ''},scale=${spec.width}:${spec.height}:flags=lanczos,setsar=1,format=yuv420p`,
       '-fps_mode',
       'cfr',
       '-r',
@@ -99,6 +116,7 @@ export async function conformTake(
   return {
     framesIn: spec.frames,
     framesOut: p.frameCount,
+    endAdjust,
     sourceFps: `${p.fpsNum}/${p.fpsDen}`,
     sourceSize: `${p.width}x${p.height}`,
   };
