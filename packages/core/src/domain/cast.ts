@@ -523,12 +523,17 @@ export function mapCast(
   return tx(db, () => {
     const c = getCastMember(db, castId);
     if (personaId) {
-      const p = one<{ id: string; archived: number }>(
+      const p = one<{ id: string; archived: number; kind: string }>(
         db,
-        'SELECT id, archived FROM personas WHERE id = :id OR slug = :id COLLATE NOCASE',
+        'SELECT id, archived, kind FROM personas WHERE id = :id OR slug = :id COLLATE NOCASE',
         { id: personaId },
       );
       if (!p) throw new AniError('not_found', `Persona not found: ${personaId}`);
+      if (p.kind !== 'character')
+        throw new AniError(
+          'usage',
+          `Only a character from the library can replace a character (this is a ${p.kind})`,
+        );
       personaId = p.id;
     }
     run(db, 'UPDATE cast_members SET persona_id = :personaId, updated_at = :now WHERE id = :id', {

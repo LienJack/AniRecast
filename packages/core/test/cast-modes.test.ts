@@ -16,6 +16,7 @@ import {
   getCastMember,
   getShot,
   initWorkspace,
+  listPersonas,
   listShots,
   mapCast,
   markNotCharacter,
@@ -171,6 +172,24 @@ describe('shot modes', () => {
     expect(second.flatMap((e) => frames(e.tracklet.id)).sort((x, y) => x - y)).toEqual([18, 20]);
     recomputeShotModes(ws.db, projectId);
     expect(getShot(ws.db, b.id).mode).toBe('replace');
+    ws.close();
+  });
+
+  it('keeps characters, items and scenes apart in the library; only characters replace a character', () => {
+    const { ws, projectId } = fixture();
+    const hero = createPersona(ws, { name: 'Hero' }, 'user');
+    const sword = createPersona(ws, { name: 'Sword', kind: 'item' }, 'user');
+    createPersona(ws, { name: 'Cafe', kind: 'scene' }, 'user');
+    expect(hero.kind).toBe('character');
+    expect(listPersonas(ws.db, { kind: 'item' }).map((p) => p.name)).toEqual(['Sword']);
+    expect(
+      listPersonas(ws.db)
+        .map((p) => p.kind)
+        .sort(),
+    ).toEqual(['character', 'item', 'scene']);
+    const girl = createCastMember(ws.db, { projectId, label: 'girl' }, 'daemon');
+    expect(() => mapCast(ws.db, girl.id, sword.id, 'user')).toThrow(/Only a character/);
+    expect(mapCast(ws.db, girl.id, hero.id, 'user').cast.personaId).toBe(hero.id);
     ws.close();
   });
 

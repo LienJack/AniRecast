@@ -3,8 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   type AgentTaskStatus,
+  API_KEYS,
+  type AssetKind,
   addPersonaImage,
   answerAgentTask,
+  apiKeySource,
   assertQuota,
   assignTracklet,
   cancelAgentTask,
@@ -26,6 +29,7 @@ import {
   getTake,
   initWorkspace,
   inspectWorkspace,
+  type KeyedProvider,
   type LookPolicy,
   latestEventSeq,
   listAgentTasks,
@@ -45,6 +49,7 @@ import {
   type PersonaView,
   projectOfShot,
   projectOverview,
+  projectSummaries,
   queueBoard,
   queueStillTake,
   queueTake,
@@ -225,7 +230,9 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
   );
 
   // ---- projects, clip, shots -------------------------------------------------------------------
-  app.get('/api/projects', (c) => handle(c, () => listProjects(ws.db)));
+  app.get('/api/projects', (c) =>
+    handle(c, () => (c.req.query('summary') === '1' ? projectSummaries(ws) : listProjects(ws.db))),
+  );
   app.post('/api/projects', async (c) =>
     handle(c, async () => {
       const b = await body<{ sourceId: string; name: string }>(c);
@@ -456,12 +463,18 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
   );
 
   app.get('/api/personas', (c) =>
-    handle(c, () => listPersonas(ws.db, { includeArchived: c.req.query('archived') === '1' })),
+    handle(c, () => {
+      const kind = c.req.query('kind') as AssetKind | undefined;
+      return listPersonas(ws.db, {
+        includeArchived: c.req.query('archived') === '1',
+        ...(kind ? { kind } : {}),
+      });
+    }),
   );
   app.get('/api/personas/:ref', (c) => handle(c, () => getPersona(ws.db, c.req.param('ref'))));
   app.post('/api/personas', async (c) =>
     handle(c, async () => {
-      const b = await body<{ name: string; description?: string; tags?: string[] }>(c);
+      const b = await body<{ name: string; description?: string; tags?: string[]; kind?: AssetKind }>(c);
       return createPersona(ws, b, USER);
     }),
   );
@@ -609,8 +622,34 @@ export function registerRoutes(app: Hono, ws: Workspace, opts: { onSwitchWorkspa
   // ---- tasks, jobs, cost -----------------------------------------------------------------------
   app.get('/api/tasks', (c) => {
     const status = c.req.query('status') as AgentTaskStatus | undefined;
-    return handle(c, () => listAgentTasks(ws.db, status ? { status } : {}));
+    const ref = c.req.query('project');
+    return handle(c, () =>
+      listAgentTasks(ws.db, {
+        ...(status ? { status } : {}),
+        ...(ref ? { projectId: getProject(ws.db, ref).id } : {}),
+      }),
+    );
   });
+  // What is configured, never the secrets themselves: which keys exist, models, limits.
+  app.get('/api/settings', (c) =>
+    handle(c, () => {
+      const config = loadConfig();
+      return {
+        keys: (Object.keys(API_KEYS) as KeyedProvider[]).map((provider) => ({
+          provider,
+          label: API_KEYS[provider].label,
+          source: apiKeySource(provider),
+        })),
+        jevBaseUrl: config.providers.jev.baseUrl,
+        models: config.models,
+        limits: config.limits,
+        continuity: config.continuity,
+        budget: config.budget,
+        codex: { autoDispatch: config.codex.autoDispatch },
+        quota: quotaView(ws),
+      };
+    }),
+  );
   app.get('/api/tasks/:id', (c) => handle(c, () => taskContext(ws, c.req.param('id'))));
   app.post('/api/tasks/:id/answer', async (c) =>
     handle(c, async () =>

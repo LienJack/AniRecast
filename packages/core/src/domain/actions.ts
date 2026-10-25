@@ -25,7 +25,7 @@ import { markShotGenerationStale, recomputeShotModes } from './modes.ts';
 import { listTextOverlays } from './overlays.ts';
 import { getPersona } from './personas.ts';
 import { planBoard, planTake, sha256File } from './plan.ts';
-import { type GenerationTier, getProject } from './projects.ts';
+import { type GenerationTier, getProject, listProjects } from './projects.ts';
 import { getShot, listKeyframes, listShots, projectOfShot } from './shots.ts';
 import { getSource } from './sources.ts';
 
@@ -244,6 +244,56 @@ export function projectOverview(ws: Workspace, ref: string) {
       (t) => t.status !== 'done' && t.status !== 'cancelled',
     ),
   };
+}
+
+/** Which step of the project flow comes next. */
+export type ProjectStep = 'clip' | 'shots' | 'cast' | 'generate' | 'render' | 'done';
+
+/** One line per project for the project list: source, progress through the flow, open tasks. */
+export function projectSummaries(ws: Workspace) {
+  return listProjects(ws.db).map((project) => {
+    const source = getSource(ws.db, project.sourceId);
+    const clip = findActiveClip(ws.db, project.id) ?? null;
+    const shots = clip ? listShots(ws.db, clip.id) : [];
+    const working = shots.filter((s) => s.mode === 'replace' || s.mode === 'clean');
+    const approved = working.filter(
+      (s) => shotStage(ws.db, s.id, project.generationTier) === 'approved',
+    ).length;
+    const castMapped = listCast(ws.db, project.id).filter((c) => c.personaId).length;
+    const renders = listRenders(ws.db, project.id);
+    const tasks = listAgentTasks(ws.db, { projectId: project.id }).filter(
+      (t) => t.status !== 'done' && t.status !== 'cancelled',
+    );
+    const step: ProjectStep = !clip
+      ? 'clip'
+      : shots.length === 0
+        ? 'shots'
+        : castMapped === 0
+          ? 'cast'
+          : approved < working.length
+            ? 'generate'
+            : renders.length === 0
+              ? 'render'
+              : 'done';
+    return {
+      ...project,
+      source: {
+        id: source.id,
+        title: source.title,
+        thumbPath: source.thumbPath,
+        durationMs: source.durationMs,
+      },
+      clipSeconds: clip ? Number(((clip.frameCount * clip.fpsDen) / clip.fpsNum).toFixed(1)) : null,
+      shots: shots.length,
+      toGenerate: working.length,
+      approved,
+      castMapped,
+      renders: renders.length,
+      openTasks: tasks.length,
+      needsUser: tasks.filter((t) => t.status === 'needs_user').length,
+      step,
+    };
+  });
 }
 
 /** Everything Codex needs to act on a task, with absolute paths so it can look at the images. */

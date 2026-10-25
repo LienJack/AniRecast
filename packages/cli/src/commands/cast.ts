@@ -1,5 +1,6 @@
 import path from 'node:path';
 import {
+  type AssetKind,
   actorFromEnv,
   addPersonaImage,
   assignTracklet,
@@ -66,14 +67,23 @@ export function registerCast(program: Command): void {
     .option('--tags <tags>', 'comma-separated tags')
     .option('--ref <file...>', 'reference image(s); the first becomes primary (full-body outfit recommended)')
     .option('--view <view>', 'view of the first --ref: front|side|back|face|full|sheet|other', 'full')
+    .option('--kind <kind>', 'character (default), item or scene', 'character')
     .action(
       command(
-        (opts: { name: string; description?: string; tags?: string; ref?: string[]; view: PersonaView }) =>
+        (opts: {
+          name: string;
+          description?: string;
+          tags?: string;
+          ref?: string[];
+          view: PersonaView;
+          kind: AssetKind;
+        }) =>
           withWorkspace(globals(), async (ws) => {
             let p = createPersona(
               ws,
               {
                 name: opts.name,
+                kind: opts.kind,
                 ...(opts.description ? { description: opts.description } : {}),
                 ...(opts.tags ? { tags: opts.tags.split(',').map((t) => t.trim()) } : {}),
               },
@@ -96,9 +106,15 @@ export function registerCast(program: Command): void {
   persona
     .command('list')
     .option('--archived', 'include archived')
+    .option('--kind <kind>', 'only character, item or scene entries')
     .action(
-      command((opts: { archived?: boolean }) =>
-        withWorkspace(globals(), (ws) => listPersonas(ws.db, { includeArchived: Boolean(opts.archived) })),
+      command((opts: { archived?: boolean; kind?: AssetKind }) =>
+        withWorkspace(globals(), (ws) =>
+          listPersonas(ws.db, {
+            includeArchived: Boolean(opts.archived),
+            ...(opts.kind ? { kind: opts.kind } : {}),
+          }),
+        ),
       ),
     );
   persona

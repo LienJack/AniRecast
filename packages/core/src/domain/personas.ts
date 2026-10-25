@@ -31,9 +31,14 @@ export interface PersonaImage {
   sha256: string;
 }
 
+/** What a library entry is: a character (persona to swap in), an item or a scene. */
+export type AssetKind = 'character' | 'item' | 'scene';
+export const ASSET_KINDS: readonly AssetKind[] = ['character', 'item', 'scene'];
+
 export interface Persona {
   id: string;
   slug: string;
+  kind: AssetKind;
   name: string;
   description: string;
   tags: string[];
@@ -46,6 +51,7 @@ export interface Persona {
 interface PersonaRow {
   id: string;
   slug: string;
+  kind: AssetKind;
   name: string;
   description: string;
   tags_json: string;
@@ -89,6 +95,7 @@ function images(db: Db, personaId: string): PersonaImage[] {
 const toPersona = (db: Db, r: PersonaRow): Persona => ({
   id: r.id,
   slug: r.slug,
+  kind: r.kind,
   name: r.name,
   description: r.description,
   tags: fromJson(r.tags_json, []),
@@ -106,10 +113,15 @@ export function getPersona(db: Db, ref: string): Persona {
   return toPersona(db, row);
 }
 
-export function listPersonas(db: Db, { includeArchived = false } = {}): Persona[] {
+export function listPersonas(
+  db: Db,
+  { includeArchived = false, kind }: { includeArchived?: boolean; kind?: AssetKind } = {},
+): Persona[] {
+  const where = [includeArchived ? '' : 'archived = 0', kind ? 'kind = :kind' : ''].filter(Boolean);
   return all<PersonaRow>(
     db,
-    `SELECT * FROM personas ${includeArchived ? '' : 'WHERE archived = 0'} ORDER BY name`,
+    `SELECT * FROM personas ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY name`,
+    kind ? { kind } : {},
   ).map((r) => toPersona(db, r));
 }
 
@@ -126,21 +138,25 @@ function writeMirror(ws: Workspace, persona: Persona): void {
 
 export function createPersona(
   ws: Workspace,
-  input: { name: string; description?: string; tags?: string[]; slug?: string },
+  input: { name: string; description?: string; tags?: string[]; slug?: string; kind?: AssetKind },
   actor: string,
   now: number = Date.now(),
 ): Persona {
+  const kind = input.kind ?? 'character';
+  if (!ASSET_KINDS.includes(kind))
+    throw new AniError('usage', `Kind must be one of ${ASSET_KINDS.join(', ')}`);
   const persona = tx(ws.db, () => {
     const taken = all<{ slug: string }>(ws.db, 'SELECT slug FROM personas').map((r) => r.slug);
     const slug = uniqueSlug(slugify(input.slug ?? input.name, 'persona'), taken);
     const id = newId('per', now);
     run(
       ws.db,
-      `INSERT INTO personas (id, slug, name, description, tags_json, created_at, updated_at)
-       VALUES (:id, :slug, :name, :description, :tags, :now, :now)`,
+      `INSERT INTO personas (id, slug, kind, name, description, tags_json, created_at, updated_at)
+       VALUES (:id, :slug, :kind, :name, :description, :tags, :now, :now)`,
       {
         id,
         slug,
+        kind,
         name: input.name,
         description: input.description ?? '',
         tags: toJson(input.tags ?? []),
@@ -152,7 +168,7 @@ export function createPersona(
       kind: 'persona.created',
       entityType: 'persona',
       entityId: id,
-      payload: { name: input.name, slug },
+      payload: { name: input.name, slug, kind },
     });
     return getPersona(ws.db, id);
   });

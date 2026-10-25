@@ -452,6 +452,15 @@ CREATE TABLE shot_boundaries (
 );
 `,
   },
+  {
+    version: 4,
+    name: 'asset kinds in the library',
+    // The shared library holds characters (personas), items and scenes; existing entries are characters.
+    sql: `
+ALTER TABLE personas ADD COLUMN kind TEXT NOT NULL DEFAULT 'character' CHECK (kind IN ('character', 'item', 'scene'));
+CREATE INDEX personas_kind ON personas(kind, archived);
+`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
