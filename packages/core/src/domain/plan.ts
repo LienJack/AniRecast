@@ -258,11 +258,13 @@ export function planTake(
     }
     const { uses, keyframe } = castInShot(ws, shot, 1);
     let idx = boardId ? 1 : 0;
+    // No persona names here: the images identify each character, and on the Lycoris OP names such as
+    // "DeepSeek" or "Claude" went with Omni safety blocks that cleared once they were left out.
     for (const use of uses) {
       refs.push({ role: `persona:${use.persona.id}`, path: use.imagePaths[0]! });
       const look = lookInstruction(use, `<IMAGE_REF_${idx}>`);
       lines.push(
-        `Replace ${describeWho(ws, keyframe.frame, use)} with the character "${use.persona.name}" shown in ${boardId ? '<IMAGE_REF_0> and ' : ''}<IMAGE_REF_${idx}>. ${look}`,
+        `Replace ${describeWho(ws, keyframe.frame, use)} with the character shown in ${boardId ? '<IMAGE_REF_0> and ' : ''}<IMAGE_REF_${idx}>. ${look}`,
       );
       idx++;
     }
