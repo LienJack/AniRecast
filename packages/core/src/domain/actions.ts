@@ -962,6 +962,8 @@ export function taskContext(ws: Workspace, taskId: string) {
             version: t.version,
             tier: t.tier,
             status: t.status,
+            model: t.model,
+            ...(t.params.range ? { range: t.params.range, keepFrom: t.params.keepFrom } : {}),
           })),
         }
       : null,
@@ -970,7 +972,7 @@ export function taskContext(ws: Workspace, taskId: string) {
       payload.targetType === 'board'
         ? `Revise with \`anirecast board generate ${project.slug} --from ${payload.targetId} --extra "<instructions>" --wait\`, view the new board, then \`anirecast tasks done ${task.id} --note "…" --result <newBoardId>\`.`
         : payload.targetType === 'take'
-          ? `Revise with \`anirecast take generate ${project.slug} --from ${payload.targetId} --extra "<instructions>" --wait\`, check it with \`anirecast take sheet <newTakeId>\`, then \`anirecast tasks done ${task.id} --note "…" --result <newTakeId>\`.`
+          ? `Revise with \`anirecast take generate ${project.slug} --from ${payload.targetId} --extra "<instructions>" --wait\` — or, when the human approved part of it, redo only the rest: \`anirecast take generate ${project.slug} ${task.shotId ?? '<shot>'} --range a-b --keep ${payload.targetId}\` (cuts: \`anirecast shots cuts ${task.shotId ?? '<shot>'}\`). Check it with \`anirecast take sheet <newTakeId>\`, then \`anirecast tasks done ${task.id} --note "…" --result <newTakeId>\`. Needs a code change? \`anirecast tasks handoff ${task.id} --to claude --reason "…"\`.`
           : payload.targetType === 'design'
             ? `Revise with \`anirecast design generate ${project.slug} --from ${payload.targetId} --extra "<instructions>" --wait\`, view the new sheet, then \`anirecast tasks done ${task.id} --note "…" --result <newDesignId>\`.`
             : 'Follow the task payload.',

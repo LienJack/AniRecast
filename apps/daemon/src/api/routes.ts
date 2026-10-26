@@ -42,6 +42,7 @@ import {
   getSource,
   getTake,
   type HandoffTarget,
+  handOffToClaude,
   handoffPrompt,
   initWorkspace,
   inspectWorkspace,
@@ -124,6 +125,7 @@ import { parseTimecode, probe } from '@anirecast/media';
 import { AniError, type ErrorCode, IMAGE_MODELS, toEnvelopeError, VIDEO_MODELS } from '@anirecast/shared';
 import type { Context, Hono } from 'hono';
 import type { CodexDiscussions } from '../codex/discussions.ts';
+import { REPO_ROOT } from '../codex/dispatcher.ts';
 import { addReferenceFromUrl } from '../handlers/references.ts';
 import { serveWorkspaceFile } from './files.ts';
 
@@ -1082,6 +1084,25 @@ export function registerRoutes(
     }),
   );
   app.post('/api/tasks/:id/cancel', (c) => handle(c, () => cancelAgentTask(ws.db, c.req.param('id'), USER)));
+  // 交給 Claude 接手: a brief for Claude Code and the command that starts it (copied by the web).
+  app.post('/api/tasks/:id/handoff', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ reason?: string; tried?: string; plan?: string }>(c).catch(
+        () => ({}) as { reason?: string; tried?: string; plan?: string },
+      );
+      return handOffToClaude(
+        ws,
+        c.req.param('id'),
+        {
+          reason: b.reason?.trim() || '人類要 Claude 接手',
+          ...(b.tried ? { tried: b.tried } : {}),
+          ...(b.plan ? { plan: b.plan } : {}),
+          repoRoot: REPO_ROOT.replace(/\/$/, ''),
+        },
+        USER,
+      );
+    }),
+  );
   app.get('/api/jobs/:id', (c) => handle(c, () => getJob(ws.db, c.req.param('id'))));
   app.get('/api/jobs', (c) =>
     handle(c, () => listJobs(ws.db, { limit: Number(c.req.query('limit') ?? 200) })),

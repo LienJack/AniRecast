@@ -37,7 +37,7 @@ import {
   updateShot,
   type Workspace,
 } from '@anirecast/core';
-import { formatTimecode, parseTimecode } from '@anirecast/media';
+import { formatTimecode, parseTimecode, sceneChanges } from '@anirecast/media';
 import { AniError, IMAGE_MODELS, VIDEO_MODELS } from '@anirecast/shared';
 import type { Command } from 'commander';
 import { type GlobalOptions, withWorkspace } from '../context.ts';
@@ -349,6 +349,25 @@ export function registerMedia(program: Command): void {
             requestedBy: actorFromEnv(),
           });
           return [a, b];
+        }),
+      ),
+    );
+  shots
+    .command('cuts <shot>')
+    .description(
+      'Where the picture changes inside a shot: hard cuts (kind cut) and fast motion (kind motion, changes every few frames). Redo a shot cut by cut with `take generate --range`; joins at a cut are invisible',
+    )
+    .option('--threshold <score>', 'scene score from 0 to 1 that counts as a change', '0.3')
+    .action(
+      command((id: string, opts: { threshold: string }) =>
+        withWorkspace(globals(), async (ws) => {
+          const shot = getShot(ws.db, id);
+          if (!shot.sourcePath) throw new AniError('conflict', 'Shot source segment is not prepared yet');
+          const changes = await sceneChanges(ws.abs(shot.sourcePath), { threshold: Number(opts.threshold) });
+          const cuts = changes.filter((c) => c.kind === 'cut').map((c) => c.frame);
+          // The parts between cuts, in the shot's own frames (0 = its first): ranges for partial takes.
+          const parts = [0, ...cuts].map((start, i) => ({ start, end: (cuts[i] ?? shot.frameCount) - 1 }));
+          return { shot: shot.orderIndex + 1, frameCount: shot.frameCount, cuts, parts, changes };
         }),
       ),
     );

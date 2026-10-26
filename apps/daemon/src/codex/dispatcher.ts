@@ -324,6 +324,8 @@ export class AgentDispatcher {
       `2. 依 anirecast skill（${SKILL_PATH}）處理。只透過 anirecast CLI 操作，不要直接改 Workspace 裡的檔案；你沒有網路，模型呼叫由 AniRecast 服務代勞。用 --from 修正版本時會沿用原版本的檔位。`,
       `3. 完成時執行 \`anirecast tasks done ${task.id} --note "<一句話說明改了什麼>"${task.kind === 'review_feedback' ? ' --result <新版本 id>' : ''}\`。`,
       `4. 意見不明確或連續兩次被內容過濾擋下時，用 \`anirecast tasks ask ${task.id} --question "…"\` 問人類，然後結束。`,
+      '5. 人類說某一段已經可以（例如「74 到 164 幀可以」）時，只重做其他幀：`anirecast take generate <項目> <鏡頭> --range a-b --keep <要保留的版本>`；切點放在 `anirecast shots cuts <鏡頭>` 找到的切鏡上。多人、運鏡、鏡頭裡有切鏡或打鬥的鏡頭，照 skill 的「Hard shots」：先看上一版的 prompt 和 params.director 漏了誰、用錨點分鏡圖、先 `take plan` 看指令再付費。',
+      `6. 需要改 AniRecast 程式（你的 sandbox 只能寫 Workspace）或 CLI 做不到時，不要卡住、不要一直重做：\`anirecast tasks handoff ${task.id} --to claude --reason "…" --tried "…" --plan "…"\` 交給 Claude 接手，然後結束。`,
       '人類附上的圖片已經放在這則訊息裡（任務的 annotations 裡 type 為 image 的，以及 answerImages）；重新生成時用 --attach <路徑> 把需要的圖片交給模型。',
       '不要替人類按「通過」。',
     ].join('\n');

@@ -7,8 +7,10 @@ description: Operate an AniRecast workspace (replacing characters in anime openi
 # AniRecast
 
 AniRecast turns an anime opening into a version where chosen characters are replaced by personas from the
-user's library. Work is per shot: storyboard frames (GPT Image 2.5 Sunburst by default) → shot video (Seedance 2.5
-by default) → render. A project may choose other models (`anirecast project models`).
+user's library. Work is per shot: storyboard frames (GPT Image 2.5 Sunburst by default) → shot video (Wan 3.0
+reference-to-video by default, 1080p) → render. A project may choose other models (`anirecast project models`).
+Wan 3.0 redraws the whole frame from the original shot (it is not a pixel edit): motion and framing follow the
+original closely, but text in the scene and people the instruction forgets can come out wrong.
 The AniRecast daemon makes every model call; you plan, adjust prompts, queue jobs and check results.
 
 ## Ground rules
@@ -55,6 +57,9 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
    `anirecast take generate <project> --from <takeId> --extra "<what to change>" --wait`.
    You cannot watch video; run `anirecast take sheet <newTakeId>` and view the returned image (original
    frames on top, new frames below) to check motion, identity and the requested change.
+   When the human says part of a take is right ("74 到 164 幀可以", "only the start is wrong"), do not redo the
+   whole shot: redo only the other frames with `--range a-b --keep <takeId>` (see "Partial takes" below).
+   Shots with several people, camera moves, cuts inside them or fights: follow "Hard shots" below.
    If the problem is really the character design (wrong outfit, wrong face), say so: the board should be
    revised first (`anirecast board generate … --from <approved board>`), then a new take.
 4. Review feedback on a **character design** sheet (`targetType: design`). A design belongs to a binding: an
@@ -70,6 +75,66 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
 5. Finish: `anirecast tasks done <task> --note "<one sentence: what you changed>" --result <newVersionId>`.
    The note is shown to the human next to the new version, so make it specific.
 6. If the comment is ambiguous, or two attempts did not satisfy it: `anirecast tasks ask <task> --question "…"`.
+
+## Hard shots (several people, camera moves, cuts, fights)
+
+What worked on shot 11 (a camera move past five people) and shot 17 (three cuts and a gunfight) of the Lycoris OP,
+after several plain regenerations had failed:
+
+1. **Is the source sound?** `anirecast take generate` refuses a shot whose source segment does not decode every
+   frame (`conflict … damaged`). `anirecast shots prepare <shot>` cuts it again from the clip (no model cost).
+2. **Read what the last version actually sent** before writing anything: `anirecast take show <take>` →
+   `prompt` and `params.director` (`references`, `critique`, `notes`). Most failures are an instruction that
+   leaves someone out or pins them to the wrong seconds ("at 0–1 s replace the bartender" — and he stayed
+   himself in his close-up later). The director's brief carries a timeline from the detections (who is on screen
+   when, where and how close); detections are sampled and can miss small or partly hidden people, so check the
+   frames yourself.
+3. **Find the cuts inside the shot**: `anirecast shots cuts <shot>` → `cuts` (hard cuts) and `parts` (the frame
+   ranges between them); `kind: motion` entries are whip pans or fast action, not cuts.
+4. **List every person per part**, from the shot's frames: original → replacement, the frames they are in view
+   (also tiny, distant, out of focus, only a hand or sleeve showing), and what they do. Put the people the last
+   version missed into `--extra` with their seconds and place ("the girl on the tatami at the bottom right,
+   0–0.5 s, is the blonde gothic girl"). Name people the human wants kept ("the gunman in the red beret is not
+   replaced").
+5. **Anchor the hardest moment with a still**: approved storyboard frames are sent automatically. Draw one for a
+   crowded first or last moment with `anirecast board generate <project> <shot> --role first|last --force --wait`,
+   look at it, then pass it with `--attach <absolute path of the board image>` and say in `--extra` what it is
+   ("the attached image is frame 0 of this part with all five people already replaced: open exactly like it").
+6. **Preview before paying**: `anirecast take plan <shot> [--range a-b --keep <take>] --attach … --extra "…" --wait`
+   (one vision call) and read the instruction: every person, every part, the right images. Fix `--extra` until
+   it is right, then generate.
+7. **Check every part and every person**: `anirecast take sheet <take>`; a person left unchanged for half a second
+   is a rejection. Redo only what is wrong (next section), smallest range first.
+
+## Partial takes (分段／局部重做)
+
+`anirecast take generate <project> <shot> --range a-b --keep <take>` redoes only frames a–b of the shot (0 = its
+first frame) and keeps every other frame of `<take>`; `take plan` takes the same flags. The part is cut from the
+shot, directed and generated on its own (the director also sees the kept frames right before and after it), then
+put in place; the new take has the shot's full length. `conform.kept.psnrDb` above ~40 dB confirms the kept frames
+are untouched. Notes:
+
+- Put the boundaries at a cut (`shots cuts`): the join is then invisible. Inside continuous motion, prefer a fast
+  movement or a whip pan; a join in a slow, steady stretch may show a jump.
+- One shot at a time; the kept take must be a finished take of the same tier.
+- Wan bills whole seconds of the part (at least 2 s), so a 12-frame redo costs as much as 2 s; group nearby fixes.
+- Chain them: keep the newest good take each time (v4 kept v3's 74–164, v5 kept v4's 12–164).
+- Video jobs run up to three at a time; parts of different shots can run side by side.
+
+## Handing a task to Claude
+
+Your sandbox writes only the workspace; you cannot change AniRecast's code. When a task needs a code change (a
+missing CLI feature, a bug in a job), or keeps failing for a reason the CLI cannot reach, do not stall and do not
+loop on paid regenerations:
+
+```sh
+anirecast tasks handoff <task> --to claude --reason "<why you cannot finish it>" \
+  --tried "<versions you made, with ids, and what was still wrong>" --plan "<how you would solve it>"
+```
+
+It writes a brief for Claude Code under `projects/<project>/claude/<task>.md` (the request, the shot, every version
+with model, range and cost, the last instruction and references, your notes) and asks the human to start Claude on
+it with one command (also a button on the review page). Then end your turn.
 
 ## Same-person identification (`cast_review` tasks)
 
@@ -152,7 +217,11 @@ anirecast quota                             # requests left today per model (Omn
 anirecast shots boundaries <project>        # every cut: same moment or cut, who decided, how sure
 anirecast cast tidy <project> --wait        # JEV: merge same-person characters and same-outfit looks
 anirecast shots find-cast <shot> --wait     # 找出這一鏡的角色: who each person in one shot is (picks stay unlocked for the human)
-anirecast take plan <shot> [--model <id>] --wait   # 預覽提示詞: the video director's instruction and images, no video made
+anirecast take plan <shot> [--model <id>] [--range a-b --keep <take>] --wait   # 預覽提示詞: the director's instruction and images, no video made
+anirecast take generate <project> <shot> --range a-b --keep <take>   # redo only frames a–b, keep the rest of <take>
+anirecast shots cuts <shot>                 # hard cuts and fast motion inside a shot; `parts` are ranges for --range
+anirecast shots prepare <shot...>           # cut a damaged source segment again from the clip
+anirecast tasks handoff <task> --to claude --reason "…"   # hand a task that needs code to Claude Code
 anirecast design list <project>             # bindings: original → library character, analysis, note, sheets
 anirecast design analyze <project> <cast>   # 原片分析 of one original (add --generate to redraw the sheets after)
 anirecast design pick <project> <cast> --expressions 1,3 --poses 2   # which analysed items the sheets use

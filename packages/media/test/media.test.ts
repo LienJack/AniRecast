@@ -16,6 +16,7 @@ import {
   probe,
   runSidecar,
   scaleForUpload,
+  sceneChanges,
   stillClip,
 } from '../src/index.ts';
 import { FPS_DEN, FPS_NUM, synthesizeShots } from './fixtures.ts';
@@ -87,6 +88,9 @@ describe('media', () => {
     });
     const up = path.join(dir, 'up.mp4');
     expect(await decodedFrames(seg)).toBe(30);
+    // The synthetic source cuts after 30, 75 and 95 frames.
+    const cuts = (await sceneChanges(source)).filter((c) => c.kind === 'cut').map((c) => c.frame);
+    expect(cuts).toEqual([30, 75, 95]);
     // A damaged copy keeps its packets but not its frames.
     const damaged = path.join(dir, 'damaged.mp4');
     const bytes = readFileSync(seg);

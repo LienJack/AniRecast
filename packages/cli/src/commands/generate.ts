@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   type AgentTaskStatus,
   actorFromEnv,
@@ -27,6 +28,7 @@ import {
   getProject,
   getRender,
   getTake,
+  handOffToClaude,
   latestShotJob,
   listAgentTasks,
   listBoards,
@@ -126,6 +128,9 @@ function rangeOpt(
   if (!m) throw new AniError('usage', '--range is the first and last frame of the shot, e.g. 0-73');
   return { range: { start: Number(m[1]), end: Number(m[2]) }, ...(keep ? { keepFrom: keep } : {}) };
 }
+
+/** The AniRecast checkout this CLI runs from (Claude works on the code there). */
+const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
 
 const boardRole = (role: string): BoardRole => {
   if (!BOARD_ROLES.includes(role as BoardRole))
@@ -917,6 +922,33 @@ export function registerGenerate(program: Command): void {
     .action(
       command((id: string, opts: { question: string }) =>
         withWorkspace(globals(), (ws) => askUser(ws.db, id, opts.question, actorFromEnv())),
+      ),
+    );
+  tasks
+    .command('handoff <task>')
+    .description(
+      'Hand a task to Claude Code when it needs a code change (your sandbox writes only the workspace) or something the CLI cannot do: writes a brief and asks the human to start Claude on it',
+    )
+    .option('--to <agent>', 'who takes over (claude)', 'claude')
+    .requiredOption('--reason <text>', 'why you cannot finish it yourself')
+    .option('--tried <text>', 'what you tried, with version ids and what went wrong')
+    .option('--plan <text>', 'how you would solve it')
+    .action(
+      command((id: string, opts: { to: string; reason: string; tried?: string; plan?: string }) =>
+        withWorkspace(globals(), (ws) => {
+          if (opts.to !== 'claude') throw new AniError('usage', 'Only --to claude is supported');
+          return handOffToClaude(
+            ws,
+            id,
+            {
+              reason: opts.reason,
+              ...(opts.tried ? { tried: opts.tried } : {}),
+              ...(opts.plan ? { plan: opts.plan } : {}),
+              repoRoot: REPO_ROOT,
+            },
+            actorFromEnv(),
+          );
+        }),
       ),
     );
   tasks

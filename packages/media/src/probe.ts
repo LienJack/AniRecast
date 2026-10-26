@@ -116,3 +116,59 @@ export function formatTimecode(frame: number, fpsNum: number, fpsDen: number): s
   const sec = total - h * 3600 - m * 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${sec.toFixed(3).padStart(6, '0')}`;
 }
+
+/** A picture change inside a clip, from ffmpeg's scene score. */
+export interface SceneChange {
+  frame: number;
+  seconds: number;
+  score: number;
+  /** `cut` when it stands alone; `motion` when others are within a few frames (a whip pan, fast action, a flash). */
+  kind: 'cut' | 'motion';
+}
+
+/**
+ * Where the picture changes inside a clip: hard cuts, and runs of change every few frames that are fast motion
+ * rather than cuts. A shot that is really several cuts can be redone cut by cut (partial takes) with invisible joins.
+ */
+export async function sceneChanges(
+  file: string,
+  { threshold = 0.3, signal }: { threshold?: number; signal?: AbortSignal } = {},
+): Promise<SceneChange[]> {
+  const p = await probe(file, signal ? { signal } : {});
+  const fps = p.fpsNum / p.fpsDen;
+  const { stderr } = await exec(
+    'ffmpeg',
+    [
+      '-hide_banner',
+      '-nostdin',
+      '-i',
+      file,
+      '-an',
+      '-vf',
+      `select='gt(scene,${threshold})',metadata=print`,
+      '-f',
+      'null',
+      '-',
+    ],
+    signal ? { signal } : {},
+  );
+  const found: Array<{ frame: number; seconds: number; score: number }> = [];
+  let at: number | null = null;
+  for (const line of stderr.split('\n')) {
+    const t = /pts_time:([\d.]+)/.exec(line);
+    if (t) at = Number(t[1]);
+    const s = /lavfi\.scene_score=([\d.]+)/.exec(line);
+    if (s && at !== null) {
+      found.push({
+        frame: Math.round(at * fps),
+        seconds: Number(at.toFixed(3)),
+        score: Number(Number(s[1]).toFixed(3)),
+      });
+      at = null;
+    }
+  }
+  return found.map((c) => ({
+    ...c,
+    kind: found.some((o) => o !== c && Math.abs(o.frame - c.frame) <= 4) ? 'motion' : 'cut',
+  }));
+}

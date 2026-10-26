@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
   addPersonaImage,
+  createAgentTask,
   createBoard,
   createCastMember,
   createClip,
@@ -11,11 +12,14 @@ import {
   createSource,
   createTracklet,
   enqueueJob,
+  getAgentTask,
   getTake,
+  handOffToClaude,
   initWorkspace,
   latestShotJob,
   mapCast,
   openWorkspace,
+  projectOfShot,
   queueTake,
   queueTakePlan,
   recomputeShotModes,
@@ -313,6 +317,34 @@ describe('the video director', () => {
           await rangePsnr(path.join(root, kept.path!), path.join(root, done.path!), { from: 12, count: 12 }),
         ).toBeGreaterThan(40);
         expect(done.conform).toMatchObject({ range: { start: 0, end: 11 }, kept: { from: kept.id } });
+        // Codex hands the feedback on it to Claude: a brief, and the task put to the human with the command.
+        const db = openWorkspace(root, { role: 'cli' });
+        const task = createAgentTask(db.db, {
+          kind: 'review_feedback',
+          projectId: projectOfShot(db.db, shotId).id,
+          shotId,
+          payload: { targetType: 'take', targetId: done.id, comment: '第 0 幀還沒換' },
+          createdBy: 'user',
+        });
+        const handed = handOffToClaude(
+          db,
+          task.id,
+          { reason: 'needs a CLI feature', tried: 'v2', plan: 'add it', repoRoot: '/repo' },
+          'codex',
+        );
+        const brief = readFileSync(handed.brief, 'utf8');
+        expect(brief).toContain(`# 接手 AniRecast 任務 ${task.id}`);
+        expect(brief).toContain('第 0 幀還沒換');
+        expect(brief).toMatch(/\| v2 \(.+\) \| ready \| .+ \| 0–11 \|/);
+        expect(brief).toContain(`anirecast tasks done ${task.id}`);
+        expect(handed.command).toBe(
+          `cd /repo && claude "接手 AniRecast 任務 ${task.id}：先讀 ${handed.brief}"`,
+        );
+        expect(getAgentTask(db.db, task.id)).toMatchObject({
+          status: 'needs_user',
+          payload: { handoff: { to: 'claude', by: 'codex' } },
+        });
+        db.close();
       },
     );
   }, 120_000);

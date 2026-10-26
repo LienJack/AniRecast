@@ -42,16 +42,64 @@ function useModelPick(kind: 'image' | 'video', version: { model: string } | unde
   return [picked ?? own ?? (kind === 'image' ? project?.image : project?.video), setPicked] as const;
 }
 
+const copy = (text: string, done: string) =>
+  navigator.clipboard.writeText(text).then(
+    () => toast.success(done),
+    () => toast.error('無法寫入剪貼簿', { description: text }),
+  );
+
+/**
+ * What Codex is doing with the feedback on this version, and 交給 Claude 接手: a brief for Claude Code and the
+ * command that starts it, copied for the terminal (Codex hands over on its own when the fix needs code).
+ */
 function WorkingTasks({ tasks, targetId }: { tasks: AgentTask[]; targetId: string | undefined }) {
   const working = tasks.filter(
     (t) =>
       (t.payload as { targetId?: string }).targetId === targetId && !['done', 'cancelled'].includes(t.status),
   );
-  return working.map((t) => (
-    <div key={t.id} className="text-[11px] text-sky-200">
-      Codex {t.status === 'needs_user' ? `需要你回覆：${t.question ?? ''}` : '正在依意見修改…'}
-    </div>
-  ));
+  const handOff = useAction(
+    (id: string) =>
+      api.post<{ command: string }>(`/api/tasks/${id}/handoff`, { reason: '人類要 Claude 接手' }),
+    {
+      invalidate: [['shot'], ['project']],
+      onSuccess: (r) => void copy(r.command, '交接資料已整理，接手指令已複製：貼到終端機執行'),
+    },
+  );
+  return working.map((t) => {
+    const handoff = (t.payload as { handoff?: { to: string } }).handoff;
+    const command = handoff ? t.question?.split('執行：')[1]?.trim() : undefined;
+    return (
+      <div key={t.id} className="flex flex-wrap items-center gap-1.5 text-[11px] text-sky-200">
+        <span>
+          {handoff
+            ? `已交給 Claude 接手：${(t.question ?? '').split('。要接手')[0]}`
+            : `Codex ${t.status === 'needs_user' ? `需要你回覆：${t.question ?? ''}` : '正在依意見修改…'}`}
+        </span>
+        {command ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 px-1.5 text-[11px]"
+            title={command}
+            onClick={() => void copy(command, '接手指令已複製：貼到終端機執行')}
+          >
+            複製接手指令
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 px-1.5 text-[11px]"
+            disabled={handOff.isPending}
+            title="把意見、這一鏡的版本、Codex 試過的整理成交接資料，複製讓 Claude Code 接手的指令"
+            onClick={() => handOff.mutate(t.id)}
+          >
+            交給 Claude 接手
+          </Button>
+        )}
+      </div>
+    );
+  });
 }
 
 /**

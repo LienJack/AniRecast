@@ -10,6 +10,8 @@ export function workspaceAgentsMd(name: string): string {
 - 不要直接新增、修改或刪除 \`sources/\`、\`projects/\`、\`library/\` 與資料庫；版本只增不改。唯一例外是 Codex 討論自己的資料夾 \`projects/<項目>/codex/<hof_…>/\`：結論寫成那裡的 \`result.json\`，草稿放 \`work/\`。
 - 評審的「通過」只能由人類決定；人類鎖定的角色歸屬不要改動。
 - 處理 AniRecast 任務：\`anirecast tasks show <task>\`，完成後 \`anirecast tasks done <task> --note "…"\`。
+- 難的鏡頭（多人、運鏡、切鏡、打鬥）照 anirecast skill 的「Hard shots」；只有一段不對時用 \`take generate … --range a-b --keep <版本>\` 只重做那一段（\`anirecast shots cuts <鏡頭>\` 找切鏡）。
+- 需要改程式或 CLI 做不到時：\`anirecast tasks handoff <task> --to claude --reason "…"\` 交給 Claude 接手。
 - Codex 討論（\`hof_…\`）是和人類的多輪對話，不是任務：先讀它的 \`BRIEF.md\`，提出做法後等人類回覆；達成共識後寫 \`result.json\` 並執行 \`anirecast codex submit <hof_…>\`。
 `;
 }

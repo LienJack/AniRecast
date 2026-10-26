@@ -4,6 +4,7 @@ export * from './attachments.ts';
 export * from './boundaries.ts';
 export * from './cast.ts';
 export * from './cast-analysis.ts';
+export * from './claude.ts';
 export * from './clips.ts';
 export * from './codex.ts';
 export * from './costs.ts';

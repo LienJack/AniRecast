@@ -178,7 +178,11 @@ export function openWorkspace(dir: string, options: OpenOptions): Workspace {
     db.close();
     throw error;
   }
-  if (!existsSync(path.join(root, AGENTS_FILE)))
-    writeFileSync(path.join(root, AGENTS_FILE), workspaceAgentsMd(manifest.name));
+  // The generated guide follows the app: rewritten when it is still ours (starts with our heading) and outdated.
+  const agentsFile = path.join(root, AGENTS_FILE);
+  const guide = workspaceAgentsMd(manifest.name);
+  const current = existsSync(agentsFile) ? readFileSync(agentsFile, 'utf8') : null;
+  if (current === null || (current !== guide && current.startsWith('# AniRecast Workspace')))
+    writeFileSync(agentsFile, guide);
   return new Workspace(root, manifest, db);
 }
