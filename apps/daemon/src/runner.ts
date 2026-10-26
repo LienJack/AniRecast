@@ -42,7 +42,7 @@ export interface RunnerOptions {
   services: Services;
   handlers: Map<string, JobHandler>;
   concurrency: Record<Lane, number>;
-  /** Job types with their own cap inside their lane (shot videos: one at a time). */
+  /** Job types with their own cap inside their lane (shot videos, images). */
   typeLimits?: Record<string, number>;
   workerId: string;
   pollMs?: number;

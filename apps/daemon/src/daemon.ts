@@ -108,13 +108,19 @@ export async function startDaemon(options: StartOptions): Promise<DaemonHandle> 
     services,
     handlers: options.handlers ?? createHandlers(),
     concurrency: {
-      generate: config.concurrency.generate,
+      // Room for both: `generate` image jobs and `video` shot videos side by side.
+      generate: config.concurrency.generate + (config.concurrency.video ?? 1),
       media: config.concurrency.media,
       io: config.concurrency.io,
       agent: 1,
     },
-    // Images (storyboard frames, design sheets) share the generate lane; shot videos go one at a time.
-    typeLimits: { 'take.generate': config.concurrency.video ?? 1 },
+    // Shot videos (partial takes included) up to `video` at once; storyboard frames and design sheets up to
+    // `generate` each, so three videos never starve the images.
+    typeLimits: {
+      'take.generate': config.concurrency.video ?? 1,
+      'board.generate': config.concurrency.generate,
+      'design.generate': config.concurrency.generate,
+    },
     workerId: `${os.hostname()}:${process.pid}`,
     log,
   });

@@ -79,7 +79,7 @@ export const DEFAULT_CONFIG: LocalConfig = {
   providers: { jev: { baseUrl: 'https://router.shengsuanyun.com/api/v1' } },
   continuity: { enabled: true, autoMerge: 0.85, review: 0.5, maxShotSeconds: 10 },
   budget: { capUsd: null },
-  concurrency: { generate: 3, media: 2, io: 2, video: 1 },
+  concurrency: { generate: 3, media: 2, io: 2, video: 3 },
   codex: { autoDispatch: true, binPath: null, model: 'gpt-6.1-sol', effort: 'high' },
   pipeline: { autoAnalyze: true },
   // Omni allows 100 requests a day on API tier 2 (measured 2026-10-25); raise it after upgrading the tier.
