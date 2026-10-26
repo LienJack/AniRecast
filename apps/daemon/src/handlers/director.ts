@@ -10,7 +10,7 @@ import {
   sha256File,
   takeBrief,
 } from '@anirecast/core';
-import { cropGrid } from '@anirecast/media';
+import { composeReference } from '@anirecast/media';
 import { estimateVisionCost, mimeFor } from '@anirecast/providers';
 import { imageModelSpec, type VideoModelSpec, videoModelSpec } from '@anirecast/shared';
 import type { JobContext } from '../runner.ts';
@@ -301,9 +301,12 @@ export async function directTake(
     let path = s.refs[0]!.path;
     if (s.refs.length > 1) {
       path = `${input.outDir}/${input.stem}-ref${k + 1}.jpg`;
-      const rows: string[][] = [];
-      for (let i = 0; i < s.refs.length; i += 2) rows.push(s.refs.slice(i, i + 2).map((x) => ws.abs(x.path)));
-      await cropGrid(rows, ws.abs(path), { cell: 768, maxPerRow: 2 }, { signal });
+      await composeReference(
+        s.refs.map((x) => ws.abs(x.path)),
+        ws.abs(path),
+        {},
+        { signal },
+      );
     }
     const id = s.refs.map((x) => x.id).join('+');
     inputs.push({ role: `ref:${id}`, path, sha256: sha256File(ws.abs(path)) });

@@ -461,3 +461,47 @@ export async function cropGrid(
     opts,
   );
 }
+
+/**
+ * One reference image made of several (a design sheet and an expression sheet, three storyboard frames), laid out
+ * by shape so nothing is letterboxed: landscape images stacked at full width, portrait ones side by side at full
+ * height, a mix in square cells.
+ */
+export async function composeReference(
+  files: string[],
+  output: string,
+  { size = 1280 }: { size?: number } = {},
+  opts: FfmpegRunOptions = {},
+): Promise<void> {
+  if (files.length === 0) throw new AniError('usage', 'No images to compose');
+  const shapes = await Promise.all(files.map((f) => probe(f)));
+  const landscape = shapes.every((s) => s.width >= s.height);
+  const portrait = shapes.every((s) => s.height > s.width);
+  if (!landscape && !portrait) {
+    await cropGrid(
+      [files.slice(0, 2), files.slice(2, 4)].filter((r) => r.length),
+      output,
+      { cell: Math.round(size / 2), maxPerRow: 2 },
+      opts,
+    );
+    return;
+  }
+  ensureDir(output);
+  const inputs = files.flatMap((f) => ['-i', f]);
+  const even = (expr: string) => `trunc(${expr}/2)*2`;
+  const chains = files.map((_, i) =>
+    landscape
+      ? `[${i}:v]scale=${size}:${even(`${size}*ih/iw`)},setsar=1,format=yuv420p[c${i}]`
+      : `[${i}:v]scale=${even(`${size}*iw/ih`)}:${size},setsar=1,format=yuv420p[c${i}]`,
+  );
+  const cells = files.map((_, i) => `[c${i}]`).join('');
+  chains.push(
+    files.length > 1
+      ? `${cells}${landscape ? 'vstack' : 'hstack'}=inputs=${files.length}[out]`
+      : `${cells}null[out]`,
+  );
+  await ffmpeg(
+    [...inputs, '-filter_complex', chains.join(';'), '-map', '[out]', '-frames:v', '1', '-q:v', '3', output],
+    opts,
+  );
+}

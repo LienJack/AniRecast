@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  composeReference,
   conformByTime,
   conformTake,
   extractAudioSegment,
@@ -158,4 +159,23 @@ describe('media', () => {
     expect(result.cuts).toEqual([30, 75, 95]);
     expect(result.shots.at(-1)).toEqual({ start: 95, end: 154 });
   }, 120_000);
+});
+
+describe('reference composites', () => {
+  it('lays images out by shape so nothing is letterboxed', async () => {
+    const pic = async (name: string, size: string) => {
+      const file = path.join(dir, name);
+      await ffmpeg(['-f', 'lavfi', '-i', `testsrc=size=${size}`, '-frames:v', '1', file]);
+      return file;
+    };
+    const wide = [await pic('w1.png', '1600x900'), await pic('w2.png', '800x450')];
+    const tall = [await pic('t1.png', '600x900'), await pic('t2.png', '300x450')];
+    const out = path.join(dir, 'composite.jpg');
+    await composeReference(wide, out, { size: 1280 });
+    expect(await probe(out)).toMatchObject({ width: 1280, height: 1440 });
+    await composeReference(tall, out, { size: 1280 });
+    expect(await probe(out)).toMatchObject({ width: 1704, height: 1280 });
+    await composeReference([wide[0]!, tall[0]!], out, { size: 1280 });
+    expect(await probe(out)).toMatchObject({ width: 1280, height: 640 });
+  }, 60_000);
 });
