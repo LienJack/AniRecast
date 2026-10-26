@@ -34,6 +34,7 @@ import {
   TaskCard,
   VersionBadge,
 } from '@/components/domain';
+import { Generating, ShimmerText, useActiveJob } from '@/components/generating';
 import { ModelSelect } from '@/components/models';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -177,9 +178,13 @@ function CodexLive({ shotId, threadId }: { shotId: string; threadId: string | nu
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/5 p-2.5">
       <div className="flex items-center gap-2 text-xs">
-        <SparklesIcon className={cn('size-3.5 text-sky-300', live.state === 'running' && 'animate-pulse')} />
+        <SparklesIcon className="size-3.5 text-sky-300" />
         <span className="font-medium">
-          {live.state === 'running' ? 'Codex 正在處理…' : `Codex 這一輪結束（${live.turnStatus ?? '—'}）`}
+          {live.state === 'running' ? (
+            <ShimmerText>Codex 正在處理…</ShimmerText>
+          ) : (
+            `Codex 這一輪結束（${live.turnStatus ?? '—'}）`
+          )}
         </span>
         <span className="ml-auto text-[11px] text-muted-foreground">{formatAgo(live.at)}</span>
       </div>
@@ -341,6 +346,9 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
     d.takes.find((t) => target?.type === 'take' && t.id === target.id) ??
     d.takes.filter((t) => t.tier === d.project.tier).at(-1) ??
     d.takes.at(-1);
+  const busy = (v: { status: string } | undefined) => v?.status === 'queued' || v?.status === 'generating';
+  const boardJob = useActiveJob('boardId', busy(board) ? board?.id : null);
+  const takeJob = useActiveJob('takeId', busy(take) ? take?.id : null);
   const current: (WithReviews<Board> | WithReviews<Take>) | undefined =
     target?.type === 'board'
       ? d.boards.find((b) => b.id === target.id)
@@ -567,13 +575,18 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                         { src: fileUrl(board.path) ?? '', alt: `分鏡圖 v${board.version}` },
                       ]}
                     />
+                  ) : board && board.status !== 'failed' ? (
+                    <Generating
+                      queued={board.status === 'queued'}
+                      since={board.createdAt}
+                      progress={boardJob?.progress}
+                      message={boardJob?.message}
+                      backdrop={fileUrl(repKeyframe?.path)}
+                      className="aspect-video w-full"
+                    />
                   ) : (
                     <div className="flex aspect-video items-center justify-center rounded-md bg-muted text-muted-foreground text-xs">
-                      {board
-                        ? board.status === 'failed'
-                          ? '生成失敗'
-                          : '生成中…'
-                        : '按右側「生成分鏡圖」開始'}
+                      {board ? '生成失敗' : '按右側「生成分鏡圖」開始'}
                     </div>
                   )}
                 </div>
@@ -616,13 +629,19 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                     leftLabel="原片"
                     rightLabel={`v${take.version}`}
                   />
+                ) : take && take.status !== 'failed' ? (
+                  <Generating
+                    queued={take.status === 'queued'}
+                    label={busy(take) ? undefined : '準備對比播放器'}
+                    since={busy(take) ? take.createdAt : null}
+                    progress={takeJob?.progress}
+                    message={takeJob?.message}
+                    backdrop={fileUrl(d.boards.find((b) => b.id === take.boardId)?.path ?? repKeyframe?.path)}
+                    className="aspect-video w-full"
+                  />
                 ) : (
                   <div className="flex aspect-video items-center justify-center rounded-md bg-muted text-muted-foreground text-xs">
-                    {take
-                      ? take.status === 'failed'
-                        ? `生成失敗：${take.error ?? ''}`
-                        : '生成中，完成後會出現對比播放器…'
-                      : '還沒有分鏡視頻'}
+                    {take ? `生成失敗：${take.error ?? ''}` : '還沒有分鏡視頻'}
                   </div>
                 )}
               </CardContent>

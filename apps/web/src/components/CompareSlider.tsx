@@ -1,7 +1,6 @@
 import {
   ChevronFirstIcon,
   ChevronLastIcon,
-  Loader2Icon,
   PauseIcon,
   PlayIcon,
   RepeatIcon,
@@ -20,6 +19,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { ShimmerText } from '@/components/generating';
 import { Button } from '@/components/ui/button';
 import { type Fps, formatTimecode, fpsValue, seekTimeForFrame } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -255,15 +255,13 @@ export function CompareSlider({
           onKeyDown={onDividerKey}
         />
         {status !== 'ready' ? (
-          <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 text-muted-foreground text-xs">
-            {status === 'error' ? (
-              '無法載入對比影片'
-            ) : (
-              <>
-                <Loader2Icon className="mr-2 size-4 animate-spin" />
-                載入中…
-              </>
+          <div
+            className={cn(
+              'absolute inset-0 z-40 flex items-center justify-center bg-black/60 text-muted-foreground text-xs',
+              status !== 'error' && 'sweep',
             )}
+          >
+            {status === 'error' ? '無法載入對比影片' : <ShimmerText>載入中…</ShimmerText>}
           </div>
         ) : null}
       </div>

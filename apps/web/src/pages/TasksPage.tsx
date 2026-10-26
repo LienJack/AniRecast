@@ -59,7 +59,7 @@ function JobRow({ job, projectSlug }: { job: Job; projectSlug: string | undefine
       <td className="w-56 py-1.5 pr-2">
         {job.status === 'running' ? (
           <div className="flex flex-col gap-1">
-            <Progress value={Math.round(job.progress * 100)} />
+            <Progress value={Math.round(job.progress * 100)} className="sweep" />
             <span className="text-[11px] text-muted-foreground">
               {Math.round(job.progress * 100)}% {job.message ?? ''}
             </span>
@@ -124,7 +124,7 @@ function CodexStatusCard() {
       </CardHeader>
       <CardContent className="flex flex-col gap-1 text-xs">
         {!codex ? (
-          <Loading className="p-0" />
+          <Loading inline />
         ) : !codex.enabled ? (
           <span className="text-muted-foreground">
             自動派發已暫停（設定 codex.autoDispatch）。仍可在 Codex 對話裡說「處理評審」以手動模式處理。
@@ -307,7 +307,7 @@ export function TasksPage({
             </Tabs>
           </CardHeader>
           <CardContent className="overflow-x-auto">
-            {jobs.isPending ? <Loading /> : null}
+            {jobs.isPending ? <Loading inline /> : null}
             {jobs.isError ? <ErrorState error={jobs.error} /> : null}
             {jobList.length ? (
               <table className="w-full text-xs">

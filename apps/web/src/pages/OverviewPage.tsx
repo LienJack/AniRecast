@@ -364,11 +364,15 @@ export function OverviewPage() {
                         <tr key={s.id} className="border-b border-border/50">
                           <td className="py-1 font-mono">{s.orderIndex + 1}</td>
                           <td className="py-1">
-                            <Thumb
-                              src={fileUrl(s.thumb)}
-                              alt={`分鏡 ${s.orderIndex + 1}`}
-                              className="h-9 w-16 rounded"
-                            />
+                            <span
+                              className={cn('block w-16 rounded', s.stage.endsWith('_generating') && 'sweep')}
+                            >
+                              <Thumb
+                                src={fileUrl(s.thumb)}
+                                alt={`分鏡 ${s.orderIndex + 1}`}
+                                className="h-9 w-16 rounded"
+                              />
+                            </span>
                           </td>
                           <td className="py-1">
                             <ModeBadge mode={s.mode} />
@@ -462,7 +466,7 @@ export function OverviewPage() {
                 ) : cost.isError ? (
                   <ErrorState error={cost.error} className="m-0" />
                 ) : (
-                  <Loading className="p-0" />
+                  <Loading inline />
                 )}
               </CardContent>
             </Card>

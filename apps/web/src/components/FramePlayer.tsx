@@ -1,13 +1,13 @@
 import {
   ChevronFirstIcon,
   ChevronLastIcon,
-  Loader2Icon,
   PauseIcon,
   PlayIcon,
   StepBackIcon,
   StepForwardIcon,
 } from 'lucide-react';
 import { type Ref, useCallback, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
+import { ShimmerText } from '@/components/generating';
 import { Button } from '@/components/ui/button';
 import { type Fps, formatTimecode, seekTimeForFrame } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -132,15 +132,13 @@ export function FramePlayer({
           onError={() => setFailed(true)}
         />
         {!ready || failed ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-muted-foreground text-xs">
-            {failed ? (
-              '無法載入影片'
-            ) : (
-              <>
-                <Loader2Icon className="mr-2 size-4 animate-spin" />
-                載入中…
-              </>
+          <div
+            className={cn(
+              'absolute inset-0 flex items-center justify-center bg-black/60 text-muted-foreground text-xs',
+              !failed && 'sweep',
             )}
+          >
+            {failed ? '無法載入影片' : <ShimmerText>載入中…</ShimmerText>}
           </div>
         ) : null}
       </div>

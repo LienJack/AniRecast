@@ -1,15 +1,16 @@
 import { useParams } from '@tanstack/react-router';
-import { DownloadIcon, FilmIcon, Loader2Icon, PlusIcon } from 'lucide-react';
+import { DownloadIcon, FilmIcon, PlusIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { CompareSlider, type CompareSliderHandle } from '@/components/CompareSlider';
 import { EmptyState, ErrorState, Kbd, Loading, PageHeader, Tag } from '@/components/common';
+import { Generating } from '@/components/generating';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { api, fileUrl } from '@/lib/api';
 import { formatTime } from '@/lib/format';
 import { RENDER_STATUS_LABEL, RENDER_STATUS_TONE, TIER_LABEL, TIERS } from '@/lib/labels';
-import { qk, useAction, useOverview, useRenders } from '@/lib/queries';
+import { qk, useAction, useJobs, useOverview, useRenders } from '@/lib/queries';
 import type { GenerationTier, Job, Render } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { isTypingTarget } from '@/lib/video';
@@ -48,12 +49,18 @@ export function RendersPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  const jobs = useJobs();
   if (renders.isPending || overview.isPending) return <Loading />;
   if (renders.isError) return <ErrorState error={renders.error} />;
   if (overview.isError) return <ErrorState error={overview.error} />;
 
   const list = [...renders.data].sort((a, b) => b.version - a.version);
   const selected = list.find((r) => r.id === selectedId) ?? list.find((r) => r.status === 'ready') ?? list[0];
+  const renderJob = jobs.data?.find(
+    (j) =>
+      (j.status === 'queued' || j.status === 'running') &&
+      (j.payload as { renderId?: string } | null)?.renderId === selected?.id,
+  );
   const clip = overview.data.clip;
   const fps = clip ? { num: clip.fpsNum, den: clip.fpsDen } : { num: 24, den: 1 };
   const shotIndex = new Map(overview.data.shots.map((s) => [s.id, s.orderIndex + 1]));
@@ -152,10 +159,15 @@ export function RendersPage() {
                   ) : selected.status === 'failed' ? (
                     <ErrorState error={new Error(selected.error ?? '合成失敗')} className="m-0" />
                   ) : (
-                    <div className="flex aspect-video items-center justify-center gap-2 rounded-md bg-muted text-muted-foreground text-xs">
-                      <Loader2Icon className="size-4 animate-spin" />
-                      合成中，完成後自動顯示…
-                    </div>
+                    <Generating
+                      queued={selected.status === 'queued'}
+                      label={selected.status === 'queued' ? '排隊中' : '合成中'}
+                      since={selected.createdAt}
+                      progress={renderJob?.progress}
+                      message={renderJob?.message}
+                      backdrop={fileUrl(overview.data?.shots[0]?.thumb)}
+                      className="aspect-video w-full"
+                    />
                   )}
                 </CardContent>
               </Card>

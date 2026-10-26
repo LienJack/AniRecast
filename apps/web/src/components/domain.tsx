@@ -3,6 +3,7 @@ import { ExternalLinkIcon, LockIcon, SendIcon, XIcon } from 'lucide-react';
 import { useState } from 'react';
 import { DiscussInCodex } from '@/components/codex';
 import { Tag, Thumb } from '@/components/common';
+import { ShimmerText } from '@/components/generating';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { api } from '@/lib/api';
@@ -26,13 +27,21 @@ import type { AgentTask, AssignedBy, ShotMode, ShotStage, TextOverlay, VersionSt
 import { cn } from '@/lib/utils';
 
 export const StageBadge = ({ stage }: { stage: ShotStage }) => (
-  <Tag tone={STAGE_TONE[stage]}>{STAGE_LABEL[stage]}</Tag>
+  <Tag tone={STAGE_TONE[stage]}>
+    {stage.endsWith('_generating') ? <ShimmerText>{STAGE_LABEL[stage]}</ShimmerText> : STAGE_LABEL[stage]}
+  </Tag>
 );
 export const ModeBadge = ({ mode }: { mode: ShotMode }) => (
   <Tag tone={MODE_TONE[mode]}>{MODE_LABEL[mode]}</Tag>
 );
 export const VersionBadge = ({ status }: { status: VersionStatus }) => (
-  <Tag tone={VERSION_STATUS_TONE[status]}>{VERSION_STATUS_LABEL[status]}</Tag>
+  <Tag tone={VERSION_STATUS_TONE[status]}>
+    {status === 'generating' ? (
+      <ShimmerText>{VERSION_STATUS_LABEL[status]}</ShimmerText>
+    ) : (
+      VERSION_STATUS_LABEL[status]
+    )}
+  </Tag>
 );
 
 export function AssignedByBadge({ by }: { by: AssignedBy }) {

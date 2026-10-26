@@ -11,6 +11,7 @@ import {
   Tag,
   Thumb,
 } from '@/components/common';
+import { ShimmerText } from '@/components/generating';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -28,6 +29,7 @@ import { formatDuration, formatTime } from '@/lib/format';
 import { SOURCE_STATUS_LABEL, SOURCE_STATUS_TONE } from '@/lib/labels';
 import { qk, useAction, useJobs, useProjects, useSources } from '@/lib/queries';
 import type { Job, Project, Source } from '@/lib/types';
+import { cn } from '@/lib/utils';
 
 function CreateProjectDialog({ source, onClose }: { source: Source; onClose: () => void }) {
   const navigate = useNavigate();
@@ -128,9 +130,16 @@ function SourceCard({
         )}
         {job && (job.status === 'running' || job.status === 'queued') ? (
           <div className="flex flex-col gap-1">
-            <Progress value={Math.round(job.progress * 100)} />
+            <Progress
+              value={Math.round(job.progress * 100)}
+              className={cn(job.status === 'running' && 'sweep')}
+            />
             <span className="text-[11px] text-muted-foreground">
-              {job.status === 'queued' ? '排隊中' : `${Math.round(job.progress * 100)}% ${job.message ?? ''}`}
+              {job.status === 'queued' ? (
+                '排隊中'
+              ) : (
+                <ShimmerText>{`${Math.round(job.progress * 100)}% ${job.message ?? ''}`}</ShimmerText>
+              )}
             </span>
           </div>
         ) : null}

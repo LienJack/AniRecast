@@ -1,8 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { FolderOpenIcon, FolderPlusIcon, Loader2Icon, SearchCheckIcon } from 'lucide-react';
+import { FolderOpenIcon, FolderPlusIcon, SearchCheckIcon } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { ConfirmDialog, ErrorState, Field, Loading, PageHeader, Tag } from '@/components/common';
+import { ShimmerText } from '@/components/generating';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -54,8 +55,11 @@ function Restarting({ target, previousPid }: { target: string; previousPid: numb
       <Card className="w-[34rem]">
         <CardContent className="flex flex-col gap-3">
           <div className="flex items-center gap-2 font-semibold">
-            {timedOut ? null : <Loader2Icon className="size-4 animate-spin" />}
-            {done ? '已切換，重新載入…' : timedOut ? 'AniRecast 服務沒有回來' : 'AniRecast 服務正在重新啟動…'}
+            {timedOut ? (
+              'AniRecast 服務沒有回來'
+            ) : (
+              <ShimmerText>{done ? '已切換，重新載入…' : 'AniRecast 服務正在重新啟動…'}</ShimmerText>
+            )}
           </div>
           <div className="break-all text-muted-foreground text-xs">新的 Workspace：{target}</div>
           {timedOut ? (

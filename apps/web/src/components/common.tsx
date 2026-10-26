@@ -1,4 +1,4 @@
-import { AlertTriangleIcon, ImageOffIcon, Loader2Icon, ZoomInIcon } from 'lucide-react';
+import { AlertTriangleIcon, ImageOffIcon, ZoomInIcon } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { type LightboxImage, useLightbox } from '@/components/lightbox';
 import { Badge } from '@/components/ui/badge';
@@ -45,11 +45,37 @@ export function Tag({ tone, children, className }: { tone: Tone; children: React
   );
 }
 
-export function Loading({ label = '載入中…', className }: { label?: string; className?: string }) {
+/** Skeleton while data loads: a page outline (title, line, cards), or a few lines inside a card. */
+export function Loading({
+  label = '載入中…',
+  inline,
+  className,
+}: {
+  label?: string;
+  inline?: boolean;
+  className?: string;
+}) {
+  if (inline)
+    return (
+      <div role="status" aria-label={label} className={cn('flex flex-col gap-2 py-2', className)}>
+        <div className="skeleton h-3 w-full" />
+        <div className="skeleton h-3 w-5/6" />
+        <div className="skeleton h-3 w-2/3" />
+      </div>
+    );
   return (
-    <div className={cn('flex items-center gap-2 p-6 text-muted-foreground', className)}>
-      <Loader2Icon className="size-4 animate-spin" />
-      {label}
+    <div role="status" aria-label={label} className={cn('flex flex-col gap-3 p-5', className)}>
+      <div className="skeleton h-5 w-48" />
+      <div className="skeleton h-3 w-96 max-w-full" />
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="flex flex-col gap-2 rounded-lg border p-3">
+            <div className="skeleton aspect-video w-full" />
+            <div className="skeleton h-3 w-2/3" />
+            <div className="skeleton h-3 w-1/3" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -236,8 +262,12 @@ export function ConfirmDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button variant={destructive ? 'destructive' : 'default'} disabled={pending} onClick={onConfirm}>
-            {pending ? <Loader2Icon className="animate-spin" /> : null}
+          <Button
+            variant={destructive ? 'destructive' : 'default'}
+            disabled={pending}
+            className={cn(pending && 'sweep')}
+            onClick={onConfirm}
+          >
             {confirmLabel}
           </Button>
         </DialogFooter>

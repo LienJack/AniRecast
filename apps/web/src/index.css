@@ -74,3 +74,118 @@
     @apply bg-background text-foreground text-sm antialiased;
   }
 }
+
+/*
+ * Work in progress, without spinners: a soft light sweeps across what is being made (skeletons, frames, badges),
+ * labels shimmer like "Thinking…", and a faint aurora drifts behind a blurred ghost of the source picture.
+ * Everything stands still for people who ask for reduced motion.
+ */
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes text-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+@keyframes aurora {
+  0%,
+  100% {
+    transform: translate(-8%, -6%) scale(1);
+  }
+  50% {
+    transform: translate(8%, 6%) scale(1.15);
+  }
+}
+@keyframes ghost {
+  0%,
+  100% {
+    opacity: 0.38;
+  }
+  50% {
+    opacity: 0.62;
+  }
+}
+
+@layer components {
+  /* A band of light crossing the element; the element keeps its own background. */
+  .sweep,
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .sweep::after,
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: linear-gradient(
+      100deg,
+      transparent 25%,
+      oklch(1 0 0 / 5%) 40%,
+      oklch(1 0 0 / 11%) 50%,
+      oklch(1 0 0 / 5%) 60%,
+      transparent 75%
+    );
+    animation: sweep 1.8s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+  }
+  .sweep-slow::after {
+    animation-duration: 3.2s;
+    opacity: 0.6;
+  }
+  /* Placeholder block of a skeleton screen. */
+  .skeleton {
+    border-radius: var(--radius-md);
+    background-color: oklch(1 0 0 / 6%);
+  }
+  /* Text with light running through it. */
+  .text-shimmer {
+    background-image: linear-gradient(
+      90deg,
+      currentColor 0%,
+      currentColor 40%,
+      oklch(1 0 0 / 95%) 50%,
+      currentColor 60%,
+      currentColor 100%
+    );
+    background-size: 300% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: text-shimmer 2.2s linear infinite;
+  }
+  .aurora {
+    position: absolute;
+    inset: -25%;
+    pointer-events: none;
+    background:
+      radial-gradient(38% 48% at 30% 40%, oklch(0.7 0.15 250 / 20%), transparent 70%),
+      radial-gradient(34% 44% at 72% 62%, oklch(0.68 0.17 300 / 16%), transparent 70%);
+    filter: blur(24px);
+    animation: aurora 9s ease-in-out infinite;
+  }
+  .ghost {
+    animation: ghost 3.6s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sweep::after,
+  .skeleton::after,
+  .text-shimmer,
+  .aurora,
+  .ghost {
+    animation: none;
+  }
+}

@@ -17,6 +17,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { DiscussInCodex } from '@/components/codex';
 import { EmptyState, ErrorState, Loading, PageHeader, Tag, Thumb } from '@/components/common';
 import { ActorLink, VersionBadge } from '@/components/domain';
+import { formatClock, Generating, ShimmerText, useActiveJob, useElapsed } from '@/components/generating';
 import { ModelSelect } from '@/components/models';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -45,6 +46,7 @@ import type {
   CastAnalysis,
   CastReference,
   DesignKind,
+  Job,
   UnboundCast,
 } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -69,12 +71,15 @@ function SheetPanel({
   tasks,
   model,
   subject = 'replacement',
+  ghost,
 }: {
   projectRef: string;
   castId: string;
   personaName: string;
   sheet: Sheet;
   tasks: AgentTask[];
+  /** What a new version starts from when there is no earlier one to show blurred (the template sheet). */
+  ghost?: string | null;
   /** Image model for new sheets (regenerating keeps the version's own model). */
   model: string | undefined;
   /** The original character's own sheet (官方設定集) or her replacement's. */
@@ -93,6 +98,9 @@ function SheetPanel({
     }
   }, [latestId]);
   const v = sheet.versions.find((x) => x.id === selectedId) ?? sheet.latest ?? undefined;
+  const making = v && !isFinished(v) && v.status !== 'failed' ? v : undefined;
+  const job = useActiveJob('designId', making?.id);
+  const earlier = sheet.versions.filter((x) => x.path && isFinished(x) && x.id !== making?.id).at(-1);
   // The model this panel's buttons draw with: picked here, else the shown version's own (so 重新生成 repeats it),
   // else the binding's choice.
   const images = useModels().data?.image;
@@ -189,9 +197,19 @@ function SheetPanel({
           zoom
           gallery={gallery}
         />
+      ) : making ? (
+        <Generating
+          queued={making.status === 'queued'}
+          since={making.createdAt}
+          progress={job?.progress}
+          message={job?.message}
+          backdrop={earlier?.path ? fileUrl(earlier.path, earlier.createdAt) : ghost}
+          shape={sheet.kind}
+          className="aspect-video w-full"
+        />
       ) : (
         <div className="flex aspect-video w-full items-center justify-center rounded-md bg-muted text-muted-foreground text-xs">
-          {!v ? '還沒有設計' : v.status === 'failed' ? '生成失敗' : '生成中…'}
+          {!v ? '還沒有設計' : '生成失敗'}
         </div>
       )}
       {v ? (
@@ -476,6 +494,23 @@ function AnalysisPanel({
     picks.mutate({ [list]: next });
   };
   const running = analysis?.status === 'queued' || analysis?.status === 'analyzing';
+  const job = useActiveJob('castMemberId', running ? cast.id : null, 'design.analyze');
+  const elapsed = useElapsed(running ? (job?.createdAt ?? analysis?.updatedAt) : null);
+  const working = (
+    <span className="flex items-center gap-2">
+      <ShimmerText className="font-medium text-sky-200">
+        {analysis?.status === 'queued' ? '排隊中' : analysis?.data ? '重新分析中' : '分析中'}
+      </ShimmerText>
+      <span className="text-muted-foreground">
+        看「{cast.label}」在每個分鏡最清楚的頭部和全身裁切，整理畫風、身形、服裝和表情動作…
+      </span>
+      {elapsed !== null ? (
+        <span className="ml-auto font-mono text-[11px] text-muted-foreground tabular-nums">
+          {formatClock(elapsed)}
+        </span>
+      ) : null}
+    </span>
+  );
   const buttons = (
     <span className="flex flex-wrap gap-1.5">
       <Button
@@ -504,20 +539,49 @@ function AnalysisPanel({
   if (!analysis?.data)
     return (
       <div className="flex flex-col gap-2 text-xs">
-        <span className="text-muted-foreground">
-          {running
-            ? '分析中…'
-            : analysis?.status === 'failed'
+        {running ? (
+          <div
+            role="status"
+            className="flex flex-col gap-3 rounded-md border border-sky-500/25 bg-sky-500/5 p-3"
+          >
+            {working}
+            <div className="grid gap-3 md:grid-cols-3">
+              {['畫風', '身形', '服裝'].map((k) => (
+                <div key={k} className="flex flex-col gap-1.5">
+                  <span className="text-muted-foreground">{k}</span>
+                  <div className="skeleton h-3 w-full" />
+                  <div className="skeleton h-3 w-4/5" />
+                </div>
+              ))}
+            </div>
+            {['原片表情', '原片動作'].map((k) => (
+              <div key={k} className="flex flex-col gap-1.5">
+                <span className="text-muted-foreground">{k}</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {[0, 1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className="skeleton size-14" />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span className="text-muted-foreground">
+            {analysis?.status === 'failed'
               ? `分析失敗：${analysis.error ?? ''}`
               : `還沒分析。會看「${cast.label}」在每個分鏡最清楚的頭部和全身裁切，整理這部動畫怎麼畫她、她的身形和服裝，以及她在 OP 裡的表情和動作。`}
-        </span>
+          </span>
+        )}
         {buttons}
       </div>
     );
   const d = analysis.data;
   return (
     <div className="flex flex-col gap-3 text-xs">
-      {analysis.stale ? (
+      {running ? (
+        <div className="sweep rounded border border-sky-500/25 bg-sky-500/5 p-2">{working}</div>
+      ) : null}
+      {analysis.stale && !running ? (
         <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-amber-200">
           「{cast.label}」的出場在角色步驟改過了，建議重新分析。
         </div>
@@ -569,10 +633,23 @@ const REF_STATUS: Record<RefStatus, { text: string; tone: 'success' | 'info' | '
   rejected: { text: '不用', tone: 'muted' },
 };
 
+/** What the official-art search is doing, from its job message. */
+function searchStep(job: Job): string {
+  if (job.status === 'queued') return '排隊中';
+  const m = job.message ?? '';
+  const dl = /downloading (\d+) images from (\d+) pages/.exec(m);
+  if (dl) return `從 ${dl[2]} 個頁面下載 ${dl[1]} 張圖…`;
+  if (m.startsWith('searching')) return '用 Google 搜尋官方網站、設定資料頁面…';
+  if (m.startsWith('checking')) return '視覺模型逐張檢查：是不是她、是不是官方設定圖…';
+  return '搜尋中…';
+}
+
 /** 官方設定集: reference images of the original character, found by the search agent or added by hand. */
 function ReferencesPanel({ projectRef, entry }: { projectRef: string; entry: BindingDesigns }) {
   const { cast } = entry;
   const refs = entry.original.references;
+  const searching = useActiveJob('castMemberId', cast.id, 'design.references');
+  const searchElapsed = useElapsed(searching ? (searching.startedAt ?? searching.createdAt) : null);
   const [url, setUrl] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const inv = [qk.designs(projectRef)];
@@ -633,11 +710,12 @@ function ReferencesPanel({ projectRef, entry }: { projectRef: string; entry: Bin
         <span className="ml-auto flex flex-wrap items-center gap-1.5">
           <Button
             size="sm"
-            disabled={search.isPending}
+            disabled={search.isPending || Boolean(searching)}
             title="Gemini 搜尋官方網站、設定集等頁面，抓頁面上的圖，再用視覺模型留下「同一角色＋官方設定圖」的（約 USD 0.06）"
             onClick={() => search.mutate(undefined)}
           >
-            <SearchIcon />用 Agent 搜尋官方設定集
+            <SearchIcon />
+            {searching ? <ShimmerText>搜尋中…</ShimmerText> : '用 Agent 搜尋官方設定集'}
           </Button>
         </span>
       </div>
@@ -678,6 +756,29 @@ function ReferencesPanel({ projectRef, entry }: { projectRef: string; entry: Bin
           上傳圖片
         </Button>
       </div>
+      {searching ? (
+        <div
+          role="status"
+          className="flex flex-col gap-2 rounded-md border border-sky-500/25 bg-sky-500/5 p-2.5"
+        >
+          <div className="flex items-center gap-2 text-xs">
+            <ShimmerText className="font-medium text-sky-200">{searchStep(searching)}</ShimmerText>
+            <span className="ml-auto font-mono text-[11px] text-muted-foreground tabular-nums">
+              {searching.status === 'running' ? `${Math.round(searching.progress * 100)}% · ` : ''}
+              {searchElapsed !== null ? formatClock(searchElapsed) : ''}
+            </span>
+          </div>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="flex flex-col gap-1.5 rounded-md border p-1.5">
+                <div className="skeleton aspect-square w-full" />
+                <div className="skeleton h-3 w-3/4" />
+                <div className="skeleton h-3 w-1/2" />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {refs.length ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
           {refs.map((r) => (
@@ -746,7 +847,7 @@ function ReferencesPanel({ projectRef, entry }: { projectRef: string; entry: Bin
             </div>
           ))}
         </div>
-      ) : (
+      ) : searching ? null : (
         <span className="text-muted-foreground text-xs">
           還沒有參考圖。按「用 Agent 搜尋官方設定集」，或貼網址、上傳你有的設定集（例如 BD
           特典、設定資料集）。
@@ -919,6 +1020,7 @@ function BindingCard({
                     sheet={sheet}
                     tasks={tasks}
                     model={model}
+                    ghost={fileUrl(entry.original.sheets.find((o) => o.kind === sheet.kind)?.approved?.path)}
                   />
                 ))}
               </div>

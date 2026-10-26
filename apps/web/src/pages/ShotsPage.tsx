@@ -12,6 +12,7 @@ import {
   Thumb,
 } from '@/components/common';
 import { FrameWithOverlays, ModeBadge, StageBadge } from '@/components/domain';
+import { GeneratingOverlay } from '@/components/generating';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import {
@@ -40,7 +41,7 @@ export function OverlayPanel({ shotId }: { shotId: string }) {
       api.patch(`/api/overlays/${v.id}`, { remove: v.remove, category: v.category }),
     { success: '已更新字幕設定' },
   );
-  if (detail.isPending) return <Loading className="p-2" />;
+  if (detail.isPending) return <Loading inline className="p-2" />;
   if (detail.isError) return <ErrorState error={detail.error} className="m-0" />;
   const { overlays, keyframes } = detail.data;
   const mid = keyframes.find((k) => k.role === 'mid') ?? keyframes[0];
@@ -109,6 +110,11 @@ function ShotCard({ shot, projectRef }: { shot: OverviewShot; projectRef: string
             alt={`分鏡 ${shot.orderIndex + 1}`}
             className="aspect-video w-full"
           />
+          {shot.stage.endsWith('_generating') && shot.mode !== 'keep' && shot.mode !== 'exclude' ? (
+            <GeneratingOverlay
+              label={shot.stage === 'board_generating' ? '分鏡圖生成中' : '分鏡視頻生成中'}
+            />
+          ) : null}
           <span className="absolute top-1.5 left-1.5 rounded bg-black/70 px-1.5 font-mono text-xs">
             #{shot.orderIndex + 1}
           </span>
