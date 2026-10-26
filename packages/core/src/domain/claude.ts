@@ -128,6 +128,21 @@ export function handOffToClaude(
       );
     }
   }
+  if (p.targetType === 'board' && p.targetId) {
+    // Sent back for changes it is no longer "approved or pending", so the list above leaves it out.
+    const b = listBoards(ws.db, shot?.id ?? '').find((x) => x.id === p.targetId);
+    if (b)
+      lines.push(
+        '',
+        `## 被評的分鏡圖 ${b.role} v${b.version}（${b.id}，${b.status}）`,
+        `- 檔案：${b.path ? ws.abs(b.path) : '—'}`,
+        '',
+        '送給模型的指令：',
+        '```',
+        b.prompt,
+        '```',
+      );
+  }
   lines.push(
     '',
     `## ${actor} 試過的`,
@@ -146,6 +161,7 @@ export function handOffToClaude(
     `- 只重做一段：\`anirecast take plan ${shot?.id ?? '<shot>'} --range a-b --keep <take> --wait\` 先看指令，再 \`anirecast take generate ${project.slug} ${shot?.id ?? '<shot>'} --range a-b --keep <take>\`。`,
     `- 找鏡頭裡的切鏡：\`anirecast shots cuts ${shot?.id ?? '<shot>'}\`；片段壞了：\`anirecast shots prepare <shot>\`。`,
     '- 錨點圖：`anirecast board generate <project> <shot> --role first|last --force`，再用 `--attach <絕對路徑>` 交給影片，並在 --extra 說明它是哪一幀。',
+    `- 靜止鏡頭（不花錢）：\`anirecast take still ${project.slug} ${shot?.id ?? '<shot>'} [--board <分鏡圖 id>]\`；--board 可指定人類說「用這張做靜止」的分鏡圖，退回的也行。`,
     '- 檢查：`anirecast take sheet <take>`，或用 ffmpeg 在 ~/.cache/ranolabs/sessions/ 下抽幀對照原片。',
   );
   const rel = `${projectDir(project)}/claude/${task.id}.md`;

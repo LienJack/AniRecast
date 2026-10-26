@@ -20,7 +20,7 @@ import { FakeProvider } from '@anirecast/providers';
 import { afterAll, describe, expect, it } from 'vitest';
 import { synthesizeShots } from '../../../packages/media/test/fixtures.ts';
 import { startDaemon } from '../src/index.ts';
-import { cliData, TEST_CONFIG } from './helpers.ts';
+import { cli, cliData, TEST_CONFIG } from './helpers.ts';
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'anirecast-gen-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -240,6 +240,42 @@ describe('board → take → render with the fake provider', () => {
         height: 360,
       });
       expect(await cliData<typeof before>(t, ['quota'])).toEqual(before);
+
+      // "Make a still of this board": a board sent back can still be named and held; without --board it is refused.
+      const held = (
+        await cliData<Array<{ id: string; path: string; status: string; role: string }>>(t, [
+          'board',
+          'list',
+          stillShot.id,
+        ])
+      ).find((b) => b.status === 'approved' && b.role === 'key')!;
+      await cliData(t, ['review', 'reject', held.id]);
+      const refused = await cli(t, ['take', 'still', project.slug, stillShot.id]);
+      expect(refused.json.error?.code).toBe('conflict');
+      const both = await cli(t, [
+        'take',
+        'still',
+        project.slug,
+        stillShot.id,
+        shots[0]!.id,
+        '--board',
+        held.id,
+      ]);
+      expect(both.json.error?.code).toBe('usage');
+      const named = await cliData<{ takes: Array<{ id: string }> }>(t, [
+        'take',
+        'still',
+        project.slug,
+        stillShot.id,
+        '--board',
+        held.id,
+        '--wait',
+      ]);
+      const namedTake = await cliData<{
+        take: { status: string; boardId: string; inputs: Array<{ role: string; path: string }> };
+      }>(t, ['take', 'show', named.takes[0]!.id]);
+      expect(namedTake.take).toMatchObject({ status: 'ready', boardId: held.id });
+      expect(namedTake.take.inputs).toEqual([expect.objectContaining({ role: 'board', path: held.path })]);
 
       // Feedback becomes an agent task with everything Codex needs.
       const changed = await cliData<{ task: { id: string } }>(t, [

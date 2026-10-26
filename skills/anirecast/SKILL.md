@@ -239,6 +239,7 @@ anirecast take generate <project> <shot> --range a-b --keep <take>   # redo only
 anirecast shots cuts <shot>                 # hard cuts and fast motion inside a shot; `parts` are ranges for --range
 anirecast take merge <base> <parts...>      # join partial takes made side by side from <base> (no model, no cost)
 anirecast take frames <project> <shot> --range a-b --keep <take>   # 逐格重繪: redraw each drawing with the image model
+anirecast take still <project> <shot> [--board <board>]   # hold a board for the shot's length (no model, no cost); --board names one the human asked to hold, even one sent back
 anirecast review reject <version>           # (human) 拒絕: out of 待評審, nothing more to do
 anirecast shots prepare <shot...>           # cut a damaged source segment again from the clip
 anirecast tasks handoff <task> --to claude --reason "…"   # hand a task that needs code to Claude Code

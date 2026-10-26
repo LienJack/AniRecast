@@ -736,19 +736,33 @@ export const STILL_TAKE_MODEL = 'still';
 
 /**
  * A take that holds the approved board for the length of the shot, for shots the video model will not do.
- * No model, no request, no cost; it renders like any other take.
+ * No model, no request, no cost; it renders like any other take. `boardId` holds that board instead — one the
+ * human named, even if they sent it back with "make a still of it" (the take is still theirs to approve).
  */
-export function queueStillTake(ws: Workspace, shotId: string, tier: GenerationTier, actor: string) {
-  const board = approvedBoard(ws.db, shotId);
+export function queueStillTake(
+  ws: Workspace,
+  shotId: string,
+  tier: GenerationTier,
+  actor: string,
+  opts: { boardId?: string } = {},
+) {
+  const named = opts.boardId ? getBoard(ws.db, opts.boardId) : undefined;
+  if (named && named.shotId !== shotId)
+    throw new AniError('usage', `Board ${named.id} belongs to another shot`);
+  if (named && !['ready', 'approved', 'rejected', 'stale'].includes(named.status))
+    throw new AniError('conflict', `Only a finished board can be held (this one is ${named.status})`);
+  const board = named ?? approvedBoard(ws.db, shotId);
   if (!board?.path)
     throw new AniError('conflict', 'A still take needs an approved board', {
-      hint: 'Approve the board first.',
+      hint: 'Approve the board first, or name the board to hold (--board).',
     });
   const take = createTake(ws.db, {
     shotId,
     tier,
     boardId: board.id,
-    prompt: 'Still: the approved board held for the length of the shot (no video model).',
+    prompt: named
+      ? `Still: board ${board.role} v${board.version} held for the length of the shot (no video model).`
+      : 'Still: the approved board held for the length of the shot (no video model).',
     model: STILL_TAKE_MODEL,
     params: { tier, still: true },
     inputs: [{ role: 'board', path: board.path, sha256: sha256File(ws.abs(board.path)) }],

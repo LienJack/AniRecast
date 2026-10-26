@@ -885,11 +885,11 @@ export function registerRoutes(
   );
   app.post('/api/shots/:id/still-take', async (c) =>
     handle(c, async () => {
-      const b = await body<{ tier?: GenerationTier }>(c);
+      const b = await body<{ tier?: GenerationTier; boardId?: string }>(c);
       const shotId = c.req.param('id');
       const tier = b.tier ?? projectOfShot(ws.db, shotId).generationTier;
       if (!TIERS.includes(tier)) throw new AniError('usage', `Tier must be one of ${TIERS.join(', ')}`);
-      return queueStillTake(ws, shotId, tier, USER);
+      return queueStillTake(ws, shotId, tier, USER, b.boardId ? { boardId: b.boardId } : {});
     }),
   );
   app.post('/api/takes/:id/promote', async (c) =>

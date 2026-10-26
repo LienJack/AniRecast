@@ -735,22 +735,35 @@ export function registerGenerate(program: Command): void {
       '--tier <tier>',
       'output size: draft (360p), preview (720p) or final (1080p); default: the project tier',
     )
+    .option(
+      '--board <board>',
+      'hold this board instead of the approved one (one shot; e.g. one the human sent back asking for a still)',
+    )
     .option('--wait', 'wait until the clips are made')
     .action(
-      command((projectRef: string, shotIds: string[], opts: { tier?: GenerationTier; wait?: boolean }) =>
-        withWorkspace(globals(), async (ws) => {
-          const tier = opts.tier ?? getProject(ws.db, projectRef).generationTier;
-          if (!TIERS.includes(tier)) throw new AniError('usage', `Tier must be one of ${TIERS.join(', ')}`);
-          const queued = shotIds.map((id) => queueStillTake(ws, id, tier, actorFromEnv()));
-          return {
-            takes: queued.map((q) => q.take),
-            ...(await waitAll(
-              ws,
-              queued.map((q) => q.job.id),
-              opts.wait,
-            )),
-          };
-        }),
+      command(
+        (
+          projectRef: string,
+          shotIds: string[],
+          opts: { tier?: GenerationTier; board?: string; wait?: boolean },
+        ) =>
+          withWorkspace(globals(), async (ws) => {
+            const tier = opts.tier ?? getProject(ws.db, projectRef).generationTier;
+            if (!TIERS.includes(tier)) throw new AniError('usage', `Tier must be one of ${TIERS.join(', ')}`);
+            if (opts.board && shotIds.length !== 1)
+              throw new AniError('usage', '--board names one board, so give exactly one shot');
+            const queued = shotIds.map((id) =>
+              queueStillTake(ws, id, tier, actorFromEnv(), opts.board ? { boardId: opts.board } : {}),
+            );
+            return {
+              takes: queued.map((q) => q.take),
+              ...(await waitAll(
+                ws,
+                queued.map((q) => q.job.id),
+                opts.wait,
+              )),
+            };
+          }),
       ),
     );
   take
