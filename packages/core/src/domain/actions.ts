@@ -92,7 +92,8 @@ export function queueBoard(
     projectId: projectOfShot(ws.db, shotId).id,
     payload: { boardId: board.id },
     requestedBy: actor,
-    maxAttempts: 2,
+    // Network hiccups to fal / Google are transient: a storyboard frame gets three tries.
+    maxAttempts: 3,
   });
   return { board, job };
 }

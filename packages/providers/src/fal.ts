@@ -83,6 +83,40 @@ export function toSeedancePrompt(prompt: string): string {
  * mode (video plus reference images). Models are named `fal:<endpoint id>`. Cost is fal's billable units for
  * the request times the endpoint's list price.
  */
+/** The low-level cause of a failed fetch (ECONNRESET, ENOTFOUND, UND_ERR_CONNECT_TIMEOUT …). */
+export const networkCause = (error: unknown): string => {
+  const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+  return cause?.code ?? cause?.message ?? (error as Error).message ?? String(error);
+};
+/** Failures before the request reached the server: safe to retry even a paid submit. */
+const CONNECT_FAILURES =
+  /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|UND_ERR_CONNECT_TIMEOUT|ENETUNREACH|EHOSTUNREACH|CERT|TLS/i;
+const BACKOFF_MS = [1500, 4000, 8000];
+
+/**
+ * fetch with retries for a flaky line to fal (an outage of a few minutes broke whole batches): network errors are
+ * retried with backoff — any of them for uploads and polling, only connection failures for a paid submit — and
+ * what still fails is a transient error (the job is retried) naming its cause.
+ */
+async function netFetch(
+  url: string,
+  init: RequestInit,
+  what: string,
+  opts: { submit?: boolean } = {},
+): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      if ((error as Error).name === 'AbortError' || init.signal?.aborted) throw error;
+      const cause = networkCause(error);
+      const retry = attempt < BACKOFF_MS.length && (!opts.submit || CONNECT_FAILURES.test(cause));
+      if (!retry) throw new AniError('transient', `${what}: network error (${cause})`, { cause: error });
+      await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt]));
+    }
+  }
+}
+
 export class FalProvider implements Provider {
   readonly name = 'fal' as const;
   readonly #key: string;
@@ -97,20 +131,28 @@ export class FalProvider implements Provider {
   }
 
   async #upload(media: LocalMedia, signal?: AbortSignal): Promise<string> {
-    const init = await fetch(STORAGE, {
-      method: 'POST',
-      headers: { ...this.#auth, 'content-type': 'application/json' },
-      body: JSON.stringify({ content_type: media.mimeType, file_name: path.basename(media.path) }),
-      ...(signal ? { signal } : {}),
-    });
+    const init = await netFetch(
+      STORAGE,
+      {
+        method: 'POST',
+        headers: { ...this.#auth, 'content-type': 'application/json' },
+        body: JSON.stringify({ content_type: media.mimeType, file_name: path.basename(media.path) }),
+        ...(signal ? { signal } : {}),
+      },
+      'fal upload',
+    );
     const target = (await init.json().catch(() => ({}))) as { upload_url?: string; file_url?: string };
     if (!init.ok || !target.upload_url || !target.file_url) throw falError(init.status, target, 'fal upload');
-    const put = await fetch(target.upload_url, {
-      method: 'PUT',
-      headers: { 'content-type': media.mimeType },
-      body: await readFile(media.path),
-      ...(signal ? { signal } : {}),
-    });
+    const put = await netFetch(
+      target.upload_url,
+      {
+        method: 'PUT',
+        headers: { 'content-type': media.mimeType },
+        body: await readFile(media.path),
+        ...(signal ? { signal } : {}),
+      },
+      'fal upload',
+    );
     if (!put.ok) throw falError(put.status, {}, 'fal upload');
     return target.file_url;
   }
@@ -140,12 +182,17 @@ export class FalProvider implements Provider {
     signal?: AbortSignal,
     onStatus?: (m: string) => void,
   ): Promise<{ output: Json; units: number; requestId: string }> {
-    const submit = await fetch(`${QUEUE}/${endpoint}`, {
-      method: 'POST',
-      headers: { ...this.#auth, 'content-type': 'application/json' },
-      body: JSON.stringify(input),
-      ...(signal ? { signal } : {}),
-    });
+    const submit = await netFetch(
+      `${QUEUE}/${endpoint}`,
+      {
+        method: 'POST',
+        headers: { ...this.#auth, 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+        ...(signal ? { signal } : {}),
+      },
+      what,
+      { submit: true },
+    );
     const queued = (await submit.json().catch(() => ({}))) as {
       request_id?: string;
       status_url?: string;
@@ -156,7 +203,11 @@ export class FalProvider implements Provider {
     let last = '';
     for (;;) {
       if (signal?.aborted) throw new AniError('transient', `${what}: cancelled`);
-      const s = await fetch(queued.status_url, { headers: this.#auth, ...(signal ? { signal } : {}) });
+      const s = await netFetch(
+        queued.status_url,
+        { headers: this.#auth, ...(signal ? { signal } : {}) },
+        what,
+      );
       const status = ((await s.json().catch(() => ({}))) as { status?: string }).status ?? 'UNKNOWN';
       if (status !== last) onStatus?.(`fal ${status.toLowerCase().replace('_', ' ')}`);
       last = status;
@@ -164,7 +215,11 @@ export class FalProvider implements Provider {
       if (Date.now() > deadline) throw new AniError('transient', `${what}: still ${status} after 20 minutes`);
       await new Promise((r) => setTimeout(r, 2500));
     }
-    const res = await fetch(queued.response_url, { headers: this.#auth, ...(signal ? { signal } : {}) });
+    const res = await netFetch(
+      queued.response_url,
+      { headers: this.#auth, ...(signal ? { signal } : {}) },
+      what,
+    );
     const output = (await res.json().catch(() => ({}))) as Json;
     if (!res.ok || output.detail) throw falError(res.status, output, what);
     return {
@@ -246,7 +301,7 @@ export class FalProvider implements Provider {
     );
     const url = (output.video as { url?: string } | undefined)?.url;
     if (!url) throw new AniError('provider_rejected', 'fal returned no video');
-    const video = await fetch(url, req.signal ? { signal: req.signal } : {});
+    const video = await netFetch(url, req.signal ? { signal: req.signal } : {}, 'fal download');
     if (!video.ok) throw falError(video.status, {}, 'fal download');
     const unitPrice = await this.#unitPrice(endpoint);
     return {
@@ -293,7 +348,7 @@ export class FalProvider implements Provider {
     );
     const first = (output.images as Array<{ url?: string; content_type?: string }> | undefined)?.[0];
     if (!first?.url) throw new AniError('provider_rejected', 'fal returned no image');
-    const file = await fetch(first.url, req.signal ? { signal: req.signal } : {});
+    const file = await netFetch(first.url, req.signal ? { signal: req.signal } : {}, 'fal download');
     if (!file.ok) throw falError(file.status, {}, 'fal download');
     const unitPrice = await this.#unitPrice(endpoint);
     return {

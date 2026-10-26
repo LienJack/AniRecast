@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { DiscussionBadge } from '@/components/codex';
 import { EmptyState, ErrorState, Loading, PageHeader, Tag } from '@/components/common';
 import { ActorLink, TaskCard } from '@/components/domain';
+import { JobsPauseButton } from '@/components/jobs-pause';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -293,6 +294,7 @@ export function TasksPage({
       <PageHeader
         title={projectName ? `任務中心 · ${projectName}` : '任務中心'}
         description="這個項目的背景任務（偵測、生成、合成）、Codex 討論、Codex Agent 任務和成本。"
+        actions={<JobsPauseButton />}
       />
       <div className="grid gap-4 p-5 xl:grid-cols-[minmax(0,1fr)_380px]">
         <Card className="min-w-0">

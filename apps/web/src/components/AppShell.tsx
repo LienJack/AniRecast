@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { EmptyState, ErrorState, Loading } from '@/components/common';
+import { JobsPausedBanner } from '@/components/jobs-pause';
 import { LightboxProvider } from '@/components/lightbox';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -219,6 +220,7 @@ export function AppShell() {
       <div className="flex h-full overflow-hidden">
         <Sidebar />
         <main className="min-w-0 flex-1 overflow-y-auto">
+          <JobsPausedBanner />
           <Outlet />
         </main>
         <Toaster />

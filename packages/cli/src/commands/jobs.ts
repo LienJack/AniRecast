@@ -9,6 +9,7 @@ import {
   listJobs,
   requestCancel,
   retryJob,
+  setJobsPaused,
   TERMINAL_STATUSES,
 } from '@anirecast/core';
 import type { Command } from 'commander';
@@ -20,6 +21,19 @@ export function registerJobs(program: Command): void {
   const jobs = program.command('jobs').description('Background jobs run by the AniRecast daemon');
   const globals = () => program.opts<GlobalOptions>();
 
+  jobs
+    .command('pause')
+    .description('全部暫停: the daemon starts no new job (queued ones wait, running ones finish)')
+    .option('--reason <text>')
+    .action(
+      command((opts: { reason?: string }) =>
+        withWorkspace(globals(), (ws) => setJobsPaused(ws, true, actorFromEnv(), opts.reason)),
+      ),
+    );
+  jobs
+    .command('resume')
+    .description('Let the daemon start jobs again')
+    .action(command(() => withWorkspace(globals(), (ws) => setJobsPaused(ws, false, actorFromEnv()))));
   jobs
     .command('list')
     .option('--status <status>', 'queued|running|succeeded|failed|cancelled')

@@ -355,3 +355,69 @@ describe('fal and JEV routes', () => {
     expect(estimateVisionCost('jev:google/gemini-3.8-flash', 4)).toBeLessThan(0.01);
   });
 });
+
+describe('a flaky line to fal', () => {
+  const down = (code: string) => Object.assign(new TypeError('fetch failed'), { cause: { code } });
+
+  it('retries uploads and polling through network errors, and never resubmits a paid request mid-send', {
+    timeout: 60_000,
+  }, async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'anirecast-fal-net-'));
+    let initiate = 0;
+    let submits = 0;
+    let resetSubmit = false;
+    vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/storage/upload/initiate')) {
+        initiate++;
+        if (initiate <= 2) throw down('ECONNRESET');
+        return Response.json({ upload_url: 'https://up/x', file_url: 'https://cdn/a.png' });
+      }
+      if (u.startsWith('https://up/')) return new Response(null, { status: 200 });
+      if (u.startsWith('https://queue.fal.run/')) {
+        submits++;
+        if (resetSubmit) throw down('ECONNRESET');
+        if (submits === 1) throw down('ENOTFOUND');
+        void init;
+        return Response.json({
+          request_id: 'r',
+          status_url: 'https://q/status',
+          response_url: 'https://q/resp',
+        });
+      }
+      if (u === 'https://q/status') return Response.json({ status: 'COMPLETED' });
+      if (u === 'https://q/resp') return Response.json({ images: [{ url: 'https://cdn/out.png' }] });
+      if (u === 'https://cdn/out.png')
+        return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } });
+      if (u.includes('/models/pricing')) return Response.json({ prices: [{ unit_price: 0.04 }] });
+      throw new Error(`unexpected fetch ${u}`);
+    });
+    try {
+      writeFileSync(path.join(dir, 'a.png'), 'a');
+      const fal = new FalProvider({ apiKey: 'test-key' });
+      const req = {
+        model: 'fal:openai/gpt-image-2.5/sunburst/edit',
+        prompt: 'p',
+        images: [{ path: path.join(dir, 'a.png'), mimeType: 'image/png' }],
+        aspectRatio: '16:9' as const,
+        imageSize: '1K' as const,
+      };
+      const run = fal.generateImage(req);
+      // Two upload resets and a submit that never connected (ENOTFOUND) were retried.
+      await expect(run).resolves.toMatchObject({ provider: 'fal' });
+      expect([initiate, submits]).toEqual([3, 2]);
+      // A reset while submitting may have reached fal: not resent, but transient so the job is retried.
+      resetSubmit = true;
+      submits = 0;
+      const again = fal.generateImage(req).catch((e: unknown) => e);
+      expect(await again).toMatchObject({
+        code: 'transient',
+        message: expect.stringContaining('ECONNRESET'),
+      });
+      expect(submits).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -111,6 +111,8 @@ export interface Health {
   workspace: { root: string; id: string; name: string };
   activeJobs: Array<{ id: string; type: string; lane: string }>;
   codex: CodexStatus;
+  /** 全部暫停: no new job starts while paused. */
+  jobsPaused?: { paused: boolean; since: number | null; by: string | null; reason: string | null };
 }
 
 export interface QuotaStatus {

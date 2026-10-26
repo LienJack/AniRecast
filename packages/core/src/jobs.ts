@@ -1,6 +1,9 @@
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { AniError, type EnvelopeError, newId } from '@anirecast/shared';
 import { all, type Db, fromJson, one, run, toJson, tx } from './db.ts';
 import { appendEvent } from './events.ts';
+import type { Workspace } from './workspace.ts';
 
 export type Lane = 'generate' | 'media' | 'agent' | 'io';
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -352,4 +355,41 @@ export function recoverInterruptedJobs(db: Db): number {
     failJob(db, row.id, { code: 'transient', message: 'Interrupted by a daemon restart' }, { retryable });
   }
   return stuck.length;
+}
+
+/**
+ * 全部暫停: while paused the daemon starts no new job; queued ones wait (running ones finish). Kept in the
+ * workspace (cache/jobs-paused.json) so a restart stays paused.
+ */
+export interface JobsPause {
+  paused: boolean;
+  since: number | null;
+  by: string | null;
+  reason: string | null;
+}
+
+const pauseFile = (ws: Workspace) => ws.abs('cache/jobs-paused.json');
+
+export function jobsPaused(ws: Workspace): JobsPause {
+  try {
+    const p = JSON.parse(readFileSync(pauseFile(ws), 'utf8')) as Partial<JobsPause>;
+    return { paused: true, since: p.since ?? null, by: p.by ?? null, reason: p.reason ?? null };
+  } catch {
+    return { paused: false, since: null, by: null, reason: null };
+  }
+}
+
+export function setJobsPaused(ws: Workspace, paused: boolean, actor: string, reason?: string): JobsPause {
+  if (paused) {
+    mkdirSync(path.dirname(pauseFile(ws)), { recursive: true });
+    writeFileSync(pauseFile(ws), JSON.stringify({ since: Date.now(), by: actor, reason: reason ?? null }));
+  } else rmSync(pauseFile(ws), { force: true });
+  appendEvent(ws.db, {
+    actor,
+    kind: paused ? 'jobs.paused' : 'jobs.resumed',
+    entityType: 'workspace',
+    entityId: ws.manifest.workspaceId,
+    payload: { reason: reason ?? null },
+  });
+  return jobsPaused(ws);
 }

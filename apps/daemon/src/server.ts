@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type AniEvent, APP_VERSION, type Workspace } from '@anirecast/core';
+import { type AniEvent, APP_VERSION, jobsPaused, type Workspace } from '@anirecast/core';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -48,6 +48,7 @@ export function createApp({
           name: workspace.manifest.name,
         },
         activeJobs: runner.activeJobs.map((j) => ({ id: j.id, type: j.type, lane: j.lane })),
+        jobsPaused: jobsPaused(workspace),
         codex: dispatcher?.status ?? { enabled: false },
       },
     }),

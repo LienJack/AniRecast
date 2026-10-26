@@ -93,6 +93,7 @@ import {
   setAnalysisPicks,
   setDesignNote,
   setGenerationTier,
+  setJobsPaused,
   setLookPolicy,
   setOverlayRemoval,
   setPrimaryImage,
@@ -771,6 +772,13 @@ export function registerRoutes(
       return {
         note: setDesignNote(ws.db, project.id, getPersona(ws.db, b.personaId).id, b.note ?? '', USER),
       };
+    }),
+  );
+  // 全部暫停／繼續: no new job starts while paused.
+  app.post('/api/jobs/pause', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ paused: boolean; reason?: string }>(c);
+      return setJobsPaused(ws, b.paused !== false, USER, b.reason);
     }),
   );
   app.post('/api/projects/:ref/boards/all', async (c) =>

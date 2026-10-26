@@ -4,6 +4,7 @@ import {
   failJob,
   getJob,
   type Job,
+  jobsPaused,
   type Lane,
   type LocalConfig,
   markCancelled,
@@ -102,6 +103,8 @@ export class JobRunner {
 
   private fill(): void {
     const { workspace, concurrency, workerId, typeLimits } = this.opts;
+    // 全部暫停: nothing new starts; queued jobs wait.
+    if (jobsPaused(workspace).paused) return;
     for (const lane of Object.keys(concurrency) as Lane[]) {
       while (this.countLane(lane) < concurrency[lane]) {
         const full = Object.entries(typeLimits)

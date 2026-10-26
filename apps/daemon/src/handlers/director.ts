@@ -12,7 +12,7 @@ import {
 } from '@anirecast/core';
 import { composeReference } from '@anirecast/media';
 import { estimateVisionCost, mimeFor } from '@anirecast/providers';
-import { imageModelSpec, type VideoModelSpec, videoModelSpec } from '@anirecast/shared';
+import { imageModelSpec, toEnvelopeError, type VideoModelSpec, videoModelSpec } from '@anirecast/shared';
 import type { JobContext } from '../runner.ts';
 import { metered } from './metered.ts';
 
@@ -101,14 +101,16 @@ export async function directBoard(
   const paths = brief.images.map((i) => ws.abs(i.path));
   if (services.provider.name !== 'fake')
     assertWithinBudget(ws.db, services.config.budget.capUsd, estimateVisionCost(model, paths.length));
-  const answer = await metered(ctx, { model, kind: 'vision', shotId: board.shotId }, () =>
-    services.provider.analyzeImages<BoardAnswer>({
-      model,
-      prompt,
-      images: paths.map((p) => ({ path: p, mimeType: mimeFor(p) })),
-      responseSchema: BOARD_SCHEMA,
-      signal,
-    }),
+  const answer = await onceMore(ctx, () =>
+    metered(ctx, { model, kind: 'vision', shotId: board.shotId }, () =>
+      services.provider.analyzeImages<BoardAnswer>({
+        model,
+        prompt,
+        images: paths.map((p) => ({ path: p, mimeType: mimeFor(p) })),
+        responseSchema: BOARD_SCHEMA,
+        signal,
+      }),
+    ),
   );
   const usd = answer.provider === 'fake' ? 0 : answer.costUsd;
   recordCost(ws.db, {
@@ -265,14 +267,16 @@ export async function directTake(
       services.config.budget.capUsd,
       estimateVisionCost(model, media.length + (withVideo ? 8 : 0)),
     );
-  const answer = await metered(ctx, { model, kind: 'vision', shotId: input.shotId }, () =>
-    services.provider.analyzeImages<TakeAnswer>({
-      model,
-      prompt,
-      images: media.map((m) => ({ path: m.path, mimeType: m.mimeType })),
-      responseSchema: TAKE_SCHEMA,
-      signal,
-    }),
+  const answer = await onceMore(ctx, () =>
+    metered(ctx, { model, kind: 'vision', shotId: input.shotId }, () =>
+      services.provider.analyzeImages<TakeAnswer>({
+        model,
+        prompt,
+        images: media.map((m) => ({ path: m.path, mimeType: m.mimeType })),
+        responseSchema: TAKE_SCHEMA,
+        signal,
+      }),
+    ),
   );
   const usd = answer.provider === 'fake' ? 0 : answer.costUsd;
   recordCost(ws.db, {
@@ -335,4 +339,15 @@ export async function directTake(
       costUsd: usd,
     },
   };
+}
+
+/** A network hiccup is tried once more (after a short wait) before the director gives up for the template. */
+async function onceMore<T>(ctx: JobContext, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (ctx.signal.aborted || toEnvelopeError(error).code !== 'transient') throw error;
+    await new Promise((r) => setTimeout(r, 3000));
+    return fn();
+  }
 }

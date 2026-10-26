@@ -118,7 +118,14 @@ export class GeminiProvider implements Provider {
       });
     } catch (error) {
       if ((error as Error).name === 'AbortError') throw error;
-      throw new AniError('transient', `${what}: network error`, { cause: error });
+      const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+      throw new AniError(
+        'transient',
+        `${what}: network error (${cause?.code ?? cause?.message ?? (error as Error).message})`,
+        {
+          cause: error,
+        },
+      );
     }
     const text = await res.text();
     let json: InteractionResponse = {};
