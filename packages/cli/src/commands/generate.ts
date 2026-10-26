@@ -27,6 +27,7 @@ import {
   getProject,
   getRender,
   getTake,
+  latestShotJob,
   listAgentTasks,
   listBoards,
   listReferences,
@@ -46,6 +47,7 @@ import {
   queueReferenceSearch,
   queueStillTake,
   queueTake,
+  queueTakePlan,
   quotaOverview,
   resolveBindings,
   safetyBlockCount,
@@ -489,6 +491,27 @@ export function registerGenerate(program: Command): void {
               )),
             };
           }),
+      ),
+    );
+  take
+    .command('plan <shot>')
+    .description(
+      '預覽提示詞: let the video director watch the shot and write the instruction and the images to send, without making the video (one vision call)',
+    )
+    .option('--model <id>', 'video model to plan for (default: the project choice)')
+    .option('--extra <text>', 'what the human wants (mandatory for the director)')
+    .option('--wait')
+    .action(
+      command((shotId: string, opts: { model?: string; extra?: string; wait?: boolean }) =>
+        withWorkspace(globals(), async (ws) => {
+          const job = queueTakePlan(ws, shotId, actorFromEnv(), {
+            ...(opts.model ? { model: opts.model } : {}),
+            ...(opts.extra ? { extra: opts.extra } : {}),
+          });
+          if (!opts.wait) return { job };
+          await waitAll(ws, [job.id], true);
+          return { plan: latestShotJob(ws, shotId, 'take.plan') };
+        }),
       ),
     );
   take

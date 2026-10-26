@@ -17,6 +17,7 @@ import {
   originalDesignDir,
   projectCacheDir,
   projectDir,
+  projectModels,
   projectOfShot,
   type Render,
   recordCost,
@@ -50,7 +51,7 @@ import {
 } from '@anirecast/providers';
 import { AniError, toEnvelopeError, uploadSeconds, videoModelSpec } from '@anirecast/shared';
 import type { JobContext, JobHandler } from '../runner.ts';
-import { directBoard } from './director.ts';
+import { directBoard, directTake } from './director.ts';
 import { metered } from './metered.ts';
 import { outPath, span } from './util.ts';
 
@@ -287,7 +288,7 @@ function reusableUpload(ws: Workspace, take: Take, uploadSha: string): string | 
 export const generateTakeHandler: JobHandler = async (ctx) => {
   const { workspace: ws, services, signal, job, progress } = ctx;
   const { takeId } = job.payload as { takeId: string };
-  const take = getTake(ws.db, takeId);
+  let take = getTake(ws.db, takeId);
   const shot = getShot(ws.db, take.shotId);
   const project = projectOfShot(ws.db, shot.id);
   const clip = findActiveClip(ws.db, project.id);
@@ -305,6 +306,42 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
           hint: 'Split the shot (anirecast shots split) before generating.',
         },
       );
+    }
+    // The director watches the shot and writes the instruction and the references (composites where needed);
+    // the planned template stays when it fails. A retry, or a revision with the same model, reuses its decision.
+    let directorUsd = 0;
+    if (shot.mode === 'replace' && !take.params.director) {
+      progress(0.02, 'directing: watching the shot and the references');
+      try {
+        const extras = (take.params.extras as string[] | undefined) ?? [];
+        const d = await directTake(ctx, {
+          shotId: shot.id,
+          model: take.model,
+          extra: extras.join('\n') || null,
+          outDir: `${shotDir(project, shot.id)}/takes`,
+          stem: takeFileStem(take.version),
+        });
+        directorUsd = d.record.costUsd;
+        take = updateTake(
+          ws.db,
+          takeId,
+          { prompt: d.prompt, inputs: d.inputs, params: { ...take.params, director: d.record } },
+          'daemon',
+        );
+      } catch (error) {
+        if (signal.aborted) throw error;
+        take = updateTake(
+          ws.db,
+          takeId,
+          {
+            params: {
+              ...take.params,
+              director: { error: toEnvelopeError(error).message, fallback: true },
+            },
+          },
+          'daemon',
+        );
+      }
     }
     // Short shots are padded (last frame held) to the model's minimum, whole seconds and frame step, then cut back.
     const minFrames = Math.ceil((uploadSeconds(spec, seconds) * clip.fpsNum) / clip.fpsDen - 1e-6);
@@ -379,7 +416,7 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
         takeId,
         {
           remote,
-          costUsd: result.costUsd,
+          costUsd: result.costUsd + directorUsd,
           framesOut: ((error as AniError).details as { framesOut?: number })?.framesOut ?? null,
         },
         'daemon',
@@ -409,7 +446,7 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
       boardId: take.boardId,
       provider: result.provider,
       usage: result.usage,
-      costUsd: result.costUsd,
+      costUsd: result.costUsd + directorUsd,
       remote: { interactionId: result.remote.interactionId },
       conform,
       createdBy: take.createdBy,
@@ -421,7 +458,7 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
       {
         status: 'ready',
         path: outRel,
-        costUsd: result.costUsd,
+        costUsd: result.costUsd + directorUsd,
         remote: { ...remote, comparePath: compareRel },
         framesOut: conform.framesOut,
         conform: { ...conform },
@@ -429,7 +466,7 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
       },
       'daemon',
     );
-    return { result: { take: updated }, costUsd: result.costUsd };
+    return { result: { take: updated }, costUsd: result.costUsd + directorUsd };
   } catch (error) {
     if (!signal.aborted)
       updateTake(ws.db, takeId, { status: 'failed', error: toEnvelopeError(error).message }, 'daemon');
@@ -637,3 +674,25 @@ export async function exportFile(ws: Workspace, rel: string, name: string): Prom
   await copyFile(ws.abs(rel), outPath(ws, target));
   return path.posix.normalize(target);
 }
+
+/**
+ * 預覽提示詞: the video director's decision for a shot without making the video — the instruction, the images it
+ * would send (composites kept in the cache) and its reading of the shot. Costs one vision call.
+ */
+export const planTakeHandler: JobHandler = async (ctx) => {
+  const { workspace: ws, job } = ctx;
+  const { shotId, model: chosen, extra } = job.payload as { shotId: string; model?: string; extra?: string };
+  const project = projectOfShot(ws.db, shotId);
+  const model = chosen ?? projectModels(ws.db, project.id).video;
+  const d = await directTake(ctx, {
+    shotId,
+    model,
+    extra: extra?.trim() || null,
+    outDir: `${projectCacheDir(project)}/take-plan/${job.id}`,
+    stem: 'plan',
+  });
+  return {
+    result: { model, prompt: d.prompt, inputs: d.inputs, director: d.record },
+    costUsd: d.record.costUsd,
+  };
+};

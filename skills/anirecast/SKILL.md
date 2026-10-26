@@ -41,6 +41,10 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
    people to replace, its last frame); `--from` keeps the role, `--role <role>` draws one moment, no flag draws
    all three (a first/last frame where nobody to replace is seen is skipped). The video waits for the key
    frame's approval; first and last help when approved.
+   Prompts are written by the director inside each job (a vision model that reads the frame or watches the
+   shot, the design sheets, the style and the light, then picks the references); `--extra` is passed to it as
+   a mandatory requirement and also appended verbatim. A version's `params.director` holds its notes, its
+   reading of the frame and the references it sent; `fallback: true` means the template prompt was used.
 3. Review feedback on a **take** (`targetType: take`): same with
    `anirecast take generate <project> --from <takeId> --extra "<what to change>" --wait`.
    You cannot watch video; run `anirecast take sheet <newTakeId>` and view the returned image (original
@@ -142,6 +146,7 @@ anirecast quota                             # requests left today per model (Omn
 anirecast shots boundaries <project>        # every cut: same moment or cut, who decided, how sure
 anirecast cast tidy <project> --wait        # JEV: merge same-person characters and same-outfit looks
 anirecast shots find-cast <shot> --wait     # 找出這一鏡的角色: who each person in one shot is (picks stay unlocked for the human)
+anirecast take plan <shot> [--model <id>] --wait   # 預覽提示詞: the video director's instruction and images, no video made
 anirecast design list <project>             # bindings: original → library character, analysis, note, sheets
 anirecast design analyze <project> <cast>   # 原片分析 of one original (add --generate to redraw the sheets after)
 anirecast design pick <project> <cast> --expressions 1,3 --poses 2   # which analysed items the sheets use

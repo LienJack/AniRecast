@@ -27,6 +27,7 @@ import {
   Tag,
   Thumb,
 } from '@/components/common';
+import { DirectorNote } from '@/components/director-note';
 import {
   ActorLink,
   FrameWithOverlays,
@@ -58,7 +59,7 @@ import {
   VERDICT_LABEL,
   VERDICT_TONE,
 } from '@/lib/labels';
-import { useAction, useModels, useOverview, useShot } from '@/lib/queries';
+import { qk, useAction, useModels, useOverview, useShot } from '@/lib/queries';
 import type {
   AgentTask,
   Board,
@@ -406,6 +407,16 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
     d.takes.at(-1);
   const busy = (v: { status: string } | undefined) => v?.status === 'queued' || v?.status === 'generating';
   const takeJob = useActiveJob('takeId', busy(take) ? take?.id : null);
+  // 預覽 AI 提示詞: the video director's plan for the chosen model, without making the video.
+  const planning = useActiveJob('shotId', shot.id, 'take.plan');
+  const previewPlan = useAction(
+    () =>
+      api.post(`/api/shots/${shot.id}/takes/plan`, {
+        ...(videoModel ? { model: videoModel } : {}),
+        ...(extra.trim() ? { extra: extra.trim() } : {}),
+      }),
+    { success: '已排入：AI 導演看片並撰寫提示詞（約 USD 0.01–0.03）', invalidate: [qk.jobs] },
+  );
   const current: (WithReviews<Board> | WithReviews<Take>) | undefined =
     target?.type === 'board'
       ? d.boards.find((b) => b.id === target.id)
@@ -672,6 +683,13 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                     {take ? `生成失敗：${take.error ?? ''}` : '還沒有分鏡視頻'}
                   </div>
                 )}
+                {take ? (
+                  <DirectorNote
+                    params={take.params}
+                    prompt={take.prompt}
+                    refLabel={(i) => `<IMAGE_REF_${i}>`}
+                  />
+                ) : null}
               </CardContent>
             </Card>
           ) : null}
@@ -867,6 +885,36 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
               {generates ? (
                 <>
                   <ModelSelect kind="video" value={videoModel} onChange={setTakeModel} label="分鏡視頻模型" />
+                  {shot.mode === 'replace' ? (
+                    <div className="flex flex-col gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={Boolean(planning) || previewPlan.isPending}
+                        title="AI 導演看原片和參考圖，寫好提示詞、整理要送的參考圖；不生成視頻"
+                        onClick={() => previewPlan.mutate(undefined)}
+                      >
+                        <SparklesIcon />
+                        {planning ? <ShimmerText>AI 導演看片中…</ShimmerText> : '預覽 AI 提示詞'}
+                      </Button>
+                      {d.takePlan?.status === 'failed' && !planning ? (
+                        <span className="text-red-300 text-xs">預覽失敗：{d.takePlan.error ?? ''}</span>
+                      ) : null}
+                      {d.takePlan?.result && !planning ? (
+                        <>
+                          <span className="text-[11px] text-muted-foreground">
+                            {modelLabel(d.takePlan.result.model)} 的預覽 · 生成時 AI 導演會再看一次
+                          </span>
+                          <DirectorNote
+                            params={{ director: d.takePlan.result.director }}
+                            prompt={d.takePlan.result.prompt}
+                            refLabel={(i) => `<IMAGE_REF_${i}>`}
+                            open
+                          />
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="flex items-center gap-2">
                     <span className="flex-1 text-muted-foreground text-xs">輸出 {TIER_LABEL[tier]}</span>
                     <Button

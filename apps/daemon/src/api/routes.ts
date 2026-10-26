@@ -76,6 +76,7 @@ import {
   queueStillTake,
   queueStyleAnalysis,
   queueTake,
+  queueTakePlan,
   quotaOverview,
   type ReferenceStatus,
   readHandoffResultFile,
@@ -409,6 +410,16 @@ export function registerRoutes(
     }),
   );
   app.post('/api/shots/:id/cast/find', (c) => handle(c, () => queueShotCast(ws, c.req.param('id'), USER)));
+  app.post('/api/shots/:id/takes/plan', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ model?: string; extra?: string }>(c);
+      if (b.model) videoModelOrThrow(b.model);
+      return queueTakePlan(ws, c.req.param('id'), USER, {
+        ...(b.model ? { model: b.model } : {}),
+        ...(b.extra?.trim() ? { extra: b.extra.trim() } : {}),
+      });
+    }),
+  );
   app.post('/api/shots/:id/cast-override', async (c) =>
     handle(c, async () => {
       const shotId = c.req.param('id');

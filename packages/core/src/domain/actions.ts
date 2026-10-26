@@ -276,8 +276,34 @@ export function queueShotCast(ws: Workspace, shotId: string, actor: string) {
   });
 }
 
-/** The latest 找出這一鏡的角色 run of a shot: what the vision model said about each person. */
-export function latestShotCastCheck(ws: Workspace, shotId: string): ShotCastCheck | null {
+/**
+ * 預覽提示詞: the video director's decision for a shot (instruction, images to send) without making the video.
+ */
+export function queueTakePlan(
+  ws: Workspace,
+  shotId: string,
+  actor: string,
+  opts: { model?: string; extra?: string } = {},
+) {
+  const shot = getShot(ws.db, shotId);
+  if (shot.mode !== 'replace')
+    throw new AniError('conflict', 'Only a replace shot has a video director plan');
+  return enqueueJob(ws.db, {
+    type: 'take.plan',
+    lane: 'generate',
+    projectId: projectOfShot(ws.db, shot.id).id,
+    payload: {
+      shotId: shot.id,
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.extra ? { extra: opts.extra } : {}),
+    },
+    requestedBy: actor,
+    maxAttempts: 1,
+  });
+}
+
+/** The latest job of one type for a shot, with its result. */
+export function latestShotJob<T>(ws: Workspace, shotId: string, type: string): ShotJob<T> | null {
   const row = one<{
     id: string;
     status: string;
@@ -288,9 +314,9 @@ export function latestShotCastCheck(ws: Workspace, shotId: string): ShotCastChec
   }>(
     ws.db,
     `SELECT id, status, result_json, error_json, created_at, finished_at FROM jobs
-     WHERE type = 'shot.cast' AND json_extract(payload_json, '$.shotId') = :shotId
+     WHERE type = :type AND json_extract(payload_json, '$.shotId') = :shotId
      ORDER BY created_at DESC LIMIT 1`,
-    { shotId },
+    { shotId, type },
   );
   if (!row) return null;
   return {
@@ -298,8 +324,26 @@ export function latestShotCastCheck(ws: Workspace, shotId: string): ShotCastChec
     status: row.status,
     createdAt: row.created_at,
     finishedAt: row.finished_at,
-    result: fromJson<ShotCastResult | null>(row.result_json, null),
+    result: fromJson<T | null>(row.result_json, null),
     error: fromJson<{ message?: string } | null>(row.error_json, null)?.message ?? null,
+  };
+}
+
+/** The latest 找出這一鏡的角色 run of a shot: what the vision model said about each person. */
+export const latestShotCastCheck = (ws: Workspace, shotId: string): ShotCastCheck | null =>
+  latestShotJob<ShotCastResult>(ws, shotId, 'shot.cast');
+
+/** The latest 預覽提示詞 of a shot. */
+export interface TakePlanResult {
+  model: string;
+  prompt: string;
+  inputs: Array<{ role: string; path: string }>;
+  director: {
+    model: string;
+    notes: string;
+    analysis: Record<string, string>;
+    references: Array<{ id: string; label: string; path: string }>;
+    costUsd: number;
   };
 }
 
@@ -324,14 +368,16 @@ export interface ShotCastResult {
   missed: Array<{ castId: string | null; label: string; reason: string }>;
 }
 
-export interface ShotCastCheck {
+export interface ShotJob<T> {
   jobId: string;
   status: string;
   createdAt: number;
   finishedAt: number | null;
-  result: ShotCastResult | null;
+  result: T | null;
   error: string | null;
 }
+
+export type ShotCastCheck = ShotJob<ShotCastResult>;
 
 /**
  * Queues 原片分析 for the bindings `ref` names (all when null): what the original character looks like and does
@@ -576,6 +622,7 @@ export function shotDetail(ws: Workspace, shotId: string) {
     takes: listTakes(ws.db, shotId).map(withReviews),
     tasks: listAgentTasks(ws.db, { shotId }),
     castCheck: latestShotCastCheck(ws, shotId),
+    takePlan: latestShotJob<TakePlanResult>(ws, shotId, 'take.plan'),
     codexThreadId: findCodexThread(ws.db, 'shot', shotId) ?? null,
   };
 }

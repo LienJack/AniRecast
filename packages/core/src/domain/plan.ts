@@ -927,3 +927,92 @@ export function boardBrief(ws: Workspace, boardId: string, maxRefs: number): Dir
   const extra = typeof board.params.extra === 'string' ? board.params.extra : null;
   return { facts, images: images.filter((i) => existsSync(ws.abs(i.path))), extra, maxRefs };
 }
+
+/** The director's brief for a shot video: the shot itself, the facts, and the references the video model may get. */
+export interface TakeBrief extends DirectorBrief {
+  /** The shot's source clip, which the director watches. */
+  video: string;
+  /** Library character names, never to be written in a video prompt (Omni's safety filter blocked some). */
+  names: string[];
+}
+
+/**
+ * The director's brief for a shot video: who becomes whom (by position and looks), the outfit rule, credit text to
+ * remove, the anime's style and the shot's light, the human's requirement; the shot's frames for context; and the
+ * references it may send or composite — the shot's approved storyboard frames (first, key, last), the
+ * replacement's approved design sheets, library pictures.
+ */
+export function takeBrief(
+  ws: Workspace,
+  shotId: string,
+  opts: { extra?: string | null; maxRefs: number },
+): TakeBrief {
+  const shot = getShot(ws.db, shotId);
+  if (!shot.sourcePath) throw new AniError('conflict', 'Shot source segment is not prepared yet');
+  const project = projectOfShot(ws.db, shot.id);
+  const { uses, keyframe } = castInShot(ws, shot, 6, 'key');
+  const images: BriefImage[] = [];
+  let c = 0;
+  let r = 0;
+  const reference = (label: string, path: string) => {
+    if (!images.some((i) => i.path === path) && existsSync(ws.abs(path)))
+      images.push({ id: `R${++r}`, label, path, use: 'reference' });
+  };
+  for (const k of listKeyframes(ws.db, shot.id))
+    if (['first', 'mid', 'last'].includes(k.role) && existsSync(ws.abs(k.path)))
+      images.push({
+        id: `C${++c}`,
+        label: `the shot's ${k.role === 'mid' ? 'middle' : k.role} frame (frame ${k.frame})`,
+        path: k.path,
+        use: 'context',
+      });
+  for (const role of ['key', 'first', 'last'] as const) {
+    const b = approvedBoard(ws.db, shot.id, role);
+    if (b?.path)
+      reference(
+        `the approved storyboard frame of the shot's ${role} frame: the original frame with everyone already replaced`,
+        b.path,
+      );
+  }
+  const clip = findActiveClip(ws.db, project.id);
+  const seconds = clip ? ((shot.frameCount * clip.fpsDen) / clip.fpsNum).toFixed(2) : '?';
+  const facts: string[] = [
+    `This is shot ${shot.orderIndex + 1} of an anime opening, ${seconds} s long (${shot.frameCount} frames).`,
+  ];
+  if (shot.description?.trim()) facts.push(`What happens in the shot: ${shot.description.trim()}`);
+  for (const use of uses) {
+    const castId = use.entries.find((e) => e.cast)?.cast?.id;
+    const castLabel = use.entries.find((e) => e.cast)?.cast?.label;
+    const followSource = use.entries.some((e) => e.look?.lookPolicy === 'follow_source');
+    facts.push(
+      `Replace ${describeWho(ws, keyframe.frame, use)}${castLabel ? ` (the original character 「${castLabel}」)` : ''} with the library character "${use.persona.name}"${use.persona.description ? ` — ${use.persona.description}` : ''}. ${
+        followSource
+          ? 'Keep the outfit and hairstyle the original wears; change face, hair colour, eyes and distinguishing features.'
+          : "Give them the new character's own outfit, hairstyle and colours."
+      }`,
+    );
+    const binding = castId ? { castMemberId: castId, personaId: use.persona.id } : undefined;
+    for (const kind of ['turnaround', 'expressions', 'poses'] as const) {
+      const sheet = binding ? approvedDesign(ws.db, project.id, binding, kind) : undefined;
+      if (sheet?.path)
+        reference(`"${use.persona.name}" approved ${DESIGN_WORDS[kind]}, in this anime's style`, sheet.path);
+    }
+    for (const img of [...use.persona.images]
+      .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
+      .slice(0, 2))
+      reference(`"${use.persona.name}" library picture (${img.view})`, img.path);
+  }
+  const overlay = overlayInstruction(overlaysToRemove(ws.db, shot.id, shot.removeOtherOverlays));
+  if (overlay) facts.push(overlay);
+  const notes = projectStyleNotes(ws, project.id);
+  if (notes) facts.push(`This anime's drawing style: ${notes}`);
+  if (shot.lighting?.trim()) facts.push(`Light and colour of the shot: ${shot.lighting.trim()}`);
+  return {
+    facts,
+    images,
+    extra: opts.extra?.trim() || null,
+    maxRefs: opts.maxRefs,
+    video: shot.sourcePath,
+    names: uses.map((u) => u.persona.name),
+  };
+}

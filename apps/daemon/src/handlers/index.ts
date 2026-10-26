@@ -9,6 +9,7 @@ import {
   generateBoardHandler,
   generateDesignHandler,
   generateTakeHandler,
+  planTakeHandler,
   stillTakeHandler,
 } from './generation.ts';
 import { noopHandler } from './noop.ts';
@@ -38,5 +39,6 @@ export function createHandlers(): Map<string, JobHandler> {
     ['cast.identify', identifyCastHandler],
     ['cast.tidy', tidyCastHandler],
     ['shot.cast', shotCastHandler],
+    ['take.plan', planTakeHandler],
   ]);
 }
