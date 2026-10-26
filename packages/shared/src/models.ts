@@ -44,6 +44,11 @@ export interface VideoModelSpec {
    */
   minFps?: number;
   /**
+   * Upload heights it accepts. Seedance takes reference videos of 409,600–927,408 pixels: a 1080p upload is
+   * refused as invalid input, a 360p one too, so 16:9 shots go up at 480p–720p (its output is still 1080p).
+   */
+  uploadHeight?: { min: number; max: number };
+  /**
    * `frames`: output frame i is input frame i, conformed by count. `time`: the output has its own frame rate
    * (and maybe a slightly different length); it is scaled to the input length (±20%) and resampled to the shot.
    */
@@ -81,13 +86,14 @@ export const VIDEO_MODELS: readonly VideoModelSpec[] = [
   {
     id: 'fal:bytedance/seedance-2.5/us/reference-to-video',
     label: 'Seedance 2.5',
-    note: 'fal；輸入至少 1.8 秒（短的會補尾再剪掉）；最低 480p；約 USD 0.3／秒（含輸入秒數）',
+    note: 'fal；輸入至少 2 秒（短的會補尾再剪掉）、以 24 fps、480p–720p 上傳；輸出最低 480p；1080p 約 USD 1／秒（不足 4 秒以 4 秒計）',
     minRefs: 0,
     maxRefs: 9,
     refStyle: 'any',
     minSeconds: 2,
     maxSeconds: 15,
     minFps: 24,
+    uploadHeight: { min: 480, max: 720 },
     frameStep: 1,
     timing: 'time',
   },

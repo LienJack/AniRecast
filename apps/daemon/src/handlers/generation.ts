@@ -406,7 +406,10 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
     if (!video) throw new AniError('internal', 'Take has no video input');
     const refs = take.inputs.filter((i) => i.role !== 'video');
     const resolution = TIER_RESOLUTION[take.tier];
-    const uploadHeight = TIER_UPLOAD_HEIGHT[take.tier];
+    const uploadHeight = Math.min(
+      spec.uploadHeight?.max ?? Number.POSITIVE_INFINITY,
+      Math.max(spec.uploadHeight?.min ?? 0, TIER_UPLOAD_HEIGHT[take.tier]),
+    );
     budgetCheck(
       ctx,
       estimateVideoEditCost(take.model, uploadSeconds(spec, seconds), resolution, refs.length, uploadHeight),
