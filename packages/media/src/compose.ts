@@ -358,7 +358,12 @@ export async function stackCompare(
   original: string,
   edited: string,
   output: string,
-  { layout, height, audioFrom }: { layout: 'h' | 'v'; height: number; audioFrom?: string },
+  {
+    layout,
+    height,
+    audioFrom,
+    crf = 20,
+  }: { layout: 'h' | 'v'; height: number; audioFrom?: string; crf?: number },
   opts: FfmpegRunOptions = {},
 ): Promise<void> {
   ensureDir(output);
@@ -380,7 +385,7 @@ export async function stackCompare(
       '-preset',
       'veryfast',
       '-crf',
-      '20',
+      String(crf),
       '-g',
       '12',
       '-movflags',

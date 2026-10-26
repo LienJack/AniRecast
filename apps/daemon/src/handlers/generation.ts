@@ -506,7 +506,8 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
       ws.abs(shot.sourcePath),
       ws.abs(outRel),
       outPath(ws, compareRel),
-      { layout: 'v', height: 360 },
+      // The review player is where the human judges sharpness: both halves at the take's own size.
+      { layout: 'v', height: TIER_SIZE[take.tier].height, crf: 16 },
       { signal },
     );
     await writeProvenance(ws, `${shotDir(project, shot.id)}/takes/${stem}.json`, {
@@ -587,7 +588,8 @@ export const stillTakeHandler: JobHandler = async (ctx) => {
       ws.abs(shot.sourcePath),
       ws.abs(outRel),
       outPath(ws, compareRel),
-      { layout: 'v', height: 360 },
+      // The review player is where the human judges sharpness: both halves at the take's own size.
+      { layout: 'v', height: TIER_SIZE[take.tier].height, crf: 16 },
       { signal },
     );
     const conform = {

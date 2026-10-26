@@ -584,7 +584,8 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                     ref={sliderRef}
                     src={fileUrl(takeCompare) ?? ''}
                     fps={fps}
-                    frameCount={take.framesOut ?? shot.frameCount}
+                    // The compare clip is the conformed take: exactly the shot's frames (framesOut is the raw count).
+                    frameCount={shot.frameCount}
                     leftLabel="原片"
                     rightLabel={`v${take.version}`}
                   />
