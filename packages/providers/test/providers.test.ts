@@ -38,6 +38,10 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
+/** The fal upload PUT through the test's fetch stub (the provider itself uses HTTP/1.1). */
+const viaFetch = async (url: string, body: Buffer, contentType: string) =>
+  (await fetch(url, { method: 'PUT', headers: { 'content-type': contentType }, body })).status;
+
 describe('pricing', () => {
   it('reproduces the spike costs from real usage', () => {
     // Omni image-to-video 10 s: 1,165 input / 57,920 output tokens.
@@ -286,7 +290,7 @@ describe('fal and JEV routes', () => {
     });
     try {
       for (const f of ['video.mp4', 'a.png', 'b.png']) writeFileSync(path.join(dir, f), f);
-      const fal = new FalProvider({ apiKey: 'test-key' });
+      const fal = new FalProvider({ apiKey: 'test-key', put: viaFetch });
       const base = {
         prompt: 'Replace the girl on the left.',
         video: { path: path.join(dir, 'video.mp4'), mimeType: 'video/mp4' },
@@ -394,7 +398,7 @@ describe('a flaky line to fal', () => {
     });
     try {
       writeFileSync(path.join(dir, 'a.png'), 'a');
-      const fal = new FalProvider({ apiKey: 'test-key' });
+      const fal = new FalProvider({ apiKey: 'test-key', put: viaFetch });
       const req = {
         model: 'fal:openai/gpt-image-2.5/sunburst/edit',
         prompt: 'p',

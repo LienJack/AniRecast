@@ -25,7 +25,7 @@ import { outPath } from './util.ts';
 /** Two frames this close are the same drawing held (anime is drawn on twos and threes): one edit serves both. */
 const SAME_DRAWING_DB = 38;
 /** Image edits running at once inside the job. */
-const AT_ONCE = 3;
+const AT_ONCE = 2;
 
 const pad = (n: number) => String(n).padStart(4, '0');
 

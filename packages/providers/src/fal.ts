@@ -1,4 +1,5 @@
 import { stat as fsStat, readFile } from 'node:fs/promises';
+import { request as httpsRequest } from 'node:https';
 import path from 'node:path';
 import { AniError, isTextOnlyVideoModel } from '@anirecast/shared';
 import type {
@@ -121,13 +122,41 @@ async function netFetch(
   }
 }
 
+/**
+ * PUTs a file over HTTP/1.1. Node's fetch speaks HTTP/2 to fal's upload host, and several large bodies at once
+ * reset the streams (ERR_HTTP2_STREAM_ERROR): every frame-by-frame part failed before its first image.
+ */
+function putHttp1(url: string, body: Buffer, contentType: string, signal?: AbortSignal): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = httpsRequest(
+      url,
+      {
+        method: 'PUT',
+        headers: { 'content-type': contentType, 'content-length': body.length },
+        ...(signal ? { signal } : {}),
+      },
+      (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode ?? 0));
+        res.on('error', reject);
+      },
+    );
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
 export class FalProvider implements Provider {
   readonly name = 'fal' as const;
   readonly #key: string;
   readonly #prices = new Map<string, Promise<number>>();
 
-  constructor(opts: { apiKey: string }) {
+  readonly #put: typeof putHttp1;
+
+  /** `put` replaces the HTTP/1.1 upload (tests route it through their fetch stub). */
+  constructor(opts: { apiKey: string; put?: typeof putHttp1 }) {
     this.#key = opts.apiKey;
+    this.#put = opts.put ?? putHttp1;
   }
 
   get #auth() {
@@ -148,14 +177,39 @@ export class FalProvider implements Provider {
     return urls;
   }
 
+  /** Uploads in flight, shared by every request that needs the same file. */
+  readonly #pending = new Map<string, Promise<string>>();
+  /** Uploads running now across all requests, and those waiting for a turn. */
+  #active = 0;
+  readonly #waiting: Array<() => void> = [];
+
   async #upload(media: LocalMedia, signal?: AbortSignal): Promise<string> {
     const stat = await fsStat(media.path).catch(() => null);
     const key = stat ? `${media.path}:${stat.size}:${stat.mtimeMs}` : null;
     const cached = key ? this.#uploaded.get(key) : undefined;
     if (cached) return cached;
-    const url = await this.#uploadOnce(media, signal);
-    if (key) this.#uploaded.set(key, url);
-    return url;
+    const inFlight = key ? this.#pending.get(key) : undefined;
+    if (inFlight) return inFlight;
+    const run = (async () => {
+      // At most four uploads at a time across every request: three frame-by-frame parts at once (nine image
+      // calls, each with its references) broke fal's HTTP/2 streams.
+      if (this.#active >= 4) await new Promise<void>((resolve) => this.#waiting.push(resolve));
+      this.#active++;
+      try {
+        return await this.#uploadOnce(media, signal);
+      } finally {
+        this.#active--;
+        this.#waiting.shift()?.();
+      }
+    })();
+    if (key) this.#pending.set(key, run);
+    try {
+      const url = await run;
+      if (key) this.#uploaded.set(key, url);
+      return url;
+    } finally {
+      if (key) this.#pending.delete(key);
+    }
   }
 
   async #uploadOnce(media: LocalMedia, signal?: AbortSignal): Promise<string> {
@@ -171,18 +225,22 @@ export class FalProvider implements Provider {
     );
     const target = (await init.json().catch(() => ({}))) as { upload_url?: string; file_url?: string };
     if (!init.ok || !target.upload_url || !target.file_url) throw falError(init.status, target, 'fal upload');
-    const put = await netFetch(
-      target.upload_url,
-      {
-        method: 'PUT',
-        headers: { 'content-type': media.mimeType },
-        body: await readFile(media.path),
-        ...(signal ? { signal } : {}),
-      },
-      'fal upload',
-    );
-    if (!put.ok) throw falError(put.status, {}, 'fal upload');
-    return target.file_url;
+    const body = await readFile(media.path);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const status = await this.#put(target.upload_url, body, media.mimeType, signal);
+        if (status < 200 || status >= 300) throw falError(status, {}, 'fal upload');
+        return target.file_url;
+      } catch (error) {
+        if (signal?.aborted || error instanceof AniError || attempt >= BACKOFF_MS.length) {
+          if (error instanceof AniError) throw error;
+          throw new AniError('transient', `fal upload: network error (${networkCause(error)})`, {
+            cause: error,
+          });
+        }
+        await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt]));
+      }
+    }
   }
 
   /** List price per billable unit of an endpoint (seconds for Omni, 1000 tokens for Seedance). */
