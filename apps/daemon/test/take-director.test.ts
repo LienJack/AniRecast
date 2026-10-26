@@ -211,9 +211,9 @@ describe('the video director', () => {
       const { take, job } = queueTake(cli, shotId, 'final', 'user');
       expect(take.model).toContain('seedance');
       expect(await waitJob(root, job.id)).toBe('succeeded');
-      // 24 frames held to Seedance's 2 s minimum, restamped to 24 fps without dropping one, and sent at 720p
+      // 24 frames held to Seedance's 4 s editing minimum, restamped to 24 fps without dropping one, sent at 720p
       // (its pixel cap for reference videos) although the take is 1080p.
-      expect(sent).toEqual([{ fps: '24/1', frames: 48, height: 720, inputSeconds: 2 }]);
+      expect(sent).toEqual([{ fps: '24/1', frames: 96, height: 720, inputSeconds: 4 }]);
       const done = getTake(cli.db, take.id);
       // Conformed back onto the shot: its 24 frames at 23.976.
       expect(await probe(path.join(root, done.path!), { countFrames: true })).toMatchObject({

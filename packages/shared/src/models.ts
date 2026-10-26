@@ -86,11 +86,12 @@ export const VIDEO_MODELS: readonly VideoModelSpec[] = [
   {
     id: 'fal:bytedance/seedance-2.5/us/reference-to-video',
     label: 'Seedance 2.5',
-    note: 'fal；輸入至少 2 秒（短的會補尾再剪掉）、以 24 fps、480p–720p 上傳；輸出最低 480p；1080p 約 USD 1／秒（不足 4 秒以 4 秒計）',
+    note: 'fal；輸入至少 4 秒（短的會補尾再剪掉）、以 24 fps、480p–720p 上傳；輸出最低 480p；1080p 約 USD 1／秒（不足 4 秒以 4 秒計）',
     minRefs: 0,
     maxRefs: 9,
     refStyle: 'any',
-    minSeconds: 2,
+    // Its video editing takes a 4–30 s source and makes a clip exactly as long; shorter ones are invalid input.
+    minSeconds: 4,
     maxSeconds: 15,
     minFps: 24,
     uploadHeight: { min: 480, max: 720 },
