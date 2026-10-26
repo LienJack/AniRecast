@@ -100,6 +100,7 @@ export interface CodexStatus {
   codex?: { command: string; version: string | null; source: string } | null;
   projectId?: string | null;
   busyTaskId?: string | null;
+  busyTaskIds?: string[];
   lastError?: string | null;
   rateLimits?: unknown;
 }

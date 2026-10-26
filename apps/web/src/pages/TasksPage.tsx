@@ -144,7 +144,10 @@ function CodexStatusCard() {
                 <span className="text-amber-300">找不到，請在 Codex 桌面端把 Workspace 資料夾加為專案</span>
               )}
             </span>
-            <span>正在處理：{codex.busyTaskId ?? '—'}</span>
+            <span>
+              正在處理（最多 3 個）：
+              {codex.busyTaskIds?.length ? codex.busyTaskIds.join('、') : (codex.busyTaskId ?? '—')}
+            </span>
             {codex.lastError ? <span className="text-red-300">上次錯誤：{codex.lastError}</span> : null}
             {codex.rateLimits ? (
               <details>

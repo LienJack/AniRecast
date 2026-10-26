@@ -35,6 +35,8 @@ export interface DispatcherStatus {
   codex: { command: string; version: string; source: string } | null;
   projectId: string | null;
   busyTaskId: string | null;
+  /** Every task Codex is working on now (up to `codex.concurrency`). */
+  busyTaskIds: string[];
   lastError: string | null;
   rateLimits: unknown;
 }
@@ -93,13 +95,15 @@ export const codexCommandMissing = () =>
     hint: 'Install the Codex desktop app or CLI, or set codex.binPath.',
   });
 
-/** Hands open agent tasks to Codex through `codex app-server`, one turn at a time (design §8.4). */
+/** Hands open agent tasks to Codex through `codex app-server`, up to `codex.concurrency` turns at once (design §8.4). */
 export class AgentDispatcher {
   private readonly opts: Required<Omit<DispatcherOptions, 'command'>> & { command: CodexCommand | undefined };
   private client: AppServerClient | undefined;
   private timer: NodeJS.Timeout | undefined;
   private stopped = false;
-  private busy = false;
+  /** Tasks Codex is working on now. */
+  private readonly running = new Set<string>();
+  private picking = false;
   private backoffUntil = 0;
   private projectId: string | null | undefined;
   readonly status: DispatcherStatus = {
@@ -107,6 +111,7 @@ export class AgentDispatcher {
     codex: null,
     projectId: null,
     busyTaskId: null,
+    busyTaskIds: [],
     lastError: null,
     rateLimits: null,
   };
@@ -142,45 +147,71 @@ export class AgentDispatcher {
     });
   }
 
+  /** Up to `codex.concurrency` tasks at once (default 3), each in its own thread; never two on one shot. */
   private async tick(): Promise<void> {
-    if (this.busy || Date.now() < this.backoffUntil) return;
-    const db = this.opts.workspace.db;
-    const claimedShots = new Set(listAgentTasks(db, { status: 'claimed' }).map((t) => t.shotId));
-    const next = listAgentTasks(db, { status: 'open' }).find((t) => !t.shotId || !claimedShots.has(t.shotId));
-    if (!next) return;
-    this.busy = true;
-    let task: AgentTask | undefined;
+    if (this.picking || Date.now() < this.backoffUntil) return;
+    this.picking = true;
     try {
-      // 半自動: a hard shot video goes to Claude (a brief and a command for the human) instead of Codex.
-      const route = await this.route(next);
-      if (route.to === 'claude') {
-        handOffToClaude(
-          this.opts.workspace,
-          next.id,
-          {
-            reason: `複雜鏡頭（${route.reasons.join('、')}），交給 Claude 接手`,
-            repoRoot: REPO_ROOT.replace(/\/$/, ''),
-          },
-          'anirecast',
+      const db = this.opts.workspace.db;
+      const max = Math.max(1, this.opts.config.codex.concurrency ?? 3);
+      while (this.running.size < max && !this.stopped && Date.now() >= this.backoffUntil) {
+        const claimedShots = new Set(listAgentTasks(db, { status: 'claimed' }).map((t) => t.shotId));
+        const next = listAgentTasks(db, { status: 'open' }).find(
+          (t) => !this.running.has(t.id) && (!t.shotId || !claimedShots.has(t.shotId)),
         );
-        this.event('agent.handoff', next, { to: 'claude', reasons: route.reasons });
-        return;
+        if (!next) return;
+        // 半自動: a hard shot video goes to Claude (a brief and a command for the human) instead of Codex.
+        const route = await this.route(next);
+        if (route.to === 'claude') {
+          handOffToClaude(
+            this.opts.workspace,
+            next.id,
+            {
+              reason: `複雜鏡頭（${route.reasons.join('、')}），交給 Claude 接手`,
+              repoRoot: REPO_ROOT.replace(/\/$/, ''),
+            },
+            'anirecast',
+          );
+          this.event('agent.handoff', next, { to: 'claude', reasons: route.reasons });
+          continue;
+        }
+        const task = claimAgentTask(db, next.id, ACTOR);
+        this.running.add(task.id);
+        this.syncStatus();
+        void this.work(task);
       }
-      task = claimAgentTask(db, next.id, ACTOR);
-      this.status.busyTaskId = task.id;
+    } catch (error) {
+      const e = toEnvelopeError(error);
+      this.status.lastError = `${e.code}: ${e.message}`;
+      this.opts.log(`dispatch failed: ${this.status.lastError}`);
+      this.backoffUntil = Date.now() + 60_000;
+    } finally {
+      this.picking = false;
+    }
+  }
+
+  private syncStatus(): void {
+    this.status.busyTaskIds = [...this.running];
+    this.status.busyTaskId = this.status.busyTaskIds[0] ?? null;
+  }
+
+  /** One task's turn, alongside the others. */
+  private async work(task: AgentTask): Promise<void> {
+    const db = this.opts.workspace.db;
+    try {
       await this.runTask(task);
       this.status.lastError = null;
     } catch (error) {
       const e = toEnvelopeError(error);
       this.status.lastError = `${e.code}: ${e.message}`;
       this.opts.log(`dispatch failed: ${this.status.lastError}`);
-      if (task && getAgentTask(db, task.id).status === 'claimed') releaseAgentTask(db, task.id, ACTOR);
-      this.event('agent.error', task ?? null, { error: e });
+      if (getAgentTask(db, task.id).status === 'claimed') releaseAgentTask(db, task.id, ACTOR);
+      this.event('agent.error', task, { error: e });
       this.backoffUntil = Date.now() + (e.code === 'dependency_missing' ? 5 * 60_000 : 60_000);
       if (this.client?.exited) this.client = undefined;
     } finally {
-      this.busy = false;
-      this.status.busyTaskId = null;
+      this.running.delete(task.id);
+      this.syncStatus();
     }
   }
 
@@ -199,18 +230,27 @@ export class AgentDispatcher {
     return routeTask(ws, task.id, { cuts });
   }
 
+  /** One app-server for every concurrent task: tasks starting together share its start-up. */
+  private starting: Promise<AppServerClient> | undefined;
+
   private async ensureClient(): Promise<AppServerClient> {
     if (this.client && !this.client.exited) return this.client;
-    const command = this.opts.command ?? resolveCodexCommand(this.opts.config.codex.binPath);
-    if (!command) throw codexCommandMissing();
-    this.status.codex = { command: command.command, version: command.version, source: command.source };
-    const client = await startCodexClient(this.opts.workspace, command);
-    client.onNotification((n) => {
-      if (n.method === 'account/rateLimits/updated') this.status.rateLimits = n.params;
+    if (this.starting) return this.starting;
+    this.starting = (async () => {
+      const command = this.opts.command ?? resolveCodexCommand(this.opts.config.codex.binPath);
+      if (!command) throw codexCommandMissing();
+      this.status.codex = { command: command.command, version: command.version, source: command.source };
+      const client = await startCodexClient(this.opts.workspace, command);
+      client.onNotification((n) => {
+        if (n.method === 'account/rateLimits/updated') this.status.rateLimits = n.params;
+      });
+      this.client = client;
+      this.projectId = undefined;
+      return client;
+    })().finally(() => {
+      this.starting = undefined;
     });
-    this.client = client;
-    this.projectId = undefined;
-    return client;
+    return this.starting;
   }
 
   /** The desktop project whose root is the workspace or one of its ancestors (experimental API). */
