@@ -17,6 +17,7 @@ import {
   taskContext,
 } from './actions.ts';
 import { answerAgentTask, completeAgentTask, getAgentTask } from './agent-tasks.ts';
+import { checkAttachments, copyAttachments } from './attachments.ts';
 import { getCastMember, listCast } from './cast.ts';
 import { findActiveClip } from './clips.ts';
 import {
@@ -706,6 +707,8 @@ export function createHandoff(
     targetType: HandoffTarget;
     targetId?: string | null;
     topic: string;
+    /** Images the human attached to the question (workspace paths): copied into the discussion folder. */
+    attachments?: string[];
     actor: string;
   },
   now: number = Date.now(),
@@ -725,6 +728,14 @@ export function createHandoff(
   const dir = `${projectDir(project)}/codex/${id}`;
   const label = targetLabel(ws.db, input.targetType, targetId);
   const section = targetSection(ws, project, input.targetType, targetId);
+  const attached = checkAttachments(ws, project.id, input.attachments);
+  if (attached.length)
+    section.images.unshift(
+      ...copyAttachments(ws, attached, dir).map((path) => ({
+        path,
+        about: '人類附上的圖片（和問題一起看）',
+      })),
+    );
   mkdirSync(ws.abs(`${dir}/work`), { recursive: true });
   writeFileSync(
     ws.abs(`${dir}/BRIEF.md`),

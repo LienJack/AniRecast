@@ -12,6 +12,8 @@ import {
   getRender,
   getShot,
   getTake,
+  keyBoardFor,
+  listBoards,
   listShots,
   listTakes,
   originalDesignDir,
@@ -95,6 +97,18 @@ export const generateBoardHandler: JobHandler = async (ctx) => {
   try {
     // The director writes the instruction and picks the references from what it sees; the planned (template)
     // prompt stays when it fails. A retry reuses what it already decided.
+    // A first or last frame drawn with its key frame waits for it, to keep the new characters identical.
+    const linked = typeof board.params.consistentWith === 'string' ? board.params.consistentWith : null;
+    if (board.role !== 'key' && linked) {
+      ctx.progress(0.01, 'waiting for the key frame');
+      const until = Date.now() + 15 * 60_000;
+      while (Date.now() < until && !signal.aborted) {
+        const key = listBoards(ws.db, board.shotId).find((b) => b.id === linked);
+        if (!key || !['queued', 'generating'].includes(key.status)) break;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      if (signal.aborted) throw signal.reason ?? new Error('aborted');
+    }
     let directorUsd = 0;
     if (!board.params.director) {
       ctx.progress(0.03, 'directing: reading the frame and the references');
@@ -109,6 +123,9 @@ export const generateBoardHandler: JobHandler = async (ctx) => {
         );
       } catch (error) {
         if (signal.aborted) throw error;
+        // The template, plus the key frame for consistency when this is a first or last frame.
+        const key = keyBoardFor(ws.db, board);
+        const withKey = key?.path && !board.inputs.some((i) => i.path === key.path);
         board = updateBoard(
           ws.db,
           boardId,
@@ -117,6 +134,12 @@ export const generateBoardHandler: JobHandler = async (ctx) => {
               ...board.params,
               director: { error: toEnvelopeError(error).message, fallback: true },
             },
+            ...(withKey && key?.path
+              ? {
+                  prompt: `${board.prompt}\nImage ${board.inputs.length + 1} is this shot's key storyboard frame with the new characters already drawn: keep them identical to it (face, hair, outfit, colours, proportions).`,
+                  inputs: [...board.inputs, { role: 'key-board', path: key.path }],
+                }
+              : {}),
           },
           'daemon',
         );
@@ -320,6 +343,7 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
           extra: extras.join('\n') || null,
           outDir: `${shotDir(project, shot.id)}/takes`,
           stem: takeFileStem(take.version),
+          attachments: (take.params.attachments as string[] | undefined) ?? [],
         });
         directorUsd = d.record.costUsd;
         take = updateTake(
@@ -681,7 +705,17 @@ export async function exportFile(ws: Workspace, rel: string, name: string): Prom
  */
 export const planTakeHandler: JobHandler = async (ctx) => {
   const { workspace: ws, job } = ctx;
-  const { shotId, model: chosen, extra } = job.payload as { shotId: string; model?: string; extra?: string };
+  const {
+    shotId,
+    model: chosen,
+    extra,
+    attachments,
+  } = job.payload as {
+    shotId: string;
+    model?: string;
+    extra?: string;
+    attachments?: string[];
+  };
   const project = projectOfShot(ws.db, shotId);
   const model = chosen ?? projectModels(ws.db, project.id).video;
   const d = await directTake(ctx, {
@@ -690,6 +724,7 @@ export const planTakeHandler: JobHandler = async (ctx) => {
     extra: extra?.trim() || null,
     outDir: `${projectCacheDir(project)}/take-plan/${job.id}`,
     stem: 'plan',
+    attachments: attachments ?? [],
   });
   return {
     result: { model, prompt: d.prompt, inputs: d.inputs, director: d.record },

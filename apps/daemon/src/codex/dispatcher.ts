@@ -273,6 +273,13 @@ export class AgentDispatcher {
       return sheets.slice(0, 8);
     }
     const out: string[] = [];
+    // What the human attached to the comment or to an answer comes first: it is what they want Codex to see.
+    const said = task.payload as {
+      annotations?: Array<{ type?: string; path?: string }>;
+      answerImages?: string[];
+    };
+    for (const a of said.annotations ?? []) if (a?.type === 'image' && a.path) out.push(ws.abs(a.path));
+    for (const p of said.answerImages ?? []) out.push(ws.abs(p));
     if (payload.contactSheets) out.push(...payload.contactSheets.map((p) => ws.abs(p)));
     if (task.shotId) {
       const shot = getShot(ws.db, task.shotId);
@@ -295,7 +302,7 @@ export class AgentDispatcher {
         if (b.path) out.push(ws.abs(b.path));
       }
     }
-    return out.slice(0, 6);
+    return out.slice(0, 10);
   }
 
   private instructions(task: AgentTask): string {
@@ -305,6 +312,7 @@ export class AgentDispatcher {
       `2. 依 anirecast skill（${SKILL_PATH}）處理。只透過 anirecast CLI 操作，不要直接改 Workspace 裡的檔案；你沒有網路，模型呼叫由 AniRecast 服務代勞。用 --from 修正版本時會沿用原版本的檔位。`,
       `3. 完成時執行 \`anirecast tasks done ${task.id} --note "<一句話說明改了什麼>"${task.kind === 'review_feedback' ? ' --result <新版本 id>' : ''}\`。`,
       `4. 意見不明確或連續兩次被內容過濾擋下時，用 \`anirecast tasks ask ${task.id} --question "…"\` 問人類，然後結束。`,
+      '人類附上的圖片已經放在這則訊息裡（任務的 annotations 裡 type 為 image 的，以及 answerImages）；重新生成時用 --attach <路徑> 把需要的圖片交給模型。',
       '不要替人類按「通過」。',
     ].join('\n');
   }

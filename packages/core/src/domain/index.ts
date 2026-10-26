@@ -1,5 +1,6 @@
 export * from './actions.ts';
 export * from './agent-tasks.ts';
+export * from './attachments.ts';
 export * from './boundaries.ts';
 export * from './cast.ts';
 export * from './cast-analysis.ts';

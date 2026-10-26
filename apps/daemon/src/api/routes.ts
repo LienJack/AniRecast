@@ -14,6 +14,7 @@ import {
   assignTracklet,
   type BoardRole,
   cancelAgentTask,
+  checkAttachments,
   closeHandoff,
   createClip,
   createHandoff,
@@ -87,6 +88,7 @@ import {
   requestCancel,
   retryJob,
   type ShotMode,
+  saveAttachment,
   setAnalysisPicks,
   setDesignNote,
   setGenerationTier,
@@ -412,11 +414,12 @@ export function registerRoutes(
   app.post('/api/shots/:id/cast/find', (c) => handle(c, () => queueShotCast(ws, c.req.param('id'), USER)));
   app.post('/api/shots/:id/takes/plan', async (c) =>
     handle(c, async () => {
-      const b = await body<{ model?: string; extra?: string }>(c);
+      const b = await body<{ model?: string; extra?: string; attachments?: string[] }>(c);
       if (b.model) videoModelOrThrow(b.model);
       return queueTakePlan(ws, c.req.param('id'), USER, {
         ...(b.model ? { model: b.model } : {}),
         ...(b.extra?.trim() ? { extra: b.extra.trim() } : {}),
+        ...(b.attachments?.length ? { attachments: b.attachments } : {}),
       });
     }),
   );
@@ -610,6 +613,7 @@ export function registerRoutes(
         extra?: string;
         fromDesignId?: string;
         model?: string;
+        attachments?: string[];
       }>(c);
       if (b.model) imageModelOrThrow(b.model);
       return queueDesign(
@@ -622,6 +626,7 @@ export function registerRoutes(
           ...(b.extra ? { extra: b.extra } : {}),
           ...(b.fromDesignId ? { fromDesignId: b.fromDesignId } : {}),
           ...(b.model ? { model: b.model } : {}),
+          ...(b.attachments?.length ? { attachments: b.attachments } : {}),
         },
       );
     }),
@@ -655,6 +660,20 @@ export function registerRoutes(
     handle(c, async () => {
       const b = await body<{ castId: string }>(c);
       return queueReferenceSearch(ws, c.req.param('ref'), b.castId, USER);
+    }),
+  );
+  // Images the human attaches to what they tell an agent or a model.
+  app.post('/api/projects/:ref/attachments', async (c) =>
+    handle(c, async () => {
+      const form = await c.req.parseBody();
+      const file = form.file;
+      if (!(file instanceof File)) throw new AniError('usage', 'Upload an image in the "file" field');
+      return saveAttachment(
+        ws,
+        c.req.param('ref'),
+        new Uint8Array(await file.arrayBuffer()),
+        file.type || file.name,
+      );
     }),
   );
   app.post('/api/cast/:id/references', async (c) =>
@@ -703,6 +722,7 @@ export function registerRoutes(
         extra?: string;
         fromDesignId?: string;
         model?: string;
+        attachments?: string[];
       }>(c);
       if (b.model) imageModelOrThrow(b.model);
       return queueOriginalDesign(ws, c.req.param('ref'), b.castId, USER, {
@@ -710,6 +730,7 @@ export function registerRoutes(
         ...(b.extra ? { extra: b.extra } : {}),
         ...(b.fromDesignId ? { fromDesignId: b.fromDesignId } : {}),
         ...(b.model ? { model: b.model } : {}),
+        ...(b.attachments?.length ? { attachments: b.attachments } : {}),
       });
     }),
   );
@@ -759,10 +780,15 @@ export function registerRoutes(
         fromBoardId?: string;
         model?: string;
         role?: BoardRole;
+        attachments?: string[];
       }>(c);
       const ids = shotsForMode(ws, c.req.param('ref'), b.shotIds, ['replace']);
       if (b.model) imageModelOrThrow(b.model);
-      const opts = { ...(b.extra ? { extra: b.extra } : {}), ...(b.model ? { model: b.model } : {}) };
+      const opts = {
+        ...(b.extra ? { extra: b.extra } : {}),
+        ...(b.model ? { model: b.model } : {}),
+        ...(b.attachments?.length ? { attachments: b.attachments } : {}),
+      };
       // One moment (a revision, or a single role) or all three storyboard frames of each shot.
       return queueMany(ids, (id) =>
         b.fromBoardId || b.role
@@ -790,6 +816,7 @@ export function registerRoutes(
         force?: boolean;
         retryBlocked?: boolean;
         model?: string;
+        attachments?: string[];
       }>(c);
       const project = getProject(ws.db, c.req.param('ref'));
       if (b.model) videoModelOrThrow(b.model);
@@ -810,6 +837,7 @@ export function registerRoutes(
           force: Boolean(b.force),
           retryBlocked: Boolean(b.retryBlocked),
           model,
+          ...(b.attachments?.length ? { attachments: b.attachments } : {}),
         }),
       );
     }),
@@ -848,6 +876,7 @@ export function registerRoutes(
         comment?: string;
         annotations?: unknown[];
         model?: string;
+        attachments?: string[];
       }>(c);
       return submitReview(ws, {
         targetId: b.targetId,
@@ -855,6 +884,7 @@ export function registerRoutes(
         comment: b.comment ?? null,
         annotations: b.annotations ?? [],
         model: b.model ?? null,
+        ...(b.attachments?.length ? { attachments: b.attachments } : {}),
         actor: USER,
       });
     }),
@@ -929,12 +959,14 @@ export function registerRoutes(
         targetId?: string;
         topic: string;
         openThread?: boolean;
+        attachments?: string[];
       }>(c);
       const h = createHandoff(ws, {
         projectRef: c.req.param('ref'),
         targetType: b.targetType,
         targetId: b.targetId ?? null,
         topic: b.topic ?? '',
+        ...(b.attachments?.length ? { attachments: b.attachments } : {}),
         actor: USER,
       });
       const opened = b.openThread === false ? { threadId: null, openError: null } : await openThread(h.id);
@@ -1005,9 +1037,12 @@ export function registerRoutes(
   );
   app.get('/api/tasks/:id', (c) => handle(c, () => taskContext(ws, c.req.param('id'))));
   app.post('/api/tasks/:id/answer', async (c) =>
-    handle(c, async () =>
-      answerAgentTask(ws.db, c.req.param('id'), (await body<{ answer: string }>(c)).answer, USER),
-    ),
+    handle(c, async () => {
+      const b = await body<{ answer: string; attachments?: string[] }>(c);
+      const task = getAgentTask(ws.db, c.req.param('id'));
+      const images = task.projectId ? checkAttachments(ws, task.projectId, b.attachments) : [];
+      return answerAgentTask(ws.db, task.id, b.answer, USER, Date.now(), images);
+    }),
   );
   app.post('/api/tasks/:id/cancel', (c) => handle(c, () => cancelAgentTask(ws.db, c.req.param('id'), USER)));
   app.get('/api/jobs/:id', (c) => handle(c, () => getJob(ws.db, c.req.param('id'))));

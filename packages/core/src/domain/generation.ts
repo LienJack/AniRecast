@@ -133,6 +133,18 @@ export const listTakes = (db: Db, shotId: string): Take[] =>
 /** The approved storyboard frame of one moment of the shot (the key frame unless said). */
 export const approvedBoard = (db: Db, shotId: string, role: BoardRole = 'key'): Board | undefined =>
   listBoards(db, shotId).find((b) => b.status === 'approved' && b.role === role);
+/**
+ * The key storyboard frame a first or last frame keeps its new characters consistent with: the one drawn in the
+ * same batch, else the approved key frame, else the latest finished one.
+ */
+export function keyBoardFor(db: Db, board: Board): Board | undefined {
+  if (board.role === 'key') return undefined;
+  const keys = listBoards(db, board.shotId).filter((b) => b.role === 'key' && b.path);
+  const linked = keys.find((b) => b.id === board.params.consistentWith && b.status !== 'failed');
+  const done = keys.filter((b) => ['approved', 'ready'].includes(b.status));
+  return linked ?? done.find((b) => b.status === 'approved') ?? done.at(-1);
+}
+
 /** The approved storyboard frames of a shot, by moment. */
 export const approvedBoards = (db: Db, shotId: string): Partial<Record<BoardRole, Board>> =>
   Object.fromEntries(

@@ -88,7 +88,7 @@ export async function directBoard(
     ...listImages(brief),
     '',
     'First study the frame and the context: what happens, the composition and camera, where each person is, their pose, gesture, expression and gaze, the light (direction, colour, shadows, rim light) and how this anime draws people (line weight and colour, eyes, shading, palette).',
-    `Then choose up to ${brief.maxRefs} reference ids (R…) that show each new character best — her approved design sheets first; a library picture only for what the sheets do not show; this shot's other approved storyboard frames to keep her consistent. Never choose F or C… ids. If an art style reference is offered, add it last and say in the instruction that this Image is only the art style reference (match its line weight, eyes, shading and colours; do not draw anyone from it).`,
+    `Then choose up to ${brief.maxRefs} reference ids (R…) that show each new character best — her approved design sheets first; a library picture only for what the sheets do not show; this shot's other storyboard frames to keep her consistent. If this shot's key storyboard frame is offered, send it first and keep the new characters identical to it (this frame must look like the same people). The original character's approved sheets show who is replaced and share the layout of hers cell for cell: use them to find the matching pose or expression (send one only when it helps, and say it shows the original, not the new character). Images the human attached matter: use them as their requirement says. Never choose F or C… ids. If an art style reference is offered, add it last and say in the instruction that this Image is only the art style reference (match its line weight, eyes, shading and colours; do not draw anyone from it).`,
     'Then write the instruction for the image model, in English, concrete and specific to this frame:',
     '- name what to replace by position and looks, and which Image shows the new character (use the numbers she will receive: Image 1 is the frame, your first reference is Image 2, …);',
     '- describe her pose, action, gesture, expression and gaze exactly as the original person has them here, and where she stands;',
@@ -203,13 +203,24 @@ function sendRule(spec: VideoModelSpec, max: number): string {
  */
 export async function directTake(
   ctx: JobContext,
-  input: { shotId: string; model: string; extra: string | null; outDir: string; stem: string },
+  input: {
+    shotId: string;
+    model: string;
+    extra: string | null;
+    outDir: string;
+    stem: string;
+    attachments?: string[];
+  },
 ): Promise<{ prompt: string; inputs: InputRef[]; record: DirectorRecord }> {
   const { workspace: ws, services, signal, job } = ctx;
   const spec = videoModelSpec(input.model);
   const max = Math.min(spec.maxRefs, MAX_TAKE_REFS);
   if (max === 0) throw new Error(`${spec.label} takes no reference images`);
-  const brief = takeBrief(ws, input.shotId, { extra: input.extra, maxRefs: max });
+  const brief = takeBrief(ws, input.shotId, {
+    extra: input.extra,
+    maxRefs: max,
+    attachments: input.attachments ?? [],
+  });
   if (!brief.images.some((i) => i.use === 'reference'))
     throw new Error('no approved storyboard frame or design sheet to send');
   const videoAbs = ws.abs(brief.video);
@@ -238,7 +249,7 @@ export async function directTake(
     ...(withVideo ? [] : ['(The clip is too large to attach; the context frames show it.)']),
     '',
     'First watch the shot: the motion of each person (steps, turns, gestures, expressions changing), the camera movement, the timing, the light and how this anime draws people.',
-    `Then decide what to send. ${sendRule(spec, max)} Only R… ids may be sent; each entry of "send" becomes one image (several ids = one composite). Send at least ${Math.max(1, spec.minRefs)}. If the model takes more than the characters need and an art style reference is offered, you may send it as its own image and say it is only the art style reference.`,
+    `Then decide what to send. ${sendRule(spec, max)} Only R… ids may be sent; each entry of "send" becomes one image (several ids = one composite: e.g. the replacement's turnaround with her expression sheet, or the original's sheet beside hers so the model sees which becomes which). The original character's approved sheets show who is replaced, cell for cell like the replacement's. Images the human attached matter: use them as their requirement says. Send at least ${Math.max(1, spec.minRefs)}. If the model takes more than the characters need and an art style reference is offered, you may send it as its own image and say it is only the art style reference.`,
     'Then write the instruction in English. Refer to the images you send as <IMAGE_REF_0>, <IMAGE_REF_1>, … in the order of "send".',
     '- say which person to replace by position and looks, and which <IMAGE_REF_k> shows the new character;',
     '- keep the motion, timing, camera movement, positions, background, other people, light and colour grading of the original exactly; describe the movement you saw so the new character performs it;',

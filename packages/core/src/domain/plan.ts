@@ -15,7 +15,14 @@ import {
   designNote,
   getDesign,
 } from './designs.ts';
-import { approvedBoard, type BoardRole, getBoard, getTake, type InputRef } from './generation.ts';
+import {
+  approvedBoard,
+  type BoardRole,
+  getBoard,
+  getTake,
+  type InputRef,
+  keyBoardFor,
+} from './generation.ts';
 import { type Bbox, overlaysToRemove, type TextOverlay } from './overlays.ts';
 import { getPersona, type Persona, type PersonaImage } from './personas.ts';
 import type { GenerationTier } from './projects.ts';
@@ -868,6 +875,13 @@ export function boardBrief(ws: Workspace, boardId: string, maxRefs: number): Dir
       k.path,
     );
   }
+  // A first or last frame keeps the new characters identical to the shot's key frame.
+  const keyRef = keyBoardFor(ws.db, board);
+  if (keyRef?.path)
+    reference(
+      `this shot's key storyboard frame (v${keyRef.version}), already drawn with the new characters: keep them identical to it — face, hair, outfit, colours, proportions`,
+      keyRef.path,
+    );
   const facts: string[] = [];
   const clip = findActiveClip(ws.db, project.id);
   const seconds = clip ? ((shot.frameCount * clip.fpsDen) / clip.fpsNum).toFixed(1) : '?';
@@ -898,14 +912,7 @@ export function boardBrief(ws: Workspace, boardId: string, maxRefs: number): Dir
         context(`the original person to replace (${castLabel ?? 'unnamed'}), cropped`, crop);
     }
     const binding = castId ? { castMemberId: castId, personaId: use.persona.id } : undefined;
-    for (const kind of ['turnaround', 'expressions', 'poses'] as const) {
-      const sheet = binding ? approvedDesign(ws.db, project.id, binding, kind) : undefined;
-      if (sheet?.path)
-        reference(
-          `"${use.persona.name}" approved ${DESIGN_WORDS[kind]}, drawn in this anime's style`,
-          sheet.path,
-        );
-    }
+    sheetReferences(ws, project.id, use.persona.name, castId, castLabel, binding, reference);
     for (const img of [...use.persona.images]
       .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
       .slice(0, 3))
@@ -936,6 +943,7 @@ export function boardBrief(ws: Workspace, boardId: string, maxRefs: number): Dir
       ref,
     );
   const extra = typeof board.params.extra === 'string' ? board.params.extra : null;
+  attachedImages(facts, (board.params.attachments as string[] | undefined) ?? [], reference);
   return { facts, images: images.filter((i) => existsSync(ws.abs(i.path))), extra, maxRefs };
 }
 
@@ -956,7 +964,7 @@ export interface TakeBrief extends DirectorBrief {
 export function takeBrief(
   ws: Workspace,
   shotId: string,
-  opts: { extra?: string | null; maxRefs: number },
+  opts: { extra?: string | null; maxRefs: number; attachments?: string[] },
 ): TakeBrief {
   const shot = getShot(ws.db, shotId);
   if (!shot.sourcePath) throw new AniError('conflict', 'Shot source segment is not prepared yet');
@@ -1003,11 +1011,7 @@ export function takeBrief(
       }`,
     );
     const binding = castId ? { castMemberId: castId, personaId: use.persona.id } : undefined;
-    for (const kind of ['turnaround', 'expressions', 'poses'] as const) {
-      const sheet = binding ? approvedDesign(ws.db, project.id, binding, kind) : undefined;
-      if (sheet?.path)
-        reference(`"${use.persona.name}" approved ${DESIGN_WORDS[kind]}, in this anime's style`, sheet.path);
-    }
+    sheetReferences(ws, project.id, use.persona.name, castId, castLabel, binding, reference);
     for (const img of [...use.persona.images]
       .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
       .slice(0, 2))
@@ -1023,6 +1027,7 @@ export function takeBrief(
       'an art style reference: a frame of this anime showing how it draws faces, eyes, line art and shading',
       ref,
     );
+  attachedImages(facts, opts.attachments ?? [], reference);
   return {
     facts,
     images,
@@ -1031,4 +1036,48 @@ export function takeBrief(
     video: shot.sourcePath,
     names: uses.map((u) => u.persona.name),
   };
+}
+
+/** The human's attached images: references the director should look at and pass on as the human intends. */
+function attachedImages(
+  facts: string[],
+  attachments: string[],
+  reference: (label: string, path: string) => void,
+) {
+  if (!attachments.length) return;
+  for (const [i, p] of attachments.entries())
+    reference(`image ${i + 1} the human attached to their requirement`, p);
+  facts.push(
+    `The human attached ${attachments.length} image${attachments.length > 1 ? 's' : ''} to their requirement (the references labelled "the human attached"). Look at them, send the ones the generator needs, and say in the instruction what each one is for.`,
+  );
+}
+
+/**
+ * The approved sheets of a binding, both sides: the replacement's (how she looks, in this anime's style) and the
+ * original character's own (who is being replaced). The two share their layout cell for cell, so the director
+ * can match a pose or expression of the original to the same cell of the replacement.
+ */
+function sheetReferences(
+  ws: Workspace,
+  projectId: string,
+  personaName: string,
+  castId: string | undefined,
+  castLabel: string | undefined,
+  binding: Binding | undefined,
+  reference: (label: string, path: string) => void,
+) {
+  for (const kind of ['turnaround', 'expressions', 'poses'] as const) {
+    const sheet = binding ? approvedDesign(ws.db, projectId, binding, kind) : undefined;
+    if (sheet?.path)
+      reference(`"${personaName}" approved ${DESIGN_WORDS[kind]}, drawn in this anime's style`, sheet.path);
+  }
+  if (!castId) return;
+  for (const kind of ['turnaround', 'expressions', 'poses'] as const) {
+    const sheet = approvedOriginal(ws.db, castId, kind);
+    if (sheet?.path)
+      reference(
+        `the original character 「${castLabel ?? ''}」's approved ${DESIGN_WORDS[kind]} — who is being replaced; "${personaName}"'s ${kind} sheet has the same layout, cell for cell`,
+        sheet.path,
+      );
+  }
 }

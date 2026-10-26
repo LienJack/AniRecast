@@ -66,24 +66,26 @@ describe('three storyboard frames', () => {
   it('draws the first, key and last frames, skipping a moment nobody to replace is seen in', () => {
     const { ws, shotId } = fixture();
     const { boards, skipped } = queueBoards(ws, shotId, 'user');
+    // The key frame first; the first frame waits for it and keeps the new character identical to it.
     expect(boards.map((q) => [q.board.role, q.board.frame])).toEqual([
-      ['first', 0],
       ['key', 12],
+      ['first', 0],
     ]);
+    expect(boards[1]!.board.params.consistentWith).toBe(boards[0]!.board.id);
     expect(skipped).toEqual([
       { role: 'last', reason: 'Nobody to replace is seen in the last frame of this shot' },
     ]);
     // Each prompt starts from the frame of its own moment.
     expect(boards.map((q) => q.board.inputs[0]?.path)).toEqual([
-      'projects/op/first.jpg',
       'projects/op/mid.jpg',
+      'projects/op/first.jpg',
     ]);
     ws.close();
   });
 
   it('approves each moment on its own, and the video waits for the key frame', () => {
     const { ws, shotId } = fixture();
-    const [first, key] = queueBoards(ws, shotId, 'user').boards.map((q) => q.board);
+    const [key, first] = queueBoards(ws, shotId, 'user').boards.map((q) => q.board);
     for (const b of [first!, key!]) finish(ws, b.id);
     expect(shotStage(ws.db, shotId, 'final')).toBe('board_review');
     submitReview(ws, { targetId: first!.id, verdict: 'approve', actor: 'user' });

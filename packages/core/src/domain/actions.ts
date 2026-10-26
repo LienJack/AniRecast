@@ -1,10 +1,11 @@
-import { AniError } from '@anirecast/shared';
+import { AniError, videoModelSpec } from '@anirecast/shared';
 import { loadConfig } from '../config.ts';
 import { all, fromJson, one } from '../db.ts';
 import { enqueueJob } from '../jobs.ts';
 import { assertNotBlockedOut, assertQuota } from '../quota.ts';
 import type { Workspace } from '../workspace.ts';
 import { createAgentTask, getAgentTask, listAgentTasks } from './agent-tasks.ts';
+import { attachToPlan, checkAttachments } from './attachments.ts';
 import { getCastMember, listCast, shotCast } from './cast.ts';
 import { markCastAnalysisQueued } from './cast-analysis.ts';
 import { findActiveClip, getClip } from './clips.ts';
@@ -51,17 +52,34 @@ export function queueBoard(
   ws: Workspace,
   shotId: string,
   actor: string,
-  opts: { extra?: string; fromBoardId?: string; model?: string; role?: BoardRole } = {},
+  opts: {
+    extra?: string;
+    fromBoardId?: string;
+    model?: string;
+    role?: BoardRole;
+    attachments?: string[];
+    /** The key frame drawn in the same batch, which this first or last frame waits for and matches. */
+    consistentWith?: string;
+  } = {},
 ) {
-  const { model: chosen, ...planOpts } = opts;
-  const plan = planBoard(ws, shotId, planOpts);
+  const { model: chosen, attachments, consistentWith, ...planOpts } = opts;
+  const projectId = projectOfShot(ws.db, shotId).id;
+  // A revision keeps the images attached to the version it revises.
+  const prior = opts.fromBoardId
+    ? ((getBoard(ws.db, opts.fromBoardId).params.attachments as string[]) ?? [])
+    : [];
+  const plan = attachToPlan(
+    planBoard(ws, shotId, planOpts),
+    [...prior, ...checkAttachments(ws, projectId, attachments)],
+    'image',
+  );
   const board = createBoard(ws.db, {
     shotId,
     role: plan.role,
     frame: plan.frame,
     prompt: plan.prompt,
     model: chosen ?? projectModels(ws.db, projectOfShot(ws.db, shotId).id).image,
-    params: plan.params,
+    params: consistentWith ? { ...plan.params, consistentWith } : plan.params,
     inputs: plan.inputs,
     parentId: opts.fromBoardId ?? null,
     createdBy: actor,
@@ -85,14 +103,19 @@ export function queueBoards(
   ws: Workspace,
   shotId: string,
   actor: string,
-  opts: { extra?: string; model?: string; roles?: readonly BoardRole[] } = {},
+  opts: { extra?: string; model?: string; roles?: readonly BoardRole[]; attachments?: string[] } = {},
 ) {
   const { roles = BOARD_ROLES, ...rest } = opts;
   const boards: Array<ReturnType<typeof queueBoard>> = [];
   const skipped: Array<{ role: BoardRole; reason: string }> = [];
-  for (const role of roles) {
+  // The key frame first; the first and last frames wait for it and keep the new characters identical to it.
+  const ordered = [...roles].sort((a, b) => Number(b === 'key') - Number(a === 'key'));
+  let key: string | undefined;
+  for (const role of ordered) {
     try {
-      boards.push(queueBoard(ws, shotId, actor, { ...rest, role }));
+      const q = queueBoard(ws, shotId, actor, { ...rest, role, ...(key ? { consistentWith: key } : {}) });
+      if (role === 'key') key = q.board.id;
+      boards.push(q);
     } catch (error) {
       if (role === 'key' || !(error instanceof AniError) || error.code !== 'conflict') throw error;
       skipped.push({ role, reason: error.message });
@@ -106,14 +129,31 @@ export function queueTake(
   shotId: string,
   tier: GenerationTier,
   actor: string,
-  opts: { extra?: string; fromTakeId?: string; force?: boolean; retryBlocked?: boolean; model?: string } = {},
+  opts: {
+    extra?: string;
+    fromTakeId?: string;
+    force?: boolean;
+    retryBlocked?: boolean;
+    model?: string;
+    attachments?: string[];
+  } = {},
 ) {
   const config = loadConfig();
-  const model = opts.model ?? projectModels(ws.db, projectOfShot(ws.db, shotId).id).video;
+  const projectId = projectOfShot(ws.db, shotId).id;
+  const model = opts.model ?? projectModels(ws.db, projectId).video;
+  const attached = checkAttachments(ws, projectId, opts.attachments);
   assertNotBlockedOut(ws.db, config, shotId, opts.retryBlocked);
   if (config.provider !== 'fake' && process.env.ANIRECAST_PROVIDER !== 'fake')
     assertQuota(ws.db, config, model, 1, { includePending: true });
-  const plan = planTake(ws, shotId, tier, { ...opts, model });
+  const prior = opts.fromTakeId
+    ? ((getTake(ws.db, opts.fromTakeId).params.attachments as string[]) ?? [])
+    : [];
+  const plan = attachToPlan(
+    planTake(ws, shotId, tier, { ...opts, model }),
+    [...prior, ...attached],
+    'video',
+    videoModelSpec(model).maxRefs,
+  );
   const take = createTake(
     ws.db,
     {
@@ -149,10 +189,20 @@ export function queueDesign(
   projectRef: string,
   ref: string | null,
   actor: string,
-  opts: { kind?: DesignKind; extra?: string; fromDesignId?: string; model?: string } = {},
+  opts: {
+    kind?: DesignKind;
+    extra?: string;
+    fromDesignId?: string;
+    model?: string;
+    attachments?: string[];
+  } = {},
 ) {
   const project = getProject(ws.db, projectRef);
   const from = opts.fromDesignId ? getDesign(ws.db, opts.fromDesignId) : undefined;
+  const attached = [
+    ...((from?.params.attachments as string[] | undefined) ?? []),
+    ...checkAttachments(ws, project.id, opts.attachments),
+  ];
   // Revising an original character's own sheet stays on her sheets.
   if (from?.subject === 'original' && from.castMemberId)
     return queueOriginalDesign(ws, project.id, from.castMemberId, actor, { ...opts, kind: from.kind });
@@ -169,10 +219,14 @@ export function queueDesign(
   const kinds = from ? [from.kind] : opts.kind ? [opts.kind] : [...DESIGN_KINDS];
   return bindings.flatMap((binding) =>
     kinds.map((kind) => {
-      const plan = planDesign(ws, project.id, binding, kind, {
-        ...(opts.extra ? { extra: opts.extra } : {}),
-        ...(from ? { fromDesignId: from.id } : {}),
-      });
+      const plan = attachToPlan(
+        planDesign(ws, project.id, binding, kind, {
+          ...(opts.extra ? { extra: opts.extra } : {}),
+          ...(from ? { fromDesignId: from.id } : {}),
+        }),
+        attached,
+        'image',
+      );
       const design = createDesign(ws.db, {
         projectId: project.id,
         castMemberId: binding.castMemberId,
@@ -207,19 +261,33 @@ export function queueOriginalDesign(
   projectRef: string,
   castId: string,
   actor: string,
-  opts: { kind?: DesignKind; extra?: string; fromDesignId?: string; model?: string } = {},
+  opts: {
+    kind?: DesignKind;
+    extra?: string;
+    fromDesignId?: string;
+    model?: string;
+    attachments?: string[];
+  } = {},
 ) {
   const project = getProject(ws.db, projectRef);
   const cast = getCastMember(ws.db, castId);
   if (cast.projectId !== project.id) throw new AniError('usage', `${castId} belongs to another project`);
   const from = opts.fromDesignId ? getDesign(ws.db, opts.fromDesignId) : undefined;
+  const attached = [
+    ...((from?.params.attachments as string[] | undefined) ?? []),
+    ...checkAttachments(ws, project.id, opts.attachments),
+  ];
   const kinds = from ? [from.kind] : opts.kind ? [opts.kind] : [...DESIGN_KINDS];
   const designModel = opts.model ?? projectModels(ws.db, project.id).design;
   return kinds.map((kind) => {
-    const plan = planOriginalDesign(ws, project.id, cast.id, kind, {
-      ...(opts.extra ? { extra: opts.extra } : {}),
-      ...(from ? { fromDesignId: from.id } : {}),
-    });
+    const plan = attachToPlan(
+      planOriginalDesign(ws, project.id, cast.id, kind, {
+        ...(opts.extra ? { extra: opts.extra } : {}),
+        ...(from ? { fromDesignId: from.id } : {}),
+      }),
+      attached,
+      'image',
+    );
     const design = createDesign(ws.db, {
       projectId: project.id,
       castMemberId: cast.id,
@@ -283,11 +351,12 @@ export function queueTakePlan(
   ws: Workspace,
   shotId: string,
   actor: string,
-  opts: { model?: string; extra?: string } = {},
+  opts: { model?: string; extra?: string; attachments?: string[] } = {},
 ) {
   const shot = getShot(ws.db, shotId);
   if (shot.mode !== 'replace')
     throw new AniError('conflict', 'Only a replace shot has a video director plan');
+  const attachments = checkAttachments(ws, projectOfShot(ws.db, shot.id).id, opts.attachments);
   return enqueueJob(ws.db, {
     type: 'take.plan',
     lane: 'generate',
@@ -296,6 +365,7 @@ export function queueTakePlan(
       shotId: shot.id,
       ...(opts.model ? { model: opts.model } : {}),
       ...(opts.extra ? { extra: opts.extra } : {}),
+      ...(attachments.length ? { attachments } : {}),
     },
     requestedBy: actor,
     maxAttempts: 1,
@@ -474,6 +544,7 @@ function submitDesignReview(
     verdict: Verdict;
     comment?: string | null;
     model?: string | null;
+    annotations?: unknown[];
     actor: string;
   },
 ) {
@@ -496,7 +567,12 @@ function submitDesignReview(
       kind: 'review_feedback',
       projectId: design.projectId,
       reviewId: review.id,
-      payload: { targetType: 'design', targetId: design.id, comment: input.comment, annotations: [] },
+      payload: {
+        targetType: 'design',
+        targetId: design.id,
+        comment: input.comment,
+        annotations: input.annotations ?? [],
+      },
       createdBy: input.actor,
     });
     return { review, task };
@@ -545,12 +621,32 @@ export function submitReview(
     comment?: string | null;
     annotations?: unknown[];
     model?: string | null;
+    attachments?: string[];
     actor: string;
   },
 ) {
   const isBoard = input.targetId.startsWith('brd_');
   if (input.model && input.verdict === 'regenerate')
     assertSelectableModel(isBoard || input.targetId.startsWith('dsg_') ? 'image' : 'video', input.model);
+  // Images the human attached to the comment travel with it as image annotations (Codex sees them).
+  if (input.attachments?.length) {
+    const projectId = input.targetId.startsWith('dsg_')
+      ? getDesign(ws.db, input.targetId).projectId
+      : projectOfShot(
+          ws.db,
+          (input.targetId.startsWith('brd_')
+            ? getBoard(ws.db, input.targetId)
+            : getTake(ws.db, input.targetId)
+          ).shotId,
+        ).id;
+    input = {
+      ...input,
+      annotations: [
+        ...(input.annotations ?? []),
+        ...checkAttachments(ws, projectId, input.attachments).map((path) => ({ type: 'image', path })),
+      ],
+    };
+  }
   if (input.targetId.startsWith('dsg_')) return submitDesignReview(ws, input);
   const target = isBoard ? getBoard(ws.db, input.targetId) : getTake(ws.db, input.targetId);
   const review = addReview(ws.db, {

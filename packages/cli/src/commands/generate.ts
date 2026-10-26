@@ -99,6 +99,19 @@ async function waitAll(ws: Workspace, jobIds: string[], wait?: boolean) {
   return { jobs };
 }
 
+/**
+ * --attach: images to give with the instructions — an attached image's workspace path (from a task's
+ * annotations) or any image file, which is copied into the project.
+ */
+const attachOpt = (files: string[] | undefined): { attachments?: string[] } =>
+  files?.length
+    ? {
+        attachments: files.map((f) =>
+          f.startsWith('projects/') || path.isAbsolute(f) ? f : path.resolve(f),
+        ),
+      }
+    : {};
+
 const boardRole = (role: string): BoardRole => {
   if (!BOARD_ROLES.includes(role as BoardRole))
     throw new AniError('usage', `--role must be one of ${BOARD_ROLES.join(', ')}`);
@@ -115,6 +128,10 @@ export function registerGenerate(program: Command): void {
     .command('generate <project> [shots...]')
     .option('--all', 'every replace shot of the project')
     .option('--extra <text>', 'extra instructions appended to the prompt')
+    .option(
+      '--attach <files...>',
+      'images to give with the instructions (an attached image path or any image file)',
+    )
     .option('--prompt-file <file>', 'extra instructions from a file')
     .option('--from <boardId>', 'revise this board (adds --extra on top of its prompt inputs)')
     .option('--role <role>', 'only one storyboard frame: first, key or last (default: all three)')
@@ -135,6 +152,7 @@ export function registerGenerate(program: Command): void {
             from?: string;
             role?: string;
             model?: string;
+            attach?: string[];
             wait?: boolean;
           },
         ) =>
@@ -143,7 +161,11 @@ export function registerGenerate(program: Command): void {
               ? [getBoard(ws.db, opts.from).shotId]
               : targetShots(ws, projectRef, shotIds, Boolean(opts.all), ['replace']);
             const extra = extraText(opts);
-            const base = { ...(extra ? { extra } : {}), ...(opts.model ? { model: opts.model } : {}) };
+            const base = {
+              ...(extra ? { extra } : {}),
+              ...(opts.model ? { model: opts.model } : {}),
+              ...attachOpt(opts.attach),
+            };
             const skipped: Array<{ shotId: string; role: string; reason: string }> = [];
             const queued = ids.flatMap((id) => {
               if (opts.from || opts.role)
@@ -255,6 +277,10 @@ export function registerGenerate(program: Command): void {
     )
     .option('--kind <kind>', 'only one sheet: turnaround, expressions or poses')
     .option('--extra <text>', 'extra instructions')
+    .option(
+      '--attach <files...>',
+      'images to give with the instructions (an attached image path or any image file)',
+    )
     .option('--from <designId>', 'revise this sheet (same inputs, plus --extra)')
     .option('--model <id>', 'image model for these sheets (default: the project choice)')
     .option('--wait', 'wait for the sheets')
@@ -263,7 +289,14 @@ export function registerGenerate(program: Command): void {
         (
           projectRef: string,
           character: string | undefined,
-          opts: { kind?: DesignKind; extra?: string; from?: string; model?: string; wait?: boolean },
+          opts: {
+            kind?: DesignKind;
+            extra?: string;
+            from?: string;
+            model?: string;
+            attach?: string[];
+            wait?: boolean;
+          },
         ) =>
           withWorkspace(globals(), async (ws) => {
             const queued = queueDesign(
@@ -274,6 +307,7 @@ export function registerGenerate(program: Command): void {
               {
                 ...(opts.kind ? { kind: opts.kind } : {}),
                 ...(opts.extra ? { extra: opts.extra } : {}),
+                ...attachOpt(opts.attach),
                 ...(opts.from ? { fromDesignId: opts.from } : {}),
                 ...(opts.model ? { model: opts.model } : {}),
               },
@@ -347,6 +381,10 @@ export function registerGenerate(program: Command): void {
     )
     .option('--kind <kind>', 'only one sheet: turnaround, expressions or poses')
     .option('--extra <text>', 'extra instructions')
+    .option(
+      '--attach <files...>',
+      'images to give with the instructions (an attached image path or any image file)',
+    )
     .option('--from <designId>', 'revise this sheet')
     .option('--model <id>', 'image model (default: the project choice)')
     .option('--wait', 'wait for the sheets')
@@ -355,7 +393,14 @@ export function registerGenerate(program: Command): void {
         (
           projectRef: string,
           character: string,
-          opts: { kind?: DesignKind; extra?: string; from?: string; model?: string; wait?: boolean },
+          opts: {
+            kind?: DesignKind;
+            extra?: string;
+            from?: string;
+            model?: string;
+            attach?: string[];
+            wait?: boolean;
+          },
         ) =>
           withWorkspace(globals(), async (ws) => {
             const [binding] = resolveBindings(ws.db, getProject(ws.db, projectRef).id, character);
@@ -367,6 +412,7 @@ export function registerGenerate(program: Command): void {
               {
                 ...(opts.kind ? { kind: opts.kind } : {}),
                 ...(opts.extra ? { extra: opts.extra } : {}),
+                ...attachOpt(opts.attach),
                 ...(opts.from ? { fromDesignId: opts.from } : {}),
                 ...(opts.model ? { model: opts.model } : {}),
               },
@@ -416,6 +462,10 @@ export function registerGenerate(program: Command): void {
     .option('--all', 'every replace/clean shot that is ready for video')
     .option('--tier <tier>', 'draft (360p), preview (720p) or final (1080p); default: the project tier')
     .option('--extra <text>', 'extra instructions')
+    .option(
+      '--attach <files...>',
+      'images to give with the instructions (an attached image path or any image file)',
+    )
     .option('--prompt-file <file>', 'extra instructions from a file')
     .option('--from <takeId>', 'revise this take (same inputs, plus --extra)')
     .option('--force', 'generate a replace shot without an approved board')
@@ -442,6 +492,7 @@ export function registerGenerate(program: Command): void {
             force?: boolean;
             retryBlocked?: boolean;
             model?: string;
+            attach?: string[];
             wait?: boolean;
           },
         ) =>
@@ -478,6 +529,7 @@ export function registerGenerate(program: Command): void {
                 force: Boolean(opts.force),
                 retryBlocked: Boolean(opts.retryBlocked),
                 model,
+                ...attachOpt(opts.attach),
               }),
             );
             return {
@@ -500,11 +552,16 @@ export function registerGenerate(program: Command): void {
     )
     .option('--model <id>', 'video model to plan for (default: the project choice)')
     .option('--extra <text>', 'what the human wants (mandatory for the director)')
+    .option(
+      '--attach <files...>',
+      'images to give with the instructions (an attached image path or any image file)',
+    )
     .option('--wait')
     .action(
-      command((shotId: string, opts: { model?: string; extra?: string; wait?: boolean }) =>
+      command((shotId: string, opts: { model?: string; extra?: string; attach?: string[]; wait?: boolean }) =>
         withWorkspace(globals(), async (ws) => {
           const job = queueTakePlan(ws, shotId, actorFromEnv(), {
+            ...attachOpt(opts.attach),
             ...(opts.model ? { model: opts.model } : {}),
             ...(opts.extra ? { extra: opts.extra } : {}),
           });

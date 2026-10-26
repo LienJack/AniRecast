@@ -232,14 +232,20 @@ export function answerAgentTask(
   answer: string,
   actor: string,
   now: number = Date.now(),
+  /** Images the human attached to the answer (workspace paths); Codex gets them with it. */
+  images: string[] = [],
 ): AgentTask {
   return tx(db, () => {
     const t = getAgentTask(db, id);
     if (t.status !== 'needs_user') throw new AniError('conflict', 'This task is not waiting for an answer');
+    const payload = {
+      ...((t.payload as Record<string, unknown> | null) ?? {}),
+      ...(images.length ? { answerImages: images } : {}),
+    };
     run(
       db,
-      `UPDATE agent_tasks SET status = 'open', answer = :answer, claimed_by = NULL, claimed_at = NULL, updated_at = :now WHERE id = :id`,
-      { id, answer, now },
+      `UPDATE agent_tasks SET status = 'open', answer = :answer, payload_json = :payload, claimed_by = NULL, claimed_at = NULL, updated_at = :now WHERE id = :id`,
+      { id, answer, payload: JSON.stringify(payload), now },
     );
     const task = getAgentTask(db, id);
     event(db, task, 'agent_task.answered', actor, { answer });
