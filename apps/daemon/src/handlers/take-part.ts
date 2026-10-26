@@ -60,16 +60,18 @@ export async function cutPart(
   };
   // At a cut there is nothing to flow from or into: shot 24's part began at its close-up, was told to "start out
   // of" the kept wide shot before it, and stayed a wide shot.
-  const changes = await sceneChanges(ws.abs(shot.sourcePath), { signal });
-  const cutAt = (f: number) => changes.some((c) => c.kind === 'cut' && Math.abs(c.frame - f) <= 1);
-  const startsAtCut = range.start > 0 && cutAt(range.start);
-  const endsAtCut = range.end < shot.frameCount - 1 && cutAt(range.end + 1);
-  const cuts = changes
-    .filter((c) => c.kind === 'cut' && c.frame > range.start + 1 && c.frame <= range.end)
-    .map((c) => c.frame);
-  if (range.start > 0 && !startsAtCut)
+  // A cut's frame is the first frame of the new camera set-up.
+  const changes = (await sceneChanges(ws.abs(shot.sourcePath), { signal })).filter((c) => c.kind === 'cut');
+  const startsAtCut = range.start > 0 && changes.some((c) => c.frame === range.start);
+  const endsAtCut = range.end < shot.frameCount - 1 && changes.some((c) => c.frame === range.end + 1);
+  const cuts = changes.filter((c) => c.frame > range.start && c.frame <= range.end).map((c) => c.frame);
+  // A cut in the first or last few frames makes the part mostly another set-up than the kept frame beside it.
+  const near = Math.max(3, Math.round(frames * 0.15));
+  const earlyCut = cuts.some((f) => f - range.start <= near);
+  const lateCut = cuts.some((f) => range.end - f < near);
+  if (range.start > 0 && !startsAtCut && !earlyCut)
     await kept(range.start - 1, 'right before this part — it must start out of this frame');
-  if (range.end < shot.frameCount - 1 && !endsAtCut)
+  if (range.end < shot.frameCount - 1 && !endsAtCut && !lateCut)
     await kept(range.end + 1, 'right after this part — it must flow into this frame');
   return { range, video, seams, cuts, startsAtCut, endsAtCut };
 }
