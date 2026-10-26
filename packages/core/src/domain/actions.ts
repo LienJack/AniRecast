@@ -28,6 +28,7 @@ import {
   BOARD_ROLES,
   type BoardRole,
   createBoard,
+  createRender,
   createTake,
   getBoard,
   getTake,
@@ -883,7 +884,39 @@ export function submitReview(
     };
   }
   if (input.verdict === 'keep_original') settleCast(ws, project.id, [], 'shot kept as original', input.actor);
+  // An approved video (or a shot kept as it is) changes the film: the draft render follows on its own.
+  if (!isBoard && (input.verdict === 'approve' || input.verdict === 'keep_original'))
+    return { review, render: queueAutoDraftRender(ws, project.id, input.actor) };
   return { review };
+}
+
+/**
+ * The draft render that follows approvals: queued unless one is already waiting (it picks the approved versions when
+ * it starts, so a run of approvals makes one render). When it is done, older drafts are removed; finals stay.
+ */
+export function queueAutoDraftRender(ws: Workspace, projectId: string, actor: string) {
+  const waiting = all<{ id: string }>(
+    ws.db,
+    `SELECT id FROM jobs WHERE type = 'render.compose' AND status = 'queued' AND project_id = :projectId`,
+    { projectId },
+  )[0];
+  if (waiting) return { jobId: waiting.id, queued: false };
+  const project = getProject(ws.db, projectId);
+  if (!findActiveClip(ws.db, project.id)) return null;
+  const render = createRender(ws.db, {
+    projectId: project.id,
+    kind: 'draft',
+    tier: project.generationTier,
+    createdBy: actor,
+  });
+  const job = enqueueJob(ws.db, {
+    type: 'render.compose',
+    lane: 'media',
+    projectId: project.id,
+    payload: { renderId: render.id, auto: true },
+    requestedBy: actor,
+  });
+  return { renderId: render.id, jobId: job.id, queued: true };
 }
 
 /** Everything about one shot that a reviewer (human or Codex) needs. */

@@ -594,6 +594,22 @@ export function createRender(
   });
 }
 
+/** Removes a render's row (its files are the caller's): superseded automatic drafts. */
+export function deleteRender(db: Db, id: string, actor: string): void {
+  tx(db, () => {
+    const r = getRender(db, id);
+    run(db, 'DELETE FROM renders WHERE id = :id', { id });
+    appendEvent(db, {
+      actor,
+      kind: 'render.deleted',
+      entityType: 'render',
+      entityId: id,
+      projectId: r.projectId,
+      payload: { version: r.version, kind: r.kind },
+    });
+  });
+}
+
 export function updateRender(
   db: Db,
   id: string,

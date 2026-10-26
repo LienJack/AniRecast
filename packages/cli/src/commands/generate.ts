@@ -830,28 +830,36 @@ export function registerGenerate(program: Command): void {
   render
     .command('create <project>')
     .option('--draft', 'use the best available takes and mark the frame as a draft')
+    .option(
+      '--replace-drafts',
+      'with --draft: remove the earlier drafts when it is done (as the automatic draft does)',
+    )
     .option('--tier <tier>', 'default: the project tier')
     .option('--wait')
     .action(
-      command((ref: string, opts: { draft?: boolean; tier?: GenerationTier; wait?: boolean }) =>
-        withWorkspace(globals(), async (ws) => {
-          const project = getProject(ws.db, ref);
-          const r = createRender(ws.db, {
-            projectId: project.id,
-            kind: opts.draft ? 'draft' : 'final',
-            tier: opts.tier ?? project.generationTier,
-            createdBy: actorFromEnv(),
-          });
-          const job = enqueueJob(ws.db, {
-            type: 'render.compose',
-            lane: 'media',
-            projectId: project.id,
-            payload: { renderId: r.id },
-            requestedBy: actorFromEnv(),
-          });
-          const waited = await waitAll(ws, [job.id], opts.wait);
-          return { render: getRender(ws.db, r.id), ...waited };
-        }),
+      command(
+        (
+          ref: string,
+          opts: { draft?: boolean; replaceDrafts?: boolean; tier?: GenerationTier; wait?: boolean },
+        ) =>
+          withWorkspace(globals(), async (ws) => {
+            const project = getProject(ws.db, ref);
+            const r = createRender(ws.db, {
+              projectId: project.id,
+              kind: opts.draft ? 'draft' : 'final',
+              tier: opts.tier ?? project.generationTier,
+              createdBy: actorFromEnv(),
+            });
+            const job = enqueueJob(ws.db, {
+              type: 'render.compose',
+              lane: 'media',
+              projectId: project.id,
+              payload: { renderId: r.id, ...(opts.draft && opts.replaceDrafts ? { auto: true } : {}) },
+              requestedBy: actorFromEnv(),
+            });
+            const waited = await waitAll(ws, [job.id], opts.wait);
+            return { render: getRender(ws.db, r.id), ...waited };
+          }),
       ),
     );
   render

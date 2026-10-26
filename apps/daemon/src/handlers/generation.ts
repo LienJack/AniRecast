@@ -1,10 +1,11 @@
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { copyFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   assertWithinBudget,
   type Board,
   boardFileStem,
+  deleteRender,
   designDir,
   type FrameRange,
   findActiveClip,
@@ -17,6 +18,7 @@ import {
   getTake,
   keyBoardFor,
   listBoards,
+  listRenders,
   listShots,
   listTakes,
   originalDesignDir,
@@ -794,6 +796,20 @@ export const composeRenderHandler: JobHandler = async (ctx) => {
       },
       'daemon',
     );
+    // The draft that follows approvals replaces the drafts before it (a 1080p draft is a few hundred MB); finals stay.
+    if ((job.payload as { auto?: boolean }).auto)
+      for (const old of listRenders(ws.db, project.id))
+        if (
+          old.kind === 'draft' &&
+          old.version < render.version &&
+          old.status !== 'rendering' &&
+          old.status !== 'queued'
+        ) {
+          const stemOf = `${projectDir(project)}/renders/r${String(old.version).padStart(3, '0')}`;
+          for (const f of [old.path, old.comparePath, old.compareProxyPath, `${stemOf}.json`])
+            if (f) rmSync(ws.abs(f), { force: true });
+          deleteRender(ws.db, old.id, 'daemon');
+        }
     return { result: { render: updated } };
   } catch (error) {
     if (!signal.aborted)
