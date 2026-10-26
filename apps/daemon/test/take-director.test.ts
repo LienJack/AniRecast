@@ -183,7 +183,7 @@ describe('the video director', () => {
     );
   }, 90_000);
 
-  it('sends Seedance a 23.976 fps shot at 24 fps and 720p, and a retry after the paid request does not pay again', async () => {
+  it('sends Seedance a 23.976 fps shot at 24 fps and 1080p, and a retry after the paid request does not pay again', async () => {
     const { root, shotId } = await setup('fps', { num: 24_000, den: 1001 });
     const sent: Array<{ fps: string; frames: number; height: number; inputSeconds: number }> = [];
     class Counting extends FakeProvider {
@@ -211,9 +211,9 @@ describe('the video director', () => {
       const { take, job } = queueTake(cli, shotId, 'final', 'user');
       expect(take.model).toContain('seedance');
       expect(await waitJob(root, job.id)).toBe('succeeded');
-      // 24 frames held to Seedance's 4 s editing minimum, restamped to 24 fps without dropping one, sent at 720p
-      // (its pixel cap for reference videos) although the take is 1080p.
-      expect(sent).toEqual([{ fps: '24/1', frames: 96, height: 720, inputSeconds: 4 }]);
+      // 24 frames held to Seedance's 4 s editing minimum, restamped to 24 fps without dropping one, at the take's
+      // 1080p.
+      expect(sent).toEqual([{ fps: '24/1', frames: 96, height: 1080, inputSeconds: 4 }]);
       const done = getTake(cli.db, take.id);
       // Conformed back onto the shot: its 24 frames at 23.976.
       expect(await probe(path.join(root, done.path!), { countFrames: true })).toMatchObject({

@@ -294,6 +294,8 @@ export class FalProvider implements Provider {
         resolution: req.resolution === '360p' ? '480p' : req.resolution === '4k' ? '1080p' : req.resolution,
         aspect_ratio: req.aspectRatio,
         generate_audio: false,
+        // The standard encode came back at ~2 Mbps for 1080p, visibly softer than the source.
+        bitrate_mode: 'high',
       };
     }
     const { output, units, requestId } = await this.#run(
