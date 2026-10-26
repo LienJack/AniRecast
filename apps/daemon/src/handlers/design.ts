@@ -62,10 +62,12 @@ export const analyzeCastHandler: JobHandler = async (ctx: JobContext) => {
     castMemberId,
     thenKinds = [],
     actor = 'daemon',
+    model: designModel,
   } = job.payload as {
     castMemberId: string;
     thenKinds?: DesignKind[];
     actor?: string;
+    model?: string;
   };
   const cast = getCastMember(ws.db, castMemberId);
   const project = getProject(ws.db, cast.projectId);
@@ -120,7 +122,10 @@ export const analyzeCastHandler: JobHandler = async (ctx: JobContext) => {
     const data = normalizeAnalysis(result.data ?? {}, appearances);
     saveCastAnalysis(ws.db, cast.id, data, { model, costUsd, actor: 'daemon' });
     const designs = thenKinds.flatMap((kind) =>
-      queueDesign(ws, project.id, cast.id, actor, { kind }).map((q) => q.design.id),
+      queueDesign(ws, project.id, cast.id, actor, {
+        kind,
+        ...(designModel ? { model: designModel } : {}),
+      }).map((q) => q.design.id),
     );
     return {
       result: { expressions: data.expressions.length, poses: data.poses.length, designs },

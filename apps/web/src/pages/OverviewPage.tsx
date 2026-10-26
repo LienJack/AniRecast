@@ -1,6 +1,14 @@
 import { Link, useParams } from '@tanstack/react-router';
-import { CheckCircle2Icon, CircleDashedIcon, CircleDotIcon, ImageIcon, VideoIcon } from 'lucide-react';
-import { useState } from 'react';
+import {
+  CheckCircle2Icon,
+  CircleDashedIcon,
+  CircleDotIcon,
+  ImageIcon,
+  SaveIcon,
+  ScanSearchIcon,
+  VideoIcon,
+} from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { DiscussInCodex } from '@/components/codex';
 import { ConfirmDialog, EmptyState, ErrorState, Loading, PageHeader, Tag, Thumb } from '@/components/common';
@@ -9,6 +17,7 @@ import { ModelSelect } from '@/components/models';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { api, fileUrl } from '@/lib/api';
 import { formatDuration, formatTime, formatTimecode, formatUsd } from '@/lib/format';
 import {
@@ -114,12 +123,81 @@ function ModelsCard({ projectRef, models }: { projectRef: string; models: Projec
   );
 }
 
+/**
+ * 畫風與光影: the notes every design, board and take prompt carries (written here, or read from the clip by the
+ * vision model), and how many generated shots know their lighting.
+ */
+function StyleCard({
+  projectRef,
+  notes,
+  shots,
+}: {
+  projectRef: string;
+  notes: string;
+  shots: ProjectOverview['shots'];
+}) {
+  const [text, setText] = useState(notes);
+  useEffect(() => setText(notes), [notes]);
+  const generated = shots.filter((s) => s.mode === 'replace' || s.mode === 'clean');
+  const lit = generated.filter((s) => s.lighting).length;
+  const save = useAction(
+    () => api.patch(`/api/projects/${encodeURIComponent(projectRef)}/style`, { notes: text }),
+    { success: '已儲存畫風說明', invalidate: [['project']] },
+  );
+  const analyze = useAction(
+    (relight: boolean) =>
+      api.post(`/api/projects/${encodeURIComponent(projectRef)}/style/analyze`, { relight }),
+    { success: '已排入畫風與光影分析', invalidate: [qk.jobs] },
+  );
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>畫風與光影</CardTitle>
+        <span className="ml-auto text-muted-foreground text-xs">
+          角色設計、分鏡圖、分鏡視頻的提示詞都會帶上；光影 {lit}/{generated.length} 個分鏡已分析
+        </span>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        <Textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="這部動畫的畫風：線條、臉和眼睛的畫法、頭身比、賽璐璐陰影、配色與飽和度、後製效果…（留空時用原片角色分析的畫風）"
+          className="min-h-20 text-xs"
+          aria-label="畫風說明"
+        />
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={analyze.isPending}
+            title="視覺模型看 6 張代表幀寫畫風說明，再逐一看換角／去字分鏡的光影（約 USD 0.1）"
+            onClick={() => analyze.mutate(lit > 0 && lit === generated.length)}
+          >
+            <ScanSearchIcon />
+            {lit === generated.length && lit > 0 ? '用 AI 重新分析畫風與光影' : '用 AI 分析畫風與光影'}
+          </Button>
+          <Button
+            size="sm"
+            disabled={text.trim() === notes.trim() || save.isPending}
+            onClick={() => save.mutate(undefined)}
+          >
+            <SaveIcon />
+            儲存
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function OverviewPage() {
   const { ref } = useParams({ from: '/projects/$ref' });
   const overview = useOverview(ref);
   const cost = useProjectCost(ref);
   const workspace = useWorkspace();
   const [batch, setBatch] = useState<'boards' | 'takes' | null>(null);
+  // Model for the batch being confirmed: the project's choice unless changed in the dialog.
+  const [batchModel, setBatchModel] = useState<string | undefined>(undefined);
   const setTier = useAction(
     (tier: GenerationTier) => api.post(`/api/projects/${encodeURIComponent(ref)}/tier`, { tier }),
     { success: (_r, t) => `生成檔位改為${TIER_LABEL[t]}`, invalidate: [['project'], ['shot'], qk.projects] },
@@ -130,11 +208,16 @@ export function OverviewPage() {
     setBatch(null);
   };
   const genBoards = useAction(
-    () => api.post<BoardQueue>(`/api/projects/${encodeURIComponent(ref)}/boards`, {}),
+    (model: string | undefined) =>
+      api.post<BoardQueue>(`/api/projects/${encodeURIComponent(ref)}/boards`, model ? { model } : {}),
     { onSuccess: (r) => report(r, '分鏡圖') },
   );
   const genTakes = useAction(
-    (tier: GenerationTier) => api.post<TakeQueue>(`/api/projects/${encodeURIComponent(ref)}/takes`, { tier }),
+    (v: { tier: GenerationTier; model: string | undefined }) =>
+      api.post<TakeQueue>(`/api/projects/${encodeURIComponent(ref)}/takes`, {
+        tier: v.tier,
+        ...(v.model ? { model: v.model } : {}),
+      }),
     { onSuccess: (r) => report(r, '分鏡視頻') },
   );
 
@@ -210,6 +293,7 @@ export function OverviewPage() {
           </CardContent>
         </Card>
         <ModelsCard projectRef={ref} models={o.models} />
+        <StyleCard projectRef={ref} notes={String(o.project.settings.styleNotes ?? '')} shots={o.shots} />
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <Card>
@@ -220,7 +304,10 @@ export function OverviewPage() {
                   size="sm"
                   variant="secondary"
                   disabled={!o.shots.length}
-                  onClick={() => setBatch('boards')}
+                  onClick={() => {
+                    setBatchModel(undefined);
+                    setBatch('boards');
+                  }}
                 >
                   <ImageIcon />
                   全部關鍵分鏡生成分鏡圖
@@ -229,7 +316,10 @@ export function OverviewPage() {
                   size="sm"
                   variant="secondary"
                   disabled={!o.shots.length}
-                  onClick={() => setBatch('takes')}
+                  onClick={() => {
+                    setBatchModel(undefined);
+                    setBatch('takes');
+                  }}
                 >
                   <VideoIcon />
                   排入分鏡視頻（{TIER_LABEL[tier]}）
@@ -444,8 +534,24 @@ export function OverviewPage() {
         }
         confirmLabel="開始生成"
         pending={genBoards.isPending || genTakes.isPending}
-        onConfirm={() => (batch === 'boards' ? genBoards.mutate(undefined) : genTakes.mutate(tier))}
-      />
+        onConfirm={() => {
+          const model = batchModel ?? (batch === 'boards' ? o.models.image : o.models.video);
+          if (batch === 'boards') genBoards.mutate(model);
+          else genTakes.mutate({ tier, model });
+        }}
+      >
+        {batch ? (
+          <div className="flex flex-col gap-1">
+            <span className="text-muted-foreground text-xs">用哪個模型</span>
+            <ModelSelect
+              kind={batch === 'boards' ? 'image' : 'video'}
+              value={batchModel ?? (batch === 'boards' ? o.models.image : o.models.video)}
+              onChange={setBatchModel}
+              label={batch === 'boards' ? '分鏡圖模型' : '分鏡視頻模型'}
+            />
+          </div>
+        ) : null}
+      </ConfirmDialog>
     </div>
   );
 }

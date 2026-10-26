@@ -14,6 +14,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { DiscussInCodex } from '@/components/codex';
 import { EmptyState, ErrorState, Loading, PageHeader, Tag, Thumb } from '@/components/common';
 import { ActorLink, VersionBadge } from '@/components/domain';
+import { ModelSelect } from '@/components/models';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -23,7 +24,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { api, fileUrl } from '@/lib/api';
 import { formatAgo, formatUsd } from '@/lib/format';
 import { VERDICT_LABEL, VERDICT_TONE } from '@/lib/labels';
-import { qk, useAction, useDesigns, usePersonas, useProjectTasks } from '@/lib/queries';
+import { qk, useAction, useDesigns, useOverview, usePersonas, useProjectTasks } from '@/lib/queries';
 import type {
   AgentTask,
   AnalysisItem,
@@ -52,12 +53,15 @@ function SheetPanel({
   personaName,
   sheet,
   tasks,
+  model,
 }: {
   projectRef: string;
   castId: string;
   personaName: string;
   sheet: Sheet;
   tasks: AgentTask[];
+  /** Image model for new sheets (regenerating keeps the version's own model). */
+  model: string | undefined;
 }) {
   const text = KIND_TEXT[sheet.kind];
   const [selectedId, setSelectedId] = useState<string | undefined>(sheet.latest?.id);
@@ -75,7 +79,7 @@ function SheetPanel({
   const base = `/api/projects/${encodeURIComponent(projectRef)}/designs`;
   const generate = useAction(
     (body: { fromDesignId?: string; extra?: string }) =>
-      api.post(base, { castId, kind: sheet.kind, ...body }),
+      api.post(base, { castId, kind: sheet.kind, ...body, ...(model ? { model } : {}) }),
     { success: `已排入生成：${personaName}・${text.title}`, invalidate: [qk.designs(projectRef)] },
   );
   const review = useAction(
@@ -396,13 +400,22 @@ function ItemChips({
 }
 
 /** Step ①: what the original looks like and does in this opening; the sheets are drawn from it. */
-function AnalysisPanel({ projectRef, entry }: { projectRef: string; entry: BindingDesigns }) {
+function AnalysisPanel({
+  projectRef,
+  entry,
+  model,
+}: {
+  projectRef: string;
+  entry: BindingDesigns;
+  model: string | undefined;
+}) {
   const { cast, analysis } = entry;
   const analyze = useAction(
     (generate: boolean) =>
       api.post(`/api/projects/${encodeURIComponent(projectRef)}/designs/analyze`, {
         castId: cast.id,
         generate,
+        ...(generate && model ? { model } : {}),
       }),
     {
       success: (_r, generate) => (generate ? '已排入分析，完成後會接著重新設計三張' : '已排入原片分析'),
@@ -532,8 +545,16 @@ function BindingCard({
   const { persona, cast } = entry;
   const ref = persona.images.find((i) => i.isPrimary) ?? persona.images[0];
   const approved = entry.sheets.filter((s) => s.approved).length;
+  // Which image model draws this character's sheets; the project's choice until changed here.
+  const projectModel = useOverview(projectRef).data?.models.design;
+  const [chosen, setChosen] = useState<string | undefined>(undefined);
+  const model = chosen ?? projectModel;
   const generateAll = useAction(
-    () => api.post(`/api/projects/${encodeURIComponent(projectRef)}/designs`, { castId: cast.id }),
+    () =>
+      api.post(`/api/projects/${encodeURIComponent(projectRef)}/designs`, {
+        castId: cast.id,
+        ...(model ? { model } : {}),
+      }),
     { success: `已排入「${cast.label}」→ ${persona.name} 的三張設計`, invalidate: [qk.designs(projectRef)] },
   );
   return (
@@ -587,6 +608,7 @@ function BindingCard({
               targetId={cast.id}
               what={`「${cast.label}」→ ${persona.name} 的角色設計`}
             />
+            <ModelSelect kind="image" value={model} onChange={setChosen} label="角色設計用的圖片模型" />
             <Button size="sm" disabled={generateAll.isPending} onClick={() => generateAll.mutate(undefined)}>
               <SparklesIcon />
               重新設計三張
@@ -602,7 +624,7 @@ function BindingCard({
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <Step n={1} title="原片分析：她在這支 OP 裡怎麼被畫、有哪些表情和動作">
-          <AnalysisPanel projectRef={projectRef} entry={entry} />
+          <AnalysisPanel projectRef={projectRef} entry={entry} model={model} />
         </Step>
         <Step n={2} title="改編說明（這個項目對物料庫角色的調整，每張設計都會用）">
           <NoteEditor projectRef={projectRef} personaId={persona.id} note={entry.note} />
@@ -617,6 +639,7 @@ function BindingCard({
                 personaName={persona.name}
                 sheet={sheet}
                 tasks={tasks}
+                model={model}
               />
             ))}
           </div>
@@ -657,8 +680,15 @@ export function DesignPage() {
   const { ref } = useParams({ from: '/projects/$ref' });
   const designs = useDesigns(ref);
   const tasks = useProjectTasks(ref);
+  const projectModel = useOverview(ref).data?.models.design;
+  const [chosen, setChosen] = useState<string | undefined>(undefined);
+  const model = chosen ?? projectModel;
   const analyzeAll = useAction(
-    () => api.post(`/api/projects/${encodeURIComponent(ref)}/designs/analyze`, { generate: true }),
+    () =>
+      api.post(`/api/projects/${encodeURIComponent(ref)}/designs/analyze`, {
+        generate: true,
+        ...(model ? { model } : {}),
+      }),
     { success: '已排入全部分析，完成後會接著重新設計', invalidate: [qk.designs(ref)] },
   );
   if (designs.isPending) return <Loading />;
@@ -671,15 +701,18 @@ export function DesignPage() {
         description="把原片角色綁定到物料庫角色，先分析原片怎麼畫她、她有哪些表情和動作，再用這部動畫的畫風、她的身形和這些表情動作，把物料庫角色重新設計成三視圖、表情、動作。三視圖通過後，分鏡圖和分鏡視頻改用這套設計。"
         actions={
           bindings.length ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={analyzeAll.isPending}
-              onClick={() => analyzeAll.mutate(undefined)}
-            >
-              <ScanSearchIcon />
-              全部分析並重新設計
-            </Button>
+            <>
+              <ModelSelect kind="image" value={model} onChange={setChosen} label="重新設計用的圖片模型" />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={analyzeAll.isPending}
+                onClick={() => analyzeAll.mutate(undefined)}
+              >
+                <ScanSearchIcon />
+                全部分析並重新設計
+              </Button>
+            </>
           ) : null
         }
       />

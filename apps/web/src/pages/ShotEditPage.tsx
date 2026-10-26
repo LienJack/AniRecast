@@ -260,6 +260,10 @@ export function ShotEditPage() {
                   連片名與其他疊字一起去掉
                 </Label>
               </div>
+              <div className="text-xs">
+                <span className="text-muted-foreground">光影：</span>
+                {shot.lighting ?? '還沒分析（總覽的「畫風與光影」可以分析，生成時會照這段打光）'}
+              </div>
               {cast.length ? (
                 <div className="flex flex-wrap gap-1 text-xs">
                   <span className="text-muted-foreground">出場：</span>

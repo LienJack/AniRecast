@@ -68,6 +68,7 @@ import {
   queueCastAnalysis,
   queueDesign,
   queueStillTake,
+  queueStyleAnalysis,
   queueTake,
   quotaOverview,
   readHandoffResultFile,
@@ -100,6 +101,7 @@ import {
   trashSource,
   updatePersona,
   updatePersonaImage,
+  updateProjectSettings,
   updateShot,
   type Verdict,
   type Workspace,
@@ -615,10 +617,31 @@ export function registerRoutes(
   );
   app.post('/api/projects/:ref/designs/analyze', async (c) =>
     handle(c, async () => {
-      const b = await body<{ castId?: string; generate?: boolean }>(c);
+      const b = await body<{ castId?: string; generate?: boolean; model?: string }>(c);
+      if (b.model) imageModelOrThrow(b.model);
       return queueCastAnalysis(ws, c.req.param('ref'), b.castId ?? null, USER, {
         ...(b.generate ? { thenKinds: [...DESIGN_KINDS] } : {}),
+        ...(b.model ? { model: b.model } : {}),
       });
+    }),
+  );
+  // ---- art style: notes for every prompt, and each shot's lighting --------------------------------------
+  app.post('/api/projects/:ref/style/analyze', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ relight?: boolean }>(c);
+      return queueStyleAnalysis(ws, c.req.param('ref'), USER, { relight: Boolean(b.relight) });
+    }),
+  );
+  app.patch('/api/projects/:ref/style', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ notes: string }>(c);
+      const project = updateProjectSettings(
+        ws.db,
+        c.req.param('ref'),
+        { styleNotes: b.notes?.trim() || null },
+        USER,
+      );
+      return { notes: project.settings.styleNotes ?? '' };
     }),
   );
   app.post('/api/cast/:id/analysis/picks', async (c) =>
@@ -699,14 +722,17 @@ export function registerRoutes(
   );
   app.post('/api/takes/:id/promote', async (c) =>
     handle(c, async () => {
-      const b = await body<{ retryBlocked?: boolean }>(c);
+      const b = await body<{ retryBlocked?: boolean; model?: string }>(c);
       const take = getTake(ws.db, c.req.param('id'));
       if (take.status !== 'approved') throw new AniError('conflict', 'Only an approved take can be promoted');
       const next = TIERS[TIERS.indexOf(take.tier) + 1];
       if (!next) throw new AniError('conflict', 'Already at the final tier');
+      if (b.model) videoModelOrThrow(b.model);
+      // The approved look came from this take's model: the higher tier uses it too unless told otherwise.
       return queueTake(ws, take.shotId, next, USER, {
         fromTakeId: take.id,
         retryBlocked: Boolean(b.retryBlocked),
+        model: b.model ?? take.model,
       });
     }),
   );

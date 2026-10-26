@@ -203,6 +203,11 @@ const SHOT_SCHEMA = {
       type: 'string',
       enum: ['extreme_close_up', 'close_up', 'medium', 'full', 'wide', 'establishing', 'insert'],
     },
+    lighting: {
+      type: 'string',
+      description:
+        'One or two sentences on the light of image 2: direction and hardness, colour or temperature, shadow side, rim light, colour grading.',
+    },
     cameraMovement: { type: 'string' },
     overlays: {
       type: 'array',
@@ -247,7 +252,8 @@ const SHOT_PROMPT = `These are the first, middle and last frames of one shot fro
 Return:
 - overlays: text that was added on top of the picture in post-production. category "staff_credit" for staff or cast credits (names with or without roles such as 監督, 作画監督, 原画, 演出, 絵コンテ, 主題歌, CAST, Director); "title_or_other" for the show title, logos, song lyrics or other overlaid text; "in_scene" for text that is part of the drawn scene (signs, posters, screens, books). Give each box on image 2 as [ymin, xmin, ymax, xmax] on a 0-1000 grid. Merge lines of one credit block into one box.
 - characters: every person or humanoid character visible in image 2 with a box around the whole visible body and short English attributes (hair colour and style, eye colour, outfit, accessories).
-- description, shotSize and cameraMovement for the whole shot.`;
+- description, shotSize and cameraMovement for the whole shot.
+- lighting: how image 2 is lit (direction and hardness, light colour, shadow side, rim light, colour grading), so a new character can be lit the same way.`;
 
 /** Flash sometimes spells a missing value as the string "null". */
 const cleanText = (t: string | undefined): string | null => {
@@ -323,6 +329,7 @@ export const analyzeShotsHandler: JobHandler = async (ctx: JobContext) => {
         description?: string;
         shotSize?: string;
         cameraMovement?: string;
+        lighting?: string;
         overlays?: Array<{
           text?: string;
           box_2d: number[];
@@ -364,6 +371,7 @@ export const analyzeShotsHandler: JobHandler = async (ctx: JobContext) => {
       shot.id,
       {
         ...(result.data.description ? { description: result.data.description } : {}),
+        ...(result.data.lighting?.trim() ? { lighting: result.data.lighting.trim() } : {}),
         camera: {
           shotSize: result.data.shotSize ?? null,
           movement: result.data.cameraMovement ?? null,

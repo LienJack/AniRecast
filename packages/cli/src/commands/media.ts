@@ -23,6 +23,7 @@ import {
   mergeShots,
   projectModels,
   projectOfShot,
+  queueStyleAnalysis,
   recomputeShotModes,
   recordBoundary,
   type ShotMode,
@@ -30,6 +31,7 @@ import {
   setProjectModels,
   splitShot,
   trashSource,
+  updateProjectSettings,
   updateShot,
   type Workspace,
 } from '@anirecast/core';
@@ -129,6 +131,49 @@ export function registerMedia(program: Command): void {
     .action(command((id: string) => withWorkspace(globals(), (ws) => trashSource(ws, id, actorFromEnv()))));
 
   const project = program.command('project').description('Projects (one recast of one source)');
+  project
+    .command('style <project>')
+    .description(
+      "Show the project's art-style notes (used in every design, board and take prompt); --analyze reads them and each shot's lighting from the clip",
+    )
+    .option(
+      '--analyze',
+      'read the style from the frames and the lighting of each generated shot (vision model)',
+    )
+    .option('--relight', 'with --analyze, also redo shots that already have lighting')
+    .option('--set <text>', 'write the notes yourself')
+    .option('--wait', 'wait for the analysis')
+    .action(
+      command(
+        (projectRef: string, opts: { analyze?: boolean; relight?: boolean; set?: string; wait?: boolean }) =>
+          withWorkspace(globals(), async (ws) => {
+            if (opts.set !== undefined)
+              updateProjectSettings(
+                ws.db,
+                projectRef,
+                { styleNotes: opts.set.trim() || null },
+                actorFromEnv(),
+              );
+            if (opts.analyze) {
+              const job = queueStyleAnalysis(ws, projectRef, actorFromEnv(), {
+                relight: Boolean(opts.relight),
+              });
+              if (opts.wait) await waitForJob(ws, job.id);
+              else return { job };
+            }
+            const project = getProject(ws.db, projectRef);
+            const clip = findActiveClip(ws.db, project.id);
+            return {
+              styleNotes: project.settings.styleNotes ?? '',
+              lighting: clip
+                ? listShots(ws.db, clip.id)
+                    .filter((s) => s.lighting)
+                    .map((s) => ({ shot: s.orderIndex + 1, lighting: s.lighting }))
+                : [],
+            };
+          }),
+      ),
+    );
   project
     .command('models <project>')
     .description(

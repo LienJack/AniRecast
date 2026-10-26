@@ -11,7 +11,9 @@ import {
   createSource,
   createTracklet,
   initWorkspace,
+  listBoards,
   mapCast,
+  planBoard,
   planTake,
   projectModels,
   queueBoard,
@@ -21,6 +23,7 @@ import {
   setKeyframes,
   setProjectModels,
   submitReview,
+  updateProjectSettings,
   updateShot,
   updateSource,
   type Workspace,
@@ -81,6 +84,30 @@ describe('selectable models', () => {
     expect(uploadSeconds(videoModelSpec(H3), 1.25)).toBe(5);
     expect(uploadSeconds(videoModelSpec('fal:alibaba/wan-3.0/reference-to-video'), 1.25)).toBe(2);
     expect(uploadSeconds(videoModelSpec('fal:alibaba/wan-3.0/reference-to-video'), 5.3)).toBe(6);
+  });
+
+  it('carries the art style and the shot lighting into board and take prompts', () => {
+    const { ws, projectId, shotId } = fixture();
+    updateProjectSettings(ws.db, projectId, { styleNotes: 'thin brown lines, two-tone cel shading' }, 'user');
+    updateShot(ws.db, shotId, { lighting: 'Warm late-afternoon light from the left.' }, 'user');
+    const board = planBoard(ws, shotId).prompt;
+    expect(board).toContain("This anime's style: thin brown lines, two-tone cel shading");
+    expect(board).toContain('Light and colour of this frame: Warm late-afternoon light from the left.');
+    expect(board).toMatch(/never 3D, painterly, semi-realistic or photographic/);
+    const take = planTake(ws, shotId, 'draft', { model: H3 }).prompt;
+    expect(take).toContain('Light and colour of this shot: Warm late-afternoon light from the left.');
+    ws.close();
+  });
+
+  it('regenerating keeps the model the version was made with', () => {
+    const { ws, projectId, shotId } = fixture();
+    const before = listBoards(ws.db, shotId)[0]!;
+    setProjectModels(ws.db, projectId, { image: 'fal:openai/gpt-image-2.5/sunburst/edit' }, 'user');
+    const r = submitReview(ws, { targetId: before.id, verdict: 'regenerate', actor: 'user' }) as {
+      queued: { board: { model: string } };
+    };
+    expect(r.queued.board.model).toBe(before.model);
+    ws.close();
   });
 
   it('gives each video model the references it takes', () => {

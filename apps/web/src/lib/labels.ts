@@ -156,6 +156,7 @@ const JOB_TYPE_LABEL: Record<string, string> = {
   'design.generate': '生成角色設計',
   'design.analyze': '原片角色分析',
   'cast.tidy': '整理角色（JEV）',
+  'project.style': '畫風與光影分析',
   'shots.continuity': '切點判斷',
   'render.compose': '合成成片',
   noop: '測試任務',

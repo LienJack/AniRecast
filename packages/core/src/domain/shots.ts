@@ -23,6 +23,8 @@ export interface Shot {
   repFrame: number;
   description: string | null;
   camera: unknown;
+  /** Light and colour of the shot (from shot analysis), so generated characters are lit the same way. */
+  lighting: string | null;
   sourcePath: string | null;
   createdAt: number;
   updatedAt: number;
@@ -41,6 +43,7 @@ interface ShotRow {
   rep_frame: number;
   description: string | null;
   camera_json: string | null;
+  lighting: string | null;
   source_path: string | null;
   created_at: number;
   updated_at: number;
@@ -60,6 +63,7 @@ const toShot = (r: ShotRow): Shot => ({
   repFrame: r.rep_frame,
   description: r.description,
   camera: fromJson(r.camera_json, null),
+  lighting: r.lighting ?? null,
   sourcePath: r.source_path,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -413,6 +417,7 @@ export interface ShotPatch {
   removeOtherOverlays?: boolean;
   description?: string | null;
   camera?: unknown;
+  lighting?: string | null;
   sourcePath?: string | null;
   status?: string;
 }
@@ -458,6 +463,10 @@ export function updateShot(
     if (patch.camera !== undefined) {
       sets.push('camera_json = :camera');
       params.camera = toJson(patch.camera);
+    }
+    if (patch.lighting !== undefined) {
+      sets.push('lighting = :lighting');
+      params.lighting = patch.lighting;
     }
     if (patch.sourcePath !== undefined) {
       sets.push('source_path = :sourcePath');

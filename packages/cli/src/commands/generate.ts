@@ -389,6 +389,8 @@ export function registerGenerate(program: Command): void {
           const q = queueTake(ws, shotId, next, actorFromEnv(), {
             fromTakeId: approved.id,
             retryBlocked: Boolean(opts.retryBlocked),
+            // The approved look came from this take's model; the higher tier keeps it.
+            model: approved.model,
           });
           return { take: q.take, ...(await waitAll(ws, [q.job.id], opts.wait)) };
         }),

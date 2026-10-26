@@ -189,6 +189,31 @@ const KEEP_FRAME =
 const KEEP_VIDEO =
   'Keep everything else the same: motion, timing, camera movement, background, lighting and the 2D anime style.';
 
+/**
+ * Art style and light for a generated character: the anime's own drawing style (the project's style notes, else
+ * how this opening draws the replaced character) and the shot's lighting. Models drift toward their own look —
+ * H3 and Wan toward realism — unless told plainly.
+ */
+function styleInstruction(ws: Workspace, shot: Shot, uses: PersonaUse[], medium: 'frame' | 'shot'): string {
+  const projectId = projectOfShot(ws.db, shot.id).id;
+  const castStyle = uses
+    .map((u) => u.entries.find((e) => e.cast)?.cast?.id)
+    .map((id) => (id ? getCastAnalysis(ws.db, id)?.data?.style : undefined))
+    .find((s) => s?.trim());
+  const notes = projectStyleNotes(ws, projectId) || castStyle || '';
+  const who = uses.length > 1 ? 'the new characters' : 'the new character';
+  const light = shot.lighting?.trim();
+  return [
+    `Art style: draw ${who} exactly the way this anime draws its characters — the same line weight and line colour, eye and face construction, cel shading with the same shadow shapes, colour palette, saturation and level of detail as the original ${medium}. Flat 2D anime cel animation; never 3D, painterly, semi-realistic or photographic.`,
+    notes ? `This anime's style: ${notes}` : '',
+    light
+      ? `Light and colour of this ${medium}: ${light} Light ${who} the same way (light direction and colour, shadow side, rim light, colour grading).`
+      : `Light ${who} like the rest of the original ${medium}: same light direction and colour, shadows and colour grading.`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 const withHashes = (ws: Workspace, refs: Array<Omit<InputRef, 'sha256'>>): InputRef[] =>
   refs.map((r) => ({ ...r, sha256: sha256File(ws.abs(r.path)) }));
 
@@ -227,6 +252,7 @@ export function planBoard(
   if (layout) lines.push(layout);
   const overlay = overlayInstruction(overlaysToRemove(ws.db, shotId, shot.removeOtherOverlays));
   if (overlay) lines.push(overlay);
+  lines.push(styleInstruction(ws, shot, uses, 'frame'));
   lines.push(KEEP_FRAME);
   // Regeneration is always a fresh, fully replayable request (no server-side multi-turn state).
   if (opts.extra?.trim()) lines.push(`Additional instructions: ${opts.extra.trim()}`);
@@ -306,6 +332,7 @@ export function planTake(
     }
     const layout = layoutInstruction(uses);
     if (layout) lines.push(layout);
+    if (uses.length) lines.push(styleInstruction(ws, shot, uses, 'shot'));
   } else if (shot.mode !== 'clean') {
     throw new AniError('conflict', `Nothing to generate for a ${shot.mode} shot`);
   }

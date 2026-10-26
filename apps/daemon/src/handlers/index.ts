@@ -13,6 +13,7 @@ import {
 } from './generation.ts';
 import { noopHandler } from './noop.ts';
 import { downloadSourceHandler, importSourceHandler } from './sources.ts';
+import { styleAnalysisHandler } from './style.ts';
 
 export function createHandlers(): Map<string, JobHandler> {
   return new Map<string, JobHandler>([
@@ -30,6 +31,7 @@ export function createHandlers(): Map<string, JobHandler> {
     ['take.still', stillTakeHandler],
     ['render.compose', composeRenderHandler],
     ['shots.analyze', analyzeShotsHandler],
+    ['project.style', styleAnalysisHandler],
     ['cast.identify', identifyCastHandler],
     ['cast.tidy', tidyCastHandler],
   ]);

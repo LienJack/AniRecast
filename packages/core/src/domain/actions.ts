@@ -176,7 +176,7 @@ export function queueCastAnalysis(
   projectRef: string,
   ref: string | null,
   actor: string,
-  opts: { thenKinds?: DesignKind[] } = {},
+  opts: { thenKinds?: DesignKind[]; model?: string } = {},
 ) {
   const project = getProject(ws.db, projectRef);
   const bindings = ref ? resolveBindings(ws.db, project.id, ref) : projectBindings(ws.db, project.id);
@@ -188,10 +188,33 @@ export function queueCastAnalysis(
       type: 'design.analyze',
       lane: 'generate',
       projectId: project.id,
-      payload: { castMemberId: b.castMemberId, thenKinds: opts.thenKinds ?? [], actor },
+      payload: {
+        castMemberId: b.castMemberId,
+        thenKinds: opts.thenKinds ?? [],
+        actor,
+        ...(opts.model ? { model: opts.model } : {}),
+      },
       requestedBy: actor,
       maxAttempts: 2,
     });
+  });
+}
+
+/** 畫風與光影分析: the anime's drawing style for every prompt, and each generated shot's lighting. */
+export function queueStyleAnalysis(
+  ws: Workspace,
+  projectRef: string,
+  actor: string,
+  opts: { relight?: boolean } = {},
+) {
+  const project = getProject(ws.db, projectRef);
+  return enqueueJob(ws.db, {
+    type: 'project.style',
+    lane: 'generate',
+    projectId: project.id,
+    payload: { projectId: project.id, relight: Boolean(opts.relight) },
+    requestedBy: actor,
+    maxAttempts: 2,
   });
 }
 
@@ -258,7 +281,10 @@ function submitDesignReview(
     return { review, task };
   }
   if (input.verdict === 'regenerate') {
-    const [queued] = queueDesign(ws, design.projectId, null, input.actor, { fromDesignId: design.id });
+    const [queued] = queueDesign(ws, design.projectId, null, input.actor, {
+      fromDesignId: design.id,
+      model: design.model,
+    });
     return { review, queued: { design: queued!.design, jobId: queued!.job.id } };
   }
   return { review };
@@ -327,9 +353,10 @@ export function submitReview(
   }
   if (input.verdict === 'regenerate') {
     const queued = isBoard
-      ? queueBoard(ws, target.shotId, input.actor, { fromBoardId: input.targetId })
+      ? queueBoard(ws, target.shotId, input.actor, { fromBoardId: input.targetId, model: target.model })
       : queueTake(ws, target.shotId, (target as ReturnType<typeof getTake>).tier, input.actor, {
           fromTakeId: input.targetId,
+          model: target.model,
         });
     return {
       review,
