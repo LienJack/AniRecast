@@ -353,6 +353,28 @@ export function registerMedia(program: Command): void {
       ),
     );
   shots
+    .command('prepare <shots...>')
+    .description(
+      "Cut the shots' source segments and keyframes again from the clip (a segment that does not decode whole is refused for videos)",
+    )
+    .action(
+      command((ids: string[]) =>
+        withWorkspace(globals(), (ws) => {
+          const project = projectOfShot(ws.db, ids[0]!);
+          for (const id of ids)
+            if (projectOfShot(ws.db, id).id !== project.id)
+              throw new AniError('usage', 'All shots must belong to one project');
+          return enqueueJob(ws.db, {
+            type: 'shots.prepare',
+            lane: 'media',
+            projectId: project.id,
+            payload: { shotIds: ids.map((id) => getShot(ws.db, id).id) },
+            requestedBy: actorFromEnv(),
+          });
+        }),
+      ),
+    );
+  shots
     .command('continuity <project>')
     .description(
       'Judge every cut with the continuity model and find cuts inside one continuous moment (suggestions only by default)',

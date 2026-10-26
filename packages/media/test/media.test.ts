@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -6,6 +6,7 @@ import {
   composeReference,
   conformByTime,
   conformTake,
+  decodedFrames,
   extractAudioSegment,
   extractFrame,
   extractVideoSegment,
@@ -85,6 +86,13 @@ describe('media', () => {
       fpsDen: FPS_DEN,
     });
     const up = path.join(dir, 'up.mp4');
+    expect(await decodedFrames(seg)).toBe(30);
+    // A damaged copy keeps its packets but not its frames.
+    const damaged = path.join(dir, 'damaged.mp4');
+    const bytes = readFileSync(seg);
+    bytes.fill(0x55, Math.floor(bytes.length * 0.3), Math.floor(bytes.length * 0.6));
+    writeFileSync(damaged, bytes);
+    expect(await decodedFrames(damaged)).toBeLessThan(30);
     expect(await scaleForUpload(seg, up, 180, { frameStep: 4 })).toEqual({ frames: 30, padded: 2 });
     expect((await probe(up, { countFrames: true })).frameCount).toBe(32);
     // A model with a minimum rate: every frame restamped to 24 fps, held to the minimum length.

@@ -1,3 +1,4 @@
+import { renameSync, rmSync } from 'node:fs';
 import {
   enqueueJob,
   getClip,
@@ -14,6 +15,7 @@ import {
   updateShot,
 } from '@anirecast/core';
 import {
+  decodedFrames,
   extractAudioSegment,
   extractFrame,
   extractVideoSegment,
@@ -125,12 +127,33 @@ export async function prepareShots(
     }
     setKeyframes(ws.db, shot.id, keyframes);
     const sourceRel = `${dir}/source.mp4`;
-    await extractVideoSegment(
-      clipAbs,
-      outPath(ws, sourceRel),
-      { startFrame: shot.startFrame, frameCount: shot.frameCount, fpsNum: clip.fpsNum, fpsDen: clip.fpsDen },
-      { crf: 16, signal },
-    );
+    // Written aside and renamed into place once it decodes whole: two prepares of one shot ran side by side on the
+    // media lane and interleaved their writes into one file (shots 11 and 17 of the Lycoris OP decoded 122 of 165
+    // and 32 of 98 frames, and every video made from them was wrong).
+    const target = outPath(ws, sourceRel);
+    const aside = `${target}.${ctx.job.id}.mp4`;
+    try {
+      await extractVideoSegment(
+        clipAbs,
+        aside,
+        {
+          startFrame: shot.startFrame,
+          frameCount: shot.frameCount,
+          fpsNum: clip.fpsNum,
+          fpsDen: clip.fpsDen,
+        },
+        { crf: 16, signal },
+      );
+      const decoded = await decodedFrames(aside, { signal });
+      if (decoded !== shot.frameCount)
+        throw new AniError(
+          'internal',
+          `Shot ${shot.orderIndex + 1}: its segment decodes ${decoded} of ${shot.frameCount} frames`,
+        );
+      renameSync(aside, target);
+    } finally {
+      rmSync(aside, { force: true });
+    }
     updateShot(ws.db, shot.id, { sourcePath: sourceRel, status: 'prepared' }, 'daemon');
     progress(from + ((to - from) * (i + 1)) / shotIds.length, `prepared shot ${i + 1}/${shotIds.length}`);
   }

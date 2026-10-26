@@ -62,6 +62,33 @@ export async function probe(
   };
 }
 
+/**
+ * Frames that actually decode. `probe` counts packets, and a damaged file still has all of them: shot 11 of the
+ * Lycoris OP had 165 packets but decoded 122 frames.
+ */
+export async function decodedFrames(
+  file: string,
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<number> {
+  const { stdout } = await exec(
+    'ffprobe',
+    [
+      '-v',
+      'quiet',
+      '-select_streams',
+      'v:0',
+      '-count_frames',
+      '-show_entries',
+      'stream=nb_read_frames',
+      '-of',
+      'csv=p=0',
+      file,
+    ],
+    signal ? { signal } : {},
+  );
+  return Number(stdout.trim()) || 0;
+}
+
 /** Seconds → nearest frame index at `fpsNum/fpsDen`. */
 export const secondsToFrame = (seconds: number, fpsNum: number, fpsDen: number): number =>
   Math.round((seconds * fpsNum) / fpsDen);

@@ -38,6 +38,7 @@ import {
   conformByTime,
   conformTake,
   cropGrid,
+  decodedFrames,
   probe,
   renderSequence,
   scaleForUpload,
@@ -360,6 +361,15 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
         },
       );
     }
+    // A damaged segment makes a wrong video at full price: refuse it before the director or the model sees it.
+    if (!shot.sourcePath) throw new AniError('conflict', 'Shot source segment is not prepared yet');
+    const decoded = await decodedFrames(ws.abs(shot.sourcePath), { signal });
+    if (decoded !== shot.frameCount)
+      throw new AniError(
+        'conflict',
+        `Shot ${shot.orderIndex + 1}'s source segment is damaged: it decodes ${decoded} of ${shot.frameCount} frames`,
+        { hint: `Cut it again from the clip: anirecast shots prepare ${shot.id}` },
+      );
     // The director watches the shot and writes the instruction and the references (composites where needed);
     // the planned template stays when it fails. A retry, or a revision with the same model, reuses its decision.
     let directorUsd = 0;
