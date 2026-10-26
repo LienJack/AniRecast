@@ -1,15 +1,28 @@
 import { Link } from '@tanstack/react-router';
-import { ArrowRightIcon } from 'lucide-react';
-import { Thumb } from '@/components/common';
+import { ArrowRightIcon, CheckCheckIcon, CheckIcon, ScanSearchIcon } from 'lucide-react';
+import { Tag, Thumb } from '@/components/common';
+import { formatClock, ShimmerText, useActiveJob, useElapsed } from '@/components/generating';
+import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { api, fileUrl } from '@/lib/api';
 import { qk, useAction, useCast, usePersonas } from '@/lib/queries';
-import type { Persona, ShotCastEntry } from '@/lib/types';
+import type { Job, Persona, ShotCastEntry, ShotDetail } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 const NOT_CHARACTER = '__not_character__';
 const PROJECT_DEFAULT = '__default__';
 const KEEP = '__keep__';
+
+type Verdict = NonNullable<NonNullable<ShotDetail['castCheck']>['result']>['people'][number];
+
+const findStep = (job: Job) =>
+  job.status === 'queued'
+    ? '排隊中'
+    : job.message?.startsWith('detecting')
+      ? '偵測畫面中的人物…'
+      : job.message?.startsWith('assigning')
+        ? '套用辨識結果…'
+        : '和角色表逐一比對…';
 
 const primaryImage = (p: Persona | null | undefined) =>
   p ? fileUrl((p.images.find((i) => i.isPrimary) ?? p.images[0])?.path) : undefined;
@@ -18,16 +31,20 @@ const primaryImage = (p: Persona | null | undefined) =>
  * 替換角色 of one shot: everyone detected in it, who they are in the original (assigning one locks it as the
  * user's decision) and whom this shot puts in their place — the character's mapping from the cast step, another
  * library character for this shot only, or the original kept. Several characters can be replaced at once.
+ * 「找出這一鏡的角色」 lets the vision model do the first pass; its picks wait for 確認 (which locks them).
  */
 export function ShotCastEditor({
   shotId,
   projectRef,
   entries,
+  check,
   className,
 }: {
   shotId: string;
   projectRef: string;
   entries: ShotCastEntry[];
+  /** The latest 找出這一鏡的角色 run (shot detail's castCheck). */
+  check?: ShotDetail['castCheck'];
   className?: string;
 }) {
   const castList = (useCast(projectRef).data ?? []).filter((c) => c.status === 'active');
@@ -53,11 +70,33 @@ export function ShotCastEditor({
       ),
     { success: '已更新這一鏡的替換', invalidate },
   );
+  const finding = useActiveJob('shotId', shotId, 'shot.cast');
+  const findingFor = useElapsed(finding ? (finding.startedAt ?? finding.createdAt) : null);
+  const find = useAction(() => api.post(`/api/shots/${encodeURIComponent(shotId)}/cast/find`), {
+    success: '已排入：找出這一鏡的角色（偵測人物 → 和角色表比對）',
+    invalidate: [qk.jobs],
+  });
+  const verdictOf = (trackletId: string): Verdict | undefined =>
+    check?.result?.people.find((p) => p.trackletId === trackletId);
+  // AI picks (or undecided ones the model has an opinion on) that the human has not confirmed yet.
+  const unconfirmed = entries.filter(
+    (e) => e.tracklet.assignedBy === 'codex' && (e.cast || verdictOf(e.tracklet.id)?.kind === 'none'),
+  );
+  const confirmAll = useAction(
+    async () => {
+      for (const e of unconfirmed)
+        await (e.cast
+          ? api.post(`/api/tracklets/${encodeURIComponent(e.tracklet.id)}/assign`, { castId: e.cast.id })
+          : api.post(`/api/tracklets/${encodeURIComponent(e.tracklet.id)}/not-character`));
+    },
+    { success: '已全部確認', invalidate },
+  );
   // Who ends up replaced, once per original character.
   const swaps = [
     ...new Map(entries.filter((e) => e.cast && e.personaId).map((e) => [e.cast!.id, e] as const)).values(),
   ];
-  const busy = assign.isPending || override.isPending;
+  const busy = assign.isPending || override.isPending || confirmAll.isPending;
+  const missed = check?.result?.missed ?? [];
 
   return (
     <div className={cn('flex flex-col gap-2 text-xs', className)}>
@@ -69,13 +108,65 @@ export function ShotCastEditor({
             : '還沒有要替換的角色'}
         </span>
       </div>
-      {!entries.length ? (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Button
+          size="sm"
+          variant={swaps.length ? 'outline' : 'default'}
+          disabled={Boolean(finding) || find.isPending}
+          title="偵測畫面中的人物（還沒偵測過時），再用視覺模型和角色表逐一比對，結果等你確認（約 USD 0.01）"
+          onClick={() => find.mutate(undefined)}
+        >
+          <ScanSearchIcon />
+          {finding ? <ShimmerText>{findStep(finding)}</ShimmerText> : '找出這一鏡的角色'}
+        </Button>
+        {finding && findingFor !== null ? (
+          <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+            {formatClock(findingFor)}
+          </span>
+        ) : null}
+        {unconfirmed.length && !finding ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            title="把 AI 的判斷都當成你的決定（之後 Codex 不會再改）"
+            onClick={() => confirmAll.mutate(undefined)}
+          >
+            <CheckCheckIcon />
+            全部確認（{unconfirmed.length}）
+          </Button>
+        ) : null}
+        {check?.status === 'failed' ? (
+          <span className="text-red-300">上次辨識失敗：{check.error ?? ''}</span>
+        ) : null}
+      </div>
+      {finding && !entries.length ? (
+        <div role="status" className="flex flex-col gap-2">
+          {[0, 1].map((i) => (
+            <div key={i} className="flex gap-2 rounded-md border p-2">
+              <div className="skeleton size-14 shrink-0" />
+              <div className="flex flex-1 flex-col gap-1.5">
+                <div className="skeleton h-6 w-full" />
+                <div className="skeleton h-6 w-4/5" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {missed.length ? (
+        <span className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-amber-200">
+          AI 還看到：{missed.map((m) => `${m.label}（${m.reason}）`).join('、')}
+          。偵測沒有框到，暫時無法替換；可以到「角色」步驟重新偵測。
+        </span>
+      ) : null}
+      {!entries.length && !finding ? (
         <span className="text-muted-foreground">
-          這一鏡沒有偵測到人物。到「角色」步驟重新辨識，或把處理方式改成沿用原片。
+          這一鏡還沒有偵測到人物。按「找出這一鏡的角色」，或把處理方式改成沿用原片。
         </span>
       ) : !swaps.length ? (
         <span className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-amber-200">
-          指定畫面中的人物是誰，再選要換成的物料庫角色；可以同時換好幾個。
+          按「找出這一鏡的角色」讓 AI
+          先認人，或自己指定畫面中的人物是誰，再選要換成的物料庫角色；可以同時換好幾個。
         </span>
       ) : null}
       {entries.map((e, i) => {
@@ -89,6 +180,10 @@ export function ShotCastEditor({
             ? KEEP
             : (e.override.personaId ?? PROJECT_DEFAULT);
         const now = personaOf(e.personaId);
+        const v = verdictOf(t.id);
+        const confirmable = t.assignedBy === 'codex' && (castId || v?.kind === 'none');
+        const aiCast = v && v.kind !== 'none' ? v.castId : null;
+        const disagree = Boolean(v?.locked) && aiCast !== (castId ?? null);
         return (
           <div key={t.id} className="flex items-start gap-2 rounded-md border bg-background/40 p-2">
             <Thumb
@@ -145,6 +240,45 @@ export function ShotCastEditor({
                   </SelectContent>
                 </Select>
               </div>
+              {v || t.assignedBy !== 'auto' ? (
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  {t.assignedBy === 'user' ? (
+                    <Tag tone="success">
+                      <CheckIcon />
+                      你已確認
+                    </Tag>
+                  ) : (
+                    <Tag tone="info">AI 判斷・待確認</Tag>
+                  )}
+                  {v ? (
+                    <span className={cn('min-w-0', disagree ? 'text-amber-200' : 'text-muted-foreground')}>
+                      AI：
+                      {v.kind === 'none'
+                        ? '不是角色'
+                        : v.kind === 'new'
+                          ? `新角色「${v.label ?? '?'}」`
+                          : v.label}
+                      {` · ${Math.round(v.confidence * 100)}%`}
+                      {v.reason ? `・${v.reason}` : ''}
+                      {disagree ? `（你指定的是${e.cast ? `「${e.cast.label}」` : '不是角色'}）` : ''}
+                      {!v.applied && !v.locked && v.confidence < 0.5 ? '（不確定，沒有自動指定）' : ''}
+                    </span>
+                  ) : null}
+                  {confirmable ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="ml-auto h-6 px-2 text-[11px]"
+                      disabled={busy}
+                      title="當成你的決定（之後 Codex 不會再改）"
+                      onClick={() => assign.mutate({ trackletId: t.id, castId: castId ?? NOT_CHARACTER })}
+                    >
+                      <CheckIcon />
+                      確認
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
               {castId ? (
                 <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                   {e.cast!.label}

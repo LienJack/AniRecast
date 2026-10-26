@@ -70,6 +70,7 @@ import {
   queueDesign,
   queueOriginalDesign,
   queueReferenceSearch,
+  queueShotCast,
   queueStillTake,
   queueStyleAnalysis,
   queueTake,
@@ -401,6 +402,7 @@ export function registerRoutes(
       };
     }),
   );
+  app.post('/api/shots/:id/cast/find', (c) => handle(c, () => queueShotCast(ws, c.req.param('id'), USER)));
   app.post('/api/shots/:id/cast-override', async (c) =>
     handle(c, async () => {
       const shotId = c.req.param('id');

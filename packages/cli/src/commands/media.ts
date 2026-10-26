@@ -15,6 +15,7 @@ import {
   getShot,
   getSource,
   isHumanActor,
+  latestShotCastCheck,
   listBoundaries,
   listKeyframes,
   listProjects,
@@ -23,6 +24,7 @@ import {
   mergeShots,
   projectModels,
   projectOfShot,
+  queueShotCast,
   queueStyleAnalysis,
   recomputeShotModes,
   recordBoundary,
@@ -430,6 +432,21 @@ export function registerMedia(program: Command): void {
               hint: 'Leave it, or ask the human.',
             });
           return getBoundary(ws.db, clip.id, Number(opts.at));
+        }),
+      ),
+    );
+  shots
+    .command('find-cast <shot>')
+    .description(
+      '找出這一鏡的角色: detect the people of a shot (if it has none), let the vision model say which character each is, assign them unlocked for the human to confirm',
+    )
+    .option('--wait', 'wait for the result')
+    .action(
+      command((shotId: string, opts: { wait?: boolean }) =>
+        withWorkspace(globals(), async (ws) => {
+          const job = queueShotCast(ws, shotId, actorFromEnv());
+          if (!opts.wait) return { job };
+          return { job: unwrapJob(await waitForJob(ws, job.id)), check: latestShotCastCheck(ws, shotId) };
         }),
       ),
     );

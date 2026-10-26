@@ -270,6 +270,7 @@ export function ShotEditPage() {
                   shotId={shot.id}
                   projectRef={ref}
                   entries={d.cast}
+                  check={d.castCheck}
                   className="border-t pt-2"
                 />
               ) : cast.length ? (

@@ -136,6 +136,7 @@ anirecast cost <project>                    # spend so far
 anirecast quota                             # requests left today per model (Omni: 100/day on API tier 2)
 anirecast shots boundaries <project>        # every cut: same moment or cut, who decided, how sure
 anirecast cast tidy <project> --wait        # JEV: merge same-person characters and same-outfit looks
+anirecast shots find-cast <shot> --wait     # 找出這一鏡的角色: who each person in one shot is (picks stay unlocked for the human)
 anirecast design list <project>             # bindings: original → library character, analysis, note, sheets
 anirecast design analyze <project> <cast>   # 原片分析 of one original (add --generate to redraw the sheets after)
 anirecast design pick <project> <cast> --expressions 1,3 --poses 2   # which analysed items the sheets use

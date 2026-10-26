@@ -1,6 +1,6 @@
 import { AniError } from '@anirecast/shared';
 import { loadConfig } from '../config.ts';
-import { all } from '../db.ts';
+import { all, fromJson, one } from '../db.ts';
 import { enqueueJob } from '../jobs.ts';
 import { assertNotBlockedOut, assertQuota } from '../quota.ts';
 import type { Workspace } from '../workspace.ts';
@@ -230,6 +230,79 @@ export function queueReferenceSearch(ws: Workspace, projectRef: string, castId: 
     requestedBy: actor,
     maxAttempts: 1,
   });
+}
+
+/**
+ * 找出這一鏡的角色: detect the people of one shot (when it has none yet), let the vision model say which of the
+ * project's characters each one is, and assign them unlocked for the human to confirm in 替換角色.
+ */
+export function queueShotCast(ws: Workspace, shotId: string, actor: string) {
+  const shot = getShot(ws.db, shotId);
+  return enqueueJob(ws.db, {
+    type: 'shot.cast',
+    lane: 'media',
+    projectId: projectOfShot(ws.db, shot.id).id,
+    payload: { shotId: shot.id },
+    requestedBy: actor,
+    maxAttempts: 1,
+  });
+}
+
+/** The latest 找出這一鏡的角色 run of a shot: what the vision model said about each person. */
+export function latestShotCastCheck(ws: Workspace, shotId: string): ShotCastCheck | null {
+  const row = one<{
+    id: string;
+    status: string;
+    result_json: string | null;
+    error_json: string | null;
+    created_at: number;
+    finished_at: number | null;
+  }>(
+    ws.db,
+    `SELECT id, status, result_json, error_json, created_at, finished_at FROM jobs
+     WHERE type = 'shot.cast' AND json_extract(payload_json, '$.shotId') = :shotId
+     ORDER BY created_at DESC LIMIT 1`,
+    { shotId },
+  );
+  if (!row) return null;
+  return {
+    jobId: row.id,
+    status: row.status,
+    createdAt: row.created_at,
+    finishedAt: row.finished_at,
+    result: fromJson<ShotCastResult | null>(row.result_json, null),
+    error: fromJson<{ message?: string } | null>(row.error_json, null)?.message ?? null,
+  };
+}
+
+/** One person of the shot as the vision model saw them. */
+export interface ShotCastVerdict {
+  trackletId: string;
+  /** character: one of the project's characters (castId); new: a character not among them; none: not a character. */
+  kind: 'character' | 'new' | 'none';
+  castId: string | null;
+  label: string | null;
+  confidence: number;
+  reason: string;
+  /** Assigned as the model said (false when the human had already decided this person, or it changed nothing). */
+  applied: boolean;
+  locked: boolean;
+}
+
+export interface ShotCastResult {
+  detected: number;
+  people: ShotCastVerdict[];
+  /** Characters the model sees in the frames that detection did not box (reported only). */
+  missed: Array<{ castId: string | null; label: string; reason: string }>;
+}
+
+export interface ShotCastCheck {
+  jobId: string;
+  status: string;
+  createdAt: number;
+  finishedAt: number | null;
+  result: ShotCastResult | null;
+  error: string | null;
 }
 
 /**
@@ -474,6 +547,7 @@ export function shotDetail(ws: Workspace, shotId: string) {
     boards: listBoards(ws.db, shotId).map(withReviews),
     takes: listTakes(ws.db, shotId).map(withReviews),
     tasks: listAgentTasks(ws.db, { shotId }),
+    castCheck: latestShotCastCheck(ws, shotId),
     codexThreadId: findCodexThread(ws.db, 'shot', shotId) ?? null,
   };
 }

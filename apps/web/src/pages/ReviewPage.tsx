@@ -802,6 +802,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                   shotId={shot.id}
                   projectRef={projectRef}
                   entries={d.cast}
+                  check={d.castCheck}
                   className="border-t pt-2"
                 />
               ) : null}
