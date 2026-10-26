@@ -5,6 +5,7 @@ import {
   createClip,
   createProject,
   createSource,
+  discardShotVersions,
   enqueueJob,
   findActiveClip,
   type GenerationTier,
@@ -385,6 +386,16 @@ export function registerMedia(program: Command): void {
             });
           return getBoundary(ws.db, clip.id, Number(opts.at));
         }),
+      ),
+    );
+  shots
+    .command('discard-versions <shot>')
+    .description(
+      'Delete every storyboard frame and take of a shot (files go to trash/versions/…) so it can be split or merged',
+    )
+    .action(
+      command((shotId: string) =>
+        withWorkspace(globals(), (ws) => discardShotVersions(ws, shotId, actorFromEnv())),
       ),
     );
   shots

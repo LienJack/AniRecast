@@ -214,13 +214,22 @@ function targetLabel(db: Db, type: HandoffTarget, id: string | null): string {
   return `任務 ${task.id}${task.shotId ? `（${shotNo(db, task.shotId)}）` : ''}`;
 }
 
+/** A discussed version may have been deleted since (to split or merge its shot). */
+const safeLabel = (db: Db, type: HandoffTarget, id: string | null): string => {
+  try {
+    return targetLabel(db, type, id);
+  } catch {
+    return `已刪除的${type === 'board' ? '分鏡圖' : type === 'take' ? '分鏡視頻' : '項目'}（${id ?? ''}）`;
+  }
+};
+
 const toHandoff = (db: Db, r: Row): Handoff => ({
   id: r.id,
   projectId: r.project_id,
   targetType: r.target_type,
   targetId: r.target_id,
   topic: r.topic,
-  targetLabel: targetLabel(db, r.target_type, r.target_id),
+  targetLabel: safeLabel(db, r.target_type, r.target_id),
   status: r.status,
   dir: r.dir,
   threadId: r.thread_id,

@@ -383,6 +383,7 @@ export function projectOverview(ws: Workspace, ref: string) {
       thumb: listKeyframes(ws.db, s.id).find((k) => k.role === 'mid')?.path ?? null,
       overlays: listTextOverlays(ws.db, s.id).length,
       castCount: shotCast(ws.db, s.id).filter((e) => e.cast).length,
+      versions: listBoards(ws.db, s.id).length + listTakes(ws.db, s.id).length,
     })),
     cast: listCast(ws.db, project.id),
     renders: listRenders(ws.db, project.id),

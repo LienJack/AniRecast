@@ -6,6 +6,7 @@ import {
   FrameIcon,
   ScanSearchIcon,
   ScissorsIcon,
+  Trash2Icon,
   TypeIcon,
   UsersRoundIcon,
 } from 'lucide-react';
@@ -59,11 +60,18 @@ function ShotFrameDialog({
   const fps = { num: clip.fpsNum, den: clip.fpsDen };
   const initial = kind === 'rep' ? shot.repFrame : Math.floor((shot.startFrame + shot.endFrame + 1) / 2);
   const [frame, setFrame] = useState(initial);
-  const split = useAction((at: number) => api.post(`/api/shots/${shot.id}/split`, { at }), {
-    success: '已拆分，正在重建兩個分鏡的關鍵幀',
-    invalidate: [qk.overview(projectRef), ['shot']],
-    onSuccess: onClose,
-  });
+  // A shot with generated versions is split after deleting them (files go to trash/), as the button says.
+  const split = useAction(
+    async (at: number) => {
+      if (shot.versions > 0) await api.post(`/api/shots/${shot.id}/discard-versions`);
+      return api.post(`/api/shots/${shot.id}/split`, { at });
+    },
+    {
+      success: '已拆分，正在重建兩個分鏡的關鍵幀',
+      invalidate: [qk.overview(projectRef), ['shot']],
+      onSuccess: onClose,
+    },
+  );
   const rep = useAction((repFrame: number) => api.patch(`/api/shots/${shot.id}`, { repFrame }), {
     success: '已更新代表幀',
     onSuccess: onClose,
@@ -103,9 +111,18 @@ function ShotFrameDialog({
             取消
           </Button>
           {kind === 'split' ? (
-            <Button disabled={!splitValid || split.isPending} onClick={() => split.mutate(frame)}>
+            <Button
+              variant={shot.versions > 0 ? 'destructive' : 'default'}
+              disabled={!splitValid || split.isPending}
+              title={
+                shot.versions > 0
+                  ? `先刪除這個分鏡的 ${shot.versions} 個生成版本（檔案移到 trash/，可找回），再切開`
+                  : undefined
+              }
+              onClick={() => split.mutate(frame)}
+            >
               <ScissorsIcon />
-              在這一幀切開
+              {shot.versions > 0 ? `刪除 ${shot.versions} 個舊版本並在這一幀切開` : '在這一幀切開'}
             </Button>
           ) : (
             <Button disabled={rep.isPending} onClick={() => rep.mutate(frame)}>
@@ -187,6 +204,19 @@ function ShotCard({
   onMerge: () => void;
 }) {
   const [showOverlays, setShowOverlays] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const discard = useAction(
+    () =>
+      api.post<{ boards: number; takes: number; trash: string | null }>(
+        `/api/shots/${shot.id}/discard-versions`,
+      ),
+    {
+      success: (r) =>
+        `已刪除分鏡圖 ${r.boards} 張、分鏡視頻 ${r.takes} 個（檔案移到 ${r.trash ?? 'trash/'}）`,
+      invalidate: [['project'], ['shot']],
+      onSuccess: () => setConfirmDiscard(false),
+    },
+  );
   const switchId = useId();
   const setMode = useAction((mode: ShotMode) => api.patch(`/api/shots/${shot.id}`, { mode }), {
     success: (_r, mode) => `分鏡 #${shot.orderIndex + 1} 改為${MODE_LABEL[mode]}`,
@@ -292,8 +322,30 @@ function ShotCard({
             <TypeIcon />
             字幕
           </Button>
+          {shot.versions > 0 ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-red-300 hover:text-red-200"
+              title="刪除這個分鏡的所有分鏡圖和分鏡視頻，之後就能自由拆分、合併"
+              onClick={() => setConfirmDiscard(true)}
+            >
+              <Trash2Icon />
+              刪除舊版本（{shot.versions}）
+            </Button>
+          ) : null}
         </div>
         {showOverlays ? <OverlayPanel shotId={shot.id} /> : null}
+        <ConfirmDialog
+          open={confirmDiscard}
+          onOpenChange={setConfirmDiscard}
+          title={`刪除分鏡 #${shot.orderIndex + 1} 的 ${shot.versions} 個生成版本？`}
+          description="這個分鏡的所有分鏡圖和分鏡視頻（包括已通過的）都會刪除，評審紀錄一起刪掉，相關的 Codex 任務會取消。檔案和紀錄會移到 Workspace 的 trash/versions/ 資料夾，需要時可以找回。刪除後這個分鏡就能自由拆分、合併，之後要重新生成。"
+          confirmLabel="刪除舊版本"
+          destructive
+          pending={discard.isPending}
+          onConfirm={() => discard.mutate(undefined)}
+        />
       </div>
     </Card>
   );
@@ -364,10 +416,14 @@ export function ShotsPage() {
     onSuccess: () => setAnalyzeOpen(false),
   });
   const mergeAction = useAction(
-    (pair: [OverviewShot, OverviewShot]) =>
-      api.post('/api/shots/merge', { first: pair[0].id, second: pair[1].id }),
+    async (pair: [OverviewShot, OverviewShot]) => {
+      // Shots with generated versions are merged after deleting them (the dialog says so).
+      for (const s of pair) if (s.versions > 0) await api.post(`/api/shots/${s.id}/discard-versions`);
+      return api.post('/api/shots/merge', { first: pair[0].id, second: pair[1].id });
+    },
     { success: '已合併', onSuccess: () => setMerge(null) },
   );
+  const mergeVersions = merge ? merge[0].versions + merge[1].versions : 0;
   if (overview.isPending) return <Loading />;
   if (overview.isError) return <ErrorState error={overview.error} />;
   const { shots, clip } = overview.data;
@@ -458,8 +514,13 @@ export function ShotsPage() {
         open={Boolean(merge)}
         onOpenChange={(o) => !o && setMerge(null)}
         title={merge ? `合併分鏡 #${merge[0].orderIndex + 1} 和 #${merge[1].orderIndex + 1}？` : ''}
-        description="兩個相鄰分鏡會合成一個，關鍵幀會重新產生。已經有生成結果的分鏡不能合併。"
-        confirmLabel="合併"
+        description={
+          mergeVersions > 0
+            ? `兩個相鄰分鏡會合成一個，關鍵幀會重新產生。它們共有 ${mergeVersions} 個生成版本，合併前會先刪除（檔案移到 trash/versions/，可找回），之後要重新生成。`
+            : '兩個相鄰分鏡會合成一個，關鍵幀會重新產生。'
+        }
+        confirmLabel={mergeVersions > 0 ? `刪除 ${mergeVersions} 個舊版本並合併` : '合併'}
+        destructive={mergeVersions > 0}
         pending={mergeAction.isPending}
         onConfirm={() => merge && mergeAction.mutate(merge)}
       />

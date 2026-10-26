@@ -19,3 +19,4 @@ export * from './projects.ts';
 export * from './shots.ts';
 export * from './signature.ts';
 export * from './sources.ts';
+export * from './versions.ts';

@@ -22,6 +22,7 @@ import {
   DESIGN_KINDS,
   type DesignKind,
   designOverview,
+  discardShotVersions,
   enqueueJob,
   findActiveClip,
   type GenerationTier,
@@ -354,6 +355,9 @@ export function registerRoutes(
       });
       return [a, b];
     }),
+  );
+  app.post('/api/shots/:id/discard-versions', (c) =>
+    handle(c, () => discardShotVersions(ws, c.req.param('id'), USER)),
   );
   app.post('/api/shots/merge', async (c) =>
     handle(c, async () => {
