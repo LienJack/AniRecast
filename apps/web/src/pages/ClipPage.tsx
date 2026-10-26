@@ -62,6 +62,114 @@ function TimecodeInput({
   );
 }
 
+// Two native range inputs on one track: only their thumbs take the pointer, so both handles can be dragged and
+// a click on the track itself seeks. Keyboard works on each handle (←/→, Shift for 10 frames).
+const HANDLE =
+  'pointer-events-none absolute inset-0 h-full w-full appearance-none bg-transparent outline-none ' +
+  '[&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:h-7 [&::-webkit-slider-thumb]:w-3.5 ' +
+  '[&::-webkit-slider-thumb]:cursor-ew-resize [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-sm ' +
+  '[&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-background [&::-webkit-slider-thumb]:bg-sky-400 ' +
+  '[&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:h-7 [&::-moz-range-thumb]:w-3.5 ' +
+  '[&::-moz-range-thumb]:cursor-ew-resize [&::-moz-range-thumb]:rounded-sm [&::-moz-range-thumb]:border-2 ' +
+  '[&::-moz-range-thumb]:border-background [&::-moz-range-thumb]:bg-sky-400 ' +
+  'focus-visible:[&::-webkit-slider-thumb]:ring-2 focus-visible:[&::-webkit-slider-thumb]:ring-sky-200';
+
+/**
+ * The whole source as a bar with the selection between two handles: drag the left one for the in point and the
+ * right one for the out point (exclusive); the player follows the handle so the frame is visible while dragging.
+ */
+function RangeTrack({
+  total,
+  inFrame,
+  outFrame,
+  frame,
+  fps,
+  onIn,
+  onOut,
+  onSeek,
+}: {
+  total: number;
+  inFrame: number | null;
+  outFrame: number | null;
+  frame: number;
+  fps: Fps;
+  onIn: (f: number) => void;
+  onOut: (f: number) => void;
+  onSeek: (f: number) => void;
+}) {
+  const track = useRef<HTMLDivElement>(null);
+  const lo = inFrame ?? 0;
+  const hi = Math.min(outFrame ?? total, total);
+  const pct = (f: number) => `${(Math.min(Math.max(f, 0), total) / Math.max(1, total)) * 100}%`;
+  const ownKeys = (e: React.KeyboardEvent) => e.stopPropagation();
+  return (
+    <div className="flex flex-col gap-1">
+      <div
+        ref={track}
+        className="relative h-9 cursor-pointer select-none"
+        onPointerDown={(e) => {
+          const r = track.current?.getBoundingClientRect();
+          if (!r || e.target !== e.currentTarget) return;
+          onSeek(Math.min(total - 1, Math.max(0, Math.round(((e.clientX - r.left) / r.width) * total))));
+        }}
+      >
+        <div className="pointer-events-none absolute inset-x-0 top-1/2 h-2.5 -translate-y-1/2 rounded-full bg-secondary" />
+        <div
+          className="pointer-events-none absolute top-1/2 h-2.5 -translate-y-1/2 bg-sky-500/50"
+          style={{ left: pct(lo), width: `calc(${pct(hi)} - ${pct(lo)})` }}
+        />
+        <div
+          className="pointer-events-none absolute inset-y-1 w-0.5 bg-foreground"
+          style={{ left: pct(frame) }}
+          title="目前畫面"
+        />
+        <input
+          type="range"
+          aria-label="入點（拖曳調整）"
+          min={0}
+          max={total}
+          step={1}
+          value={lo}
+          onKeyDown={ownKeys}
+          onChange={(e) => {
+            const f = Math.min(Number(e.target.value), hi - 1);
+            onIn(f);
+            onSeek(f);
+          }}
+          // Near the end the in handle must stay grabbable above the out handle.
+          className={`${HANDLE} ${lo > total - 30 ? 'z-20' : 'z-10'}`}
+        />
+        <input
+          type="range"
+          aria-label="出點（拖曳調整，不含這一幀）"
+          min={0}
+          max={total}
+          step={1}
+          value={hi}
+          onKeyDown={ownKeys}
+          onChange={(e) => {
+            const f = Math.max(Number(e.target.value), lo + 1);
+            onOut(f);
+            onSeek(f - 1);
+          }}
+          className={`${HANDLE} z-10`}
+        />
+      </div>
+      <div className="flex justify-between font-mono text-[11px] text-muted-foreground tabular-nums">
+        <span>
+          入點 {formatTimecode(lo, fps)} · f {lo}
+        </span>
+        <span>
+          選取 {hi - lo} 幀（{frameToSeconds(hi - lo, fps).toFixed(2)} 秒）
+        </span>
+        <span>
+          最後一幀 {formatTimecode(hi - 1, fps)} · f {hi - 1}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function ClipEditor({ source, clip, projectRef }: { source: Source; clip: Clip | null; projectRef: string }) {
   const navigate = useNavigate();
   const fps = { num: source.fpsNum ?? 24, den: source.fpsDen ?? 1 };
@@ -134,9 +242,54 @@ function ClipEditor({ source, clip, projectRef }: { source: Source; clip: Clip |
             fps={fps}
             totalFrames={totalFrames}
             initialFrame={clip?.inFrame ?? 0}
-            marks={{ in: inFrame, out: outFrame }}
             onFrame={setFrame}
           />
+          <div className="mt-3 flex flex-col gap-2">
+            <RangeTrack
+              total={totalFrames}
+              inFrame={inFrame}
+              outFrame={outFrame}
+              frame={frame}
+              fps={fps}
+              onIn={setIn}
+              onOut={setOut}
+              onSeek={(f) => {
+                player.current?.pause();
+                player.current?.seekFrame(f);
+              }}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={() => setIn(frame)} title="把目前畫面設為節選的第一幀（I）">
+                <LogInIcon />
+                設為入點
+              </Button>
+              <Button size="sm" onClick={() => setOut(frame + 1)} title="把目前畫面設為節選的最後一幀（O）">
+                <LogOutIcon />
+                設為出點
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={inFrame === null}
+                onClick={() => inFrame !== null && player.current?.seekFrame(inFrame)}
+              >
+                <CornerDownLeftIcon />
+                跳到入點
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={outFrame === null}
+                onClick={() => outFrame !== null && player.current?.seekFrame(outFrame - 1)}
+              >
+                <CornerDownLeftIcon />
+                跳到最後一幀
+              </Button>
+              <span className="ml-auto font-mono text-muted-foreground text-xs">
+                目前畫面 f {frame} · {formatTimecode(frame, fps)}
+              </span>
+            </div>
+          </div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
             <Kbd>←</Kbd>
             <Kbd>→</Kbd> 逐幀（<Kbd>Shift</Kbd> 一次 10 幀）<Kbd>空白</Kbd> 播放／暫停 <Kbd>I</Kbd> 設入點
@@ -202,26 +355,6 @@ function ClipEditor({ source, clip, projectRef }: { source: Source; clip: Clip |
                 </span>
               ) : null}
             </Field>
-            <div className="flex gap-1.5">
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={inFrame === null}
-                onClick={() => inFrame !== null && player.current?.seekFrame(inFrame)}
-              >
-                <CornerDownLeftIcon />
-                跳到入點
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={outFrame === null}
-                onClick={() => outFrame !== null && player.current?.seekFrame(outFrame - 1)}
-              >
-                <CornerDownLeftIcon />
-                跳到最後一幀
-              </Button>
-            </div>
             <div className="rounded-md border bg-background/40 p-2 text-xs">
               {valid ? (
                 <>
