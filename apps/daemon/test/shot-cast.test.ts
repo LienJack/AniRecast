@@ -79,6 +79,7 @@ describe('找出這一鏡的角色', () => {
     const locked = await person(door!.id, chisato.id, 'user');
     const dismissed = await person(door!.id, null, 'codex');
     const stranger = await person(door!.id, null, 'auto');
+    const another = await person(door!.id, null, 'auto');
     ws.close();
 
     const asked: VisionRequest[] = [];
@@ -91,6 +92,7 @@ describe('找出這一鏡的角色', () => {
             { person: 1, kind: 'character', character: 2, confidence: 0.7, reason: '黑長髮' },
             { person: 2, kind: 'character', character: 1, confidence: 0.92, reason: '金色短髮、紅色制服' },
             { person: 3, kind: 'new', label: '黑衣男子', confidence: 0.8, reason: '不在角色表裡' },
+            { person: 4, kind: 'new', label: '黑衣男子', confidence: 0.9, reason: '同一個人' },
           ],
           missed: [{ character: 2, reason: '背景裡還有瀧奈' }],
         };
@@ -118,8 +120,8 @@ describe('找出這一鏡的角色', () => {
         }
         await new Promise((r) => setTimeout(r, 100));
       }
-      // Frame, three people, two known characters.
-      expect(asked[0]?.images).toHaveLength(6);
+      // Frame, four people, two known characters.
+      expect(asked[0]?.images).toHaveLength(7);
       // The human's decision stands; the model's other opinion is only reported.
       expect(getTracklet(cli.db, locked.id)).toMatchObject({ castMemberId: chisato.id, assignedBy: 'user' });
       // Codex had dismissed 千束 at the door: the model brings her back, unlocked for the human to confirm.
@@ -127,17 +129,20 @@ describe('找出這一鏡的角色', () => {
         castMemberId: chisato.id,
         assignedBy: 'codex',
       });
-      // Someone not in the cast becomes a new character.
-      const created = listCast(cli.db, project.id).find((c) => c.label === '黑衣男子');
+      // Someone not in the cast becomes one new character, however many times the model names them.
+      const created = listCast(cli.db, project.id).filter((c) => c.label === '黑衣男子');
+      expect(created).toHaveLength(1);
       expect(getTracklet(cli.db, stranger.id)).toMatchObject({
-        castMemberId: created?.id,
+        castMemberId: created[0]?.id,
         assignedBy: 'codex',
       });
+      expect(getTracklet(cli.db, another.id).castMemberId).toBe(created[0]?.id);
       expect(getCastMember(cli.db, takina.id).shotIds).toEqual([other!.id]);
       const check = latestShotCastCheck(cli, door!.id);
       expect(check?.result?.people.map((p) => [p.kind, p.label, p.applied, p.locked])).toEqual([
         ['character', '瀧奈', false, true],
         ['character', '千束', true, false],
+        ['new', '黑衣男子', true, false],
         ['new', '黑衣男子', true, false],
       ]);
       expect(check?.result?.missed).toEqual([{ castId: takina.id, label: '瀧奈', reason: '背景裡還有瀧奈' }]);

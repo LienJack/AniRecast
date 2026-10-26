@@ -127,10 +127,10 @@ export const shotCastHandler: JobHandler = async (ctx: JobContext) => {
       keyframes.length <= 3
         ? keyframes
         : [keyframes[0]!, keyframes[Math.floor(keyframes.length / 2)]!, keyframes.at(-1)!];
-    // One tile per detected person: head and full body.
+    // One tile per detected person: full body, then the head the detector boxed.
     const people: Array<{ trackletId: string; tile: string }> = [];
     for (const [i, e] of entries.entries()) {
-      const crops = [e.tracklet.headCropPath, e.tracklet.bodyCropPath].filter((p): p is string => Boolean(p));
+      const crops = [e.tracklet.bodyCropPath, e.tracklet.headCropPath].filter((p): p is string => Boolean(p));
       if (!crops.length) continue;
       const tile = path.join(tmp, `person-${i + 1}.jpg`);
       await cropGrid([crops.map((p) => ws.abs(p))], tile, { cell: 200 }, { signal });
@@ -167,7 +167,7 @@ export const shotCastHandler: JobHandler = async (ctx: JobContext) => {
     const prompt = [
       `Images 1–${f} are frames of one shot of the anime opening "${source.title}".`,
       p
-        ? `Images ${f + 1}–${f + p} each show one person detected in the shot (person 1 to ${p}): head and full-body crops.`
+        ? `Images ${f + 1}–${f + p} each show one person detected in the shot (person 1 to ${p}): the full-body crop, then the head crop. The detector sometimes boxes the wrong thing as the head (an ornament, a sign); when the full-body crop clearly shows a character, judge by the full-body crop.`
         : 'No person was detected in this shot.',
       known.length
         ? `Images ${f + p + 1}–${f + p + known.length} each show one of the known characters of this opening, several appearances side by side:`
@@ -208,6 +208,12 @@ export const shotCastHandler: JobHandler = async (ctx: JobContext) => {
     // 2. Apply the picks the human has not decided, report every one.
     progress(0.85, 'assigning');
     const verdicts: ShotCastVerdict[] = [];
+    // A character not among the known ones is created once, and an existing one of the same name is reused.
+    const byLabel = new Map(
+      listCast(ws.db, project.id)
+        .filter((c) => c.status === 'active')
+        .map((c) => [c.label, c.id] as const),
+    );
     for (const v of answer.data.people ?? []) {
       const person = people[v.person - 1];
       const entry = person && entries.find((e) => e.tracklet.id === person.trackletId);
@@ -236,13 +242,17 @@ export const shotCastHandler: JobHandler = async (ctx: JobContext) => {
           markNotCharacter(ws.db, person.trackletId, 'daemon', opts);
           verdict.applied = true;
         } else if (kind === 'new' && !current && confidence >= NEW_FLOOR && verdict.label) {
-          const created = createCastMember(
-            ws.db,
-            { projectId: project.id, label: verdict.label, thumbPath: entry.tracklet.headCropPath ?? null },
-            'daemon',
-          );
-          assignTracklet(ws.db, person.trackletId, created.id, 'daemon', opts);
-          verdict.castId = created.id;
+          let castId = byLabel.get(verdict.label);
+          if (!castId) {
+            castId = createCastMember(
+              ws.db,
+              { projectId: project.id, label: verdict.label, thumbPath: entry.tracklet.headCropPath ?? null },
+              'daemon',
+            ).id;
+            byLabel.set(verdict.label, castId);
+          }
+          assignTracklet(ws.db, person.trackletId, castId, 'daemon', opts);
+          verdict.castId = castId;
           verdict.applied = true;
         }
       }

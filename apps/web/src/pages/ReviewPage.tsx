@@ -7,6 +7,7 @@ import {
   ImageIcon,
   MessageSquareIcon,
   RefreshCwIcon,
+  ScissorsIcon,
   SparklesIcon,
   UndoIcon,
   VideoIcon,
@@ -505,6 +506,12 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
               }
             />
             <OpenInCodex threadId={d.codexThreadId} />
+            <Button asChild size="sm" variant="outline" title="回到這一鏡的分鏡頁：拆開、合併、調整入出點">
+              <Link to="/projects/$ref/shots/$shotId" params={{ ref: projectRef, shotId: shot.id }}>
+                <ScissorsIcon />
+                調整分鏡
+              </Link>
+            </Button>
             <Button
               size="sm"
               variant="outline"
