@@ -80,7 +80,7 @@ export function ShotCastEditor({
       ) : null}
       {entries.map((e, i) => {
         const t = e.tracklet;
-        const crop = t.headCropPath ?? t.bodyCropPath;
+        const crop = t.bodyCropPath ?? t.headCropPath;
         const castId = e.cast?.id;
         const mapped = personaOf(e.cast?.personaId);
         const choice = !e.override
@@ -97,7 +97,7 @@ export function ShotCastEditor({
               fit="contain"
               className="size-14 shrink-0 rounded"
               zoom
-              gallery={[t.headCropPath, t.bodyCropPath]
+              gallery={[t.bodyCropPath, t.headCropPath]
                 .filter((p): p is string => Boolean(p))
                 .map((p) => ({ src: fileUrl(p) ?? '', alt: `人物 ${i + 1}` }))}
             />
