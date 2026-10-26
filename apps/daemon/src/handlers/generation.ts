@@ -760,11 +760,12 @@ export const composeRenderHandler: JobHandler = async (ctx) => {
     );
     progress(0.9, 'slider proxy');
     const proxyRel = `${projectCacheDir(project)}/renders/r${String(render.version).padStart(3, '0')}.slider.mp4`;
+    // The renders page plays this proxy: both halves at the render's own size, not a 540p stand-in.
     await stackCompare(
       original,
       ws.abs(`${stem}.mp4`),
       outPath(ws, proxyRel),
-      { layout: 'v', height: 540, audioFrom: ws.abs(clip.audioPath) },
+      { layout: 'v', height: size.height, crf: 16, audioFrom: ws.abs(clip.audioPath) },
       { signal },
     );
     await writeProvenance(ws, `${stem}.json`, {

@@ -194,7 +194,11 @@ describe('board → take → render with the fake provider', () => {
         hasAudio: true,
       });
       expect(existsSync(path.join(root, render!.comparePath))).toBe(true);
-      expect(existsSync(path.join(root, render!.compareProxyPath))).toBe(true);
+      // The renders page player: original over render, each half at the render's own size.
+      expect(await probe(path.join(root, render!.compareProxyPath))).toMatchObject({
+        width: 640,
+        height: 720,
+      });
 
       // Every provider call is logged for the daily quota; fake requests are logged but never counted.
       const quota = await cliData<Array<{ model: string; used: number }>>(t, ['quota']);

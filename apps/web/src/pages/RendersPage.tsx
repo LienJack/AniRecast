@@ -131,6 +131,12 @@ export function RendersPage() {
                   </div>
                 </CardHeader>
                 <CardContent>
+                  {selected.tier !== effectiveTier ? (
+                    <div className="mb-2 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-amber-200 text-xs">
+                      這一版是以 {TIER_LABEL[selected.tier]} 合成的，專案現在輸出 {TIER_LABEL[effectiveTier]}
+                      ，重新合成才會是這個解析度。
+                    </div>
+                  ) : null}
                   {selected.status === 'ready' && selected.compareProxyPath ? (
                     <CompareSlider
                       key={selected.id}
