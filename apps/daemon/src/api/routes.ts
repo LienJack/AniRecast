@@ -27,6 +27,7 @@ import {
   designOverview,
   discardShotVersions,
   enqueueJob,
+  type FrameRange,
   findActiveClip,
   type GenerationTier,
   getActiveClip,
@@ -421,12 +422,19 @@ export function registerRoutes(
   app.post('/api/shots/:id/cast/find', (c) => handle(c, () => queueShotCast(ws, c.req.param('id'), USER)));
   app.post('/api/shots/:id/takes/plan', async (c) =>
     handle(c, async () => {
-      const b = await body<{ model?: string; extra?: string; attachments?: string[] }>(c);
+      const b = await body<{
+        model?: string;
+        extra?: string;
+        attachments?: string[];
+        range?: FrameRange;
+        keepFrom?: string;
+      }>(c);
       if (b.model) videoModelOrThrow(b.model);
       return queueTakePlan(ws, c.req.param('id'), USER, {
         ...(b.model ? { model: b.model } : {}),
         ...(b.extra?.trim() ? { extra: b.extra.trim() } : {}),
         ...(b.attachments?.length ? { attachments: b.attachments } : {}),
+        ...(b.range ? { range: b.range, ...(b.keepFrom ? { keepFrom: b.keepFrom } : {}) } : {}),
       });
     }),
   );
@@ -840,9 +848,14 @@ export function registerRoutes(
         retryBlocked?: boolean;
         model?: string;
         attachments?: string[];
+        /** Redo only these frames of the one shot named; the others are kept from `keepFrom`. */
+        range?: FrameRange;
+        keepFrom?: string;
       }>(c);
       const project = getProject(ws.db, c.req.param('ref'));
       if (b.model) videoModelOrThrow(b.model);
+      if (b.range && b.shotIds?.length !== 1)
+        throw new AniError('usage', 'A range is for one shot at a time');
       const model = b.model ?? projectModels(ws.db, project.id).video;
       const tier = b.tier ?? (b.fromTakeId ? getTake(ws.db, b.fromTakeId).tier : project.generationTier);
       if (!TIERS.includes(tier)) throw new AniError('usage', `Tier must be one of ${TIERS.join(', ')}`);
@@ -861,6 +874,7 @@ export function registerRoutes(
           retryBlocked: Boolean(b.retryBlocked),
           model,
           ...(b.attachments?.length ? { attachments: b.attachments } : {}),
+          ...(b.range ? { range: b.range, ...(b.keepFrom ? { keepFrom: b.keepFrom } : {}) } : {}),
         }),
       );
     }),

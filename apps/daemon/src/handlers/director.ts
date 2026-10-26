@@ -4,6 +4,7 @@ import {
   type Board,
   boardBrief,
   type DirectorBrief,
+  type FrameRange,
   type InputRef,
   projectOfShot,
   recordCost,
@@ -215,6 +216,8 @@ export async function directTake(
     outDir: string;
     stem: string;
     attachments?: string[];
+    /** A partial take: the part it redoes, its clip, and the kept frames around it. */
+    part?: { range: FrameRange; video: string; seams: Array<{ label: string; path: string }> };
   },
 ): Promise<{ prompt: string; inputs: InputRef[]; record: DirectorRecord }> {
   const { workspace: ws, services, signal, job } = ctx;
@@ -225,6 +228,7 @@ export async function directTake(
     extra: input.extra,
     maxRefs: max,
     attachments: input.attachments ?? [],
+    ...(input.part ? { part: input.part } : {}),
   });
   if (!brief.images.some((i) => i.use === 'reference'))
     throw new Error('no approved storyboard frame or design sheet to send');

@@ -963,6 +963,93 @@ export function boardBrief(ws: Workspace, boardId: string, maxRefs: number): Dir
 }
 
 /** The director's brief for a shot video: the shot itself, the facts, and the references the video model may get. */
+/** Frames of a shot (0 = its first) that a take covers: the whole shot, or the part a partial take redoes. */
+export interface FrameRange {
+  start: number;
+  end: number;
+}
+
+/** Where a box sits in the frame, in words: vertical and horizontal place, and how close the person is. */
+function placeOf(b: number[]): string {
+  const [x0, y0, x1, y1] = b as [number, number, number, number];
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  const horizontal = cx < 0.36 ? 'left' : cx > 0.64 ? 'right' : 'centre';
+  const vertical = cy < 0.36 ? 'top' : cy > 0.64 ? 'bottom' : '';
+  const size =
+    y1 - y0 > 0.85 || x1 - x0 > 0.5
+      ? 'close, filling much of the frame'
+      : y1 - y0 > 0.45
+        ? 'medium'
+        : 'small';
+  const cut = x0 <= 0.01 || y0 <= 0.01 || x1 >= 0.99 || y1 >= 0.99;
+  return `${vertical ? `${vertical} ` : ''}${horizontal}, ${size}${cut ? ', partly out of frame' : ''}`;
+}
+
+/**
+ * When each replaced person is on screen and where, from the person detections. A camera move passes several
+ * people: told only "at 0–1 s", the model replaced them there and left them unchanged later (shot 11).
+ */
+function castTimeline(
+  ws: Workspace,
+  shot: Shot,
+  uses: PersonaUse[],
+  fps: number,
+  range: FrameRange,
+): string[] {
+  const seconds = (f: number) => ((f - range.start) / fps).toFixed(2);
+  const lines: string[] = [];
+  const inView = new Map<number, string[]>();
+  for (const use of uses) {
+    const label = use.entries.find((e) => e.cast)?.cast?.label;
+    const who = `${label ? `「${label}」` : 'the person'} → "${use.persona.name}"`;
+    const dets = use.entries
+      .flatMap((e) =>
+        all<{ frame: number; head: string | null; body: string | null }>(
+          ws.db,
+          'SELECT frame, head_bbox_json AS head, body_bbox_json AS body FROM detections WHERE tracklet_id = :id',
+          { id: e.tracklet.id },
+        ),
+      )
+      .map((d) => ({
+        frame: d.frame - shot.startFrame,
+        box: fromJson<number[] | null>(d.body, null) ?? fromJson<number[] | null>(d.head, null),
+      }))
+      .filter((d): d is { frame: number; box: number[] } => d.box !== null)
+      .filter((d) => d.frame >= range.start && d.frame <= range.end)
+      .sort((a, b) => a.frame - b.frame);
+    if (!dets.length) continue;
+    // Detections are sampled every few frames; a longer gap means the person left the frame.
+    const windows: Array<typeof dets> = [];
+    for (const d of dets) {
+      const last = windows.at(-1);
+      if (last && d.frame - last.at(-1)!.frame <= 16) last.push(d);
+      else windows.push([d]);
+    }
+    for (const d of dets) inView.set(d.frame, [...(inView.get(d.frame) ?? []), who]);
+    const spans = windows.map((w) => {
+      const first = w[0]!;
+      const end = w.at(-1)!;
+      const where =
+        first.frame === end.frame || placeOf(first.box) === placeOf(end.box)
+          ? placeOf(first.box)
+          : `${placeOf(first.box)} → ${placeOf(end.box)}`;
+      return `${seconds(first.frame)}–${seconds(end.frame)} s (${where})`;
+    });
+    lines.push(`${who}: ${spans.join('; ')}`);
+  }
+  if (!lines.length) return [];
+  const crowded = [...inView.entries()].sort((a, b) => b[1].length - a[1].length || a[0] - b[0])[0]!;
+  return [
+    `When each person to replace is on screen (seconds from the start of the clip the model edits; place in the frame). Replace each of them in EVERY frame they appear — however small, distant, out of focus or partly hidden, and also when only a hand, sleeve or the back of the head shows; no original character may stay unchanged at any moment:\n${lines.map((l) => `  - ${l}`).join('\n')}`,
+    ...(crowded[1].length > 1
+      ? [
+          `At ${seconds(crowded[0])} s ${crowded[1].length} of them are in view at the same time (${crowded[1].join(', ')}): every one of them is replaced there.`,
+        ]
+      : []),
+  ];
+}
+
 export interface TakeBrief extends DirectorBrief {
   shotId: string;
   /** The shot's source clip, which the director watches. */
@@ -980,12 +1067,19 @@ export interface TakeBrief extends DirectorBrief {
 export function takeBrief(
   ws: Workspace,
   shotId: string,
-  opts: { extra?: string | null; maxRefs: number; attachments?: string[] },
+  opts: {
+    extra?: string | null;
+    maxRefs: number;
+    attachments?: string[];
+    /** A partial take: the part it redoes, its own clip, and the kept frames around it. */
+    part?: { range: FrameRange; video: string; seams: Array<{ label: string; path: string }> };
+  },
 ): TakeBrief {
   const shot = getShot(ws.db, shotId);
   if (!shot.sourcePath) throw new AniError('conflict', 'Shot source segment is not prepared yet');
   const project = projectOfShot(ws.db, shot.id);
   const { uses, keyframe } = castInShot(ws, shot, 6, 'key');
+  const range = opts.part?.range ?? { start: 0, end: shot.frameCount - 1 };
   const images: BriefImage[] = [];
   let c = 0;
   let r = 0;
@@ -993,14 +1087,18 @@ export function takeBrief(
     if (!images.some((i) => i.path === path) && existsSync(ws.abs(path)))
       images.push({ id: `R${++r}`, label, path, use: 'reference' });
   };
-  for (const k of listKeyframes(ws.db, shot.id))
-    if (['first', 'mid', 'last'].includes(k.role) && existsSync(ws.abs(k.path)))
+  for (const k of listKeyframes(ws.db, shot.id)) {
+    const at = k.frame - shot.startFrame;
+    if (!['first', 'mid', 'last'].includes(k.role) || at < range.start || at > range.end) continue;
+    if (existsSync(ws.abs(k.path)))
       images.push({
         id: `C${++c}`,
         label: `the shot's ${k.role === 'mid' ? 'middle' : k.role} frame (frame ${k.frame})`,
         path: k.path,
         use: 'context',
       });
+  }
+  for (const seam of opts.part?.seams ?? []) reference(seam.label, seam.path);
   for (const role of ['key', 'first', 'last'] as const) {
     const b = approvedBoard(ws.db, shot.id, role);
     if (b?.path)
@@ -1010,10 +1108,17 @@ export function takeBrief(
       );
   }
   const clip = findActiveClip(ws.db, project.id);
-  const seconds = clip ? ((shot.frameCount * clip.fpsDen) / clip.fpsNum).toFixed(2) : '?';
+  const fps = clip ? clip.fpsNum / clip.fpsDen : 24;
+  const seconds = (shot.frameCount / fps).toFixed(2);
   const facts: string[] = [
     `This is shot ${shot.orderIndex + 1} of an anime opening, ${seconds} s long (${shot.frameCount} frames).`,
   ];
+  if (opts.part) {
+    const { start, end } = opts.part.range;
+    facts.push(
+      `The model edits ONLY frames ${start}–${end} of this shot (${((end - start + 1) / fps).toFixed(2)} s): "the clip" and the video you watch are that part. The rest of the shot is already made and kept, so this part must join it seamlessly — the same new characters, looks, light and colour as the kept frames (shown in the references labelled "already made").`,
+    );
+  }
   if (shot.description?.trim()) facts.push(`What happens in the shot: ${shot.description.trim()}`);
   for (const use of uses) {
     const castId = use.entries.find((e) => e.cast)?.cast?.id;
@@ -1033,6 +1138,7 @@ export function takeBrief(
       .slice(0, 2))
       reference(`"${use.persona.name}" library picture (${img.view})`, img.path);
   }
+  facts.push(...castTimeline(ws, shot, uses, fps, range));
   const overlay = overlayInstruction(overlaysToRemove(ws.db, shot.id, shot.removeOtherOverlays));
   if (overlay) facts.push(overlay);
   const notes = projectStyleNotes(ws, project.id, 'video');
@@ -1050,7 +1156,7 @@ export function takeBrief(
     extra: opts.extra?.trim() || null,
     maxRefs: opts.maxRefs,
     shotId: shot.id,
-    video: shot.sourcePath,
+    video: opts.part?.video ?? shot.sourcePath,
     names: uses.map((u) => u.persona.name),
   };
 }

@@ -26,7 +26,7 @@ import {
   updateShot,
   updateSource,
 } from '@anirecast/core';
-import { ffmpeg, probe } from '@anirecast/media';
+import { ffmpeg, probe, rangePsnr } from '@anirecast/media';
 import { FakeProvider, type VideoEditRequest, type VisionRequest } from '@anirecast/providers';
 import { afterAll, describe, expect, it } from 'vitest';
 import { startDaemon } from '../src/index.ts';
@@ -272,5 +272,48 @@ describe('the video director', () => {
     const after = openWorkspace(root, { role: 'cli' });
     expect(getTake(after.db, take.id).params.director).toMatchObject({ fallback: true });
     after.close();
+  }, 120_000);
+
+  it('redoes only some frames of a take and keeps the others exactly', async () => {
+    const { root, shotId } = await setup('part');
+    await withDaemon(
+      root,
+      () => ANSWER,
+      async (asked) => {
+        const cli = openWorkspace(root, { role: 'cli' });
+        const first = queueTake(cli, shotId, 'final', 'user');
+        expect(await waitJob(root, first.job.id)).toBe('succeeded');
+        // The director learns who is on screen when, from the detections.
+        expect(asked[0]!.prompt).toContain('When each person to replace is on screen');
+        expect(asked[0]!.prompt).toContain('「千束」 → "Claude": 0.50–0.50 s (centre, medium)');
+        const kept = getTake(cli.db, first.take.id);
+        expect(() => queueTake(cli, shotId, 'final', 'user', { range: { start: 0, end: 11 } })).toThrow(
+          /needs the take whose other frames are kept/,
+        );
+        expect(() =>
+          queueTake(cli, shotId, 'final', 'user', { range: { start: 0, end: 23 }, keepFrom: kept.id }),
+        ).toThrow(/whole shot/);
+        asked.length = 0;
+        const part = queueTake(cli, shotId, 'final', 'user', {
+          range: { start: 0, end: 11 },
+          keepFrom: kept.id,
+        });
+        expect(await waitJob(root, part.job.id)).toBe('succeeded');
+        // The director watched only the part and saw the kept frame it must flow into.
+        expect(asked[0]!.prompt).toContain('ONLY frames 0–11');
+        expect(asked[0]!.prompt).toContain('already made: frame 12 of the finished shot');
+        const done = getTake(cli.db, part.take.id);
+        cli.close();
+        expect(done.params).toMatchObject({ range: { start: 0, end: 11 }, keepFrom: kept.id });
+        expect(await probe(path.join(root, done.path!), { countFrames: true })).toMatchObject({
+          frameCount: 24,
+        });
+        // Frames 12–23 are the kept take's own; frames 0–11 are new.
+        expect(
+          await rangePsnr(path.join(root, kept.path!), path.join(root, done.path!), { from: 12, count: 12 }),
+        ).toBeGreaterThan(40);
+        expect(done.conform).toMatchObject({ range: { start: 0, end: 11 }, kept: { from: kept.id } });
+      },
+    );
   }, 120_000);
 });

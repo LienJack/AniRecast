@@ -6,6 +6,7 @@ import {
   type Board,
   boardFileStem,
   designDir,
+  type FrameRange,
   findActiveClip,
   getBoard,
   getDesign,
@@ -60,6 +61,7 @@ import type { JobContext, JobHandler } from '../runner.ts';
 import { finishBoardBatch, followUpKeyBoard } from './board-batch.ts';
 import { directBoard, directTake } from './director.ts';
 import { metered } from './metered.ts';
+import { cutPart, splicePart } from './take-part.ts';
 import { outPath, span } from './util.ts';
 
 /** Remote uploads expire after ~48 h; reuse one only while it is comfortably fresh. */
@@ -350,7 +352,12 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
     if (!clip || clip.id !== shot.clipId)
       throw new AniError('conflict', 'Shot does not belong to the active clip');
     const spec = videoModelSpec(take.model);
-    const seconds = (shot.frameCount * clip.fpsDen) / clip.fpsNum;
+    // A partial take redoes only some frames; the others come from the kept take.
+    const range = take.params.range as FrameRange | undefined;
+    const keep = range ? getTake(ws.db, take.params.keepFrom as string) : undefined;
+    if (range && !keep?.path) throw new AniError('conflict', 'The take to keep frames from has no video');
+    const frames = range ? range.end - range.start + 1 : shot.frameCount;
+    const seconds = (frames * clip.fpsDen) / clip.fpsNum;
     const maxSeconds = Math.min(spec.maxSeconds, OMNI_MAX_SECONDS);
     if (seconds > maxSeconds) {
       throw new AniError(
@@ -370,6 +377,17 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
         `Shot ${shot.orderIndex + 1}'s source segment is damaged: it decodes ${decoded} of ${shot.frameCount} frames`,
         { hint: `Cut it again from the clip: anirecast shots prepare ${shot.id}` },
       );
+    const part =
+      range && keep?.path
+        ? await cutPart(ctx, {
+            shot,
+            clip,
+            range,
+            keepPath: keep.path,
+            dir: `${projectCacheDir(project)}/takes`,
+            stem: take.id,
+          })
+        : undefined;
     // The director watches the shot and writes the instruction and the references (composites where needed);
     // the planned template stays when it fails. A retry, or a revision with the same model, reuses its decision.
     let directorUsd = 0;
@@ -384,6 +402,7 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
           outDir: `${shotDir(project, shot.id)}/takes`,
           stem: takeFileStem(take.version),
           attachments: (take.params.attachments as string[] | undefined) ?? [],
+          ...(part ? { part } : {}),
         });
         directorUsd = d.record.costUsd;
         take = updateTake(
@@ -424,20 +443,26 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
       ctx,
       estimateVideoEditCost(take.model, uploadSeconds(spec, seconds), resolution, refs.length, uploadHeight),
     );
-    updateTake(ws.db, takeId, { status: 'generating', framesIn: shot.frameCount }, 'daemon');
+    updateTake(ws.db, takeId, { status: 'generating', framesIn: frames }, 'daemon');
 
     const cache = projectCacheDir(project);
     const fpsTag = uploadFps ? `-fps${uploadFps}` : '';
-    const uploadRel = `${cache}/uploads/${shot.id}-${uploadHeight}p-step${spec.frameStep}-min${minFrames}${fpsTag}.mp4`;
+    const partTag = range ? `-f${range.start}-${range.end}` : '';
+    const uploadRel = `${cache}/uploads/${shot.id}${partTag}-${uploadHeight}p-step${spec.frameStep}-min${minFrames}${fpsTag}.mp4`;
     progress(0.05, 'preparing upload');
-    const upload = await scaleForUpload(ws.abs(video.path), outPath(ws, uploadRel), uploadHeight, {
-      signal,
-      frameStep: spec.frameStep,
-      minFrames,
-      ...(uploadFps ? { fps: uploadFps } : {}),
-    });
+    const upload = await scaleForUpload(
+      ws.abs(part?.video ?? video.path),
+      outPath(ws, uploadRel),
+      uploadHeight,
+      {
+        signal,
+        frameStep: spec.frameStep,
+        minFrames,
+        ...(uploadFps ? { fps: uploadFps } : {}),
+      },
+    );
     const uploadedSeconds = (upload.frames + upload.padded) / uploadRate;
-    const uploadSha = `${video.sha256 ?? ''}:${uploadHeight}:step${spec.frameStep}:min${minFrames}${fpsTag}`;
+    const uploadSha = `${video.sha256 ?? ''}${partTag}:${uploadHeight}:step${spec.frameStep}:min${minFrames}${fpsTag}`;
     const cachedFileUri = reusableUpload(ws, take, uploadSha);
 
     // A retry after the paid request went through (download, conform …) reuses what the model made: one video,
@@ -478,24 +503,41 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
     progress(0.8, 'conforming');
     const size = TIER_SIZE[take.tier];
     const outRel = `${shotDir(project, shot.id)}/takes/${stem}.mp4`;
+    // A partial take is conformed to its part, then put in place of those frames of the kept take.
+    const conformedRel = range ? `${cache}/takes/${shot.id}-${take.id}.part-out.mp4` : outRel;
     let conform: Awaited<ReturnType<typeof conformTake>> | Awaited<ReturnType<typeof conformByTime>>;
+    let kept: { from: string; psnrDb: number[] } | undefined;
     try {
-      const base = { frames: shot.frameCount, fpsNum: clip.fpsNum, fpsDen: clip.fpsDen, ...size };
+      const base = { frames, fpsNum: clip.fpsNum, fpsDen: clip.fpsDen, ...size };
       // Frame-exact models (Omni) are conformed by count; the others by time, padding cut off.
       conform =
         spec.timing === 'frames'
           ? await conformTake(
               ws.abs(rawRel),
-              outPath(ws, outRel),
+              outPath(ws, conformedRel),
               { ...base, endTolerance: Math.max(OMNI_END_TOLERANCE, upload.padded) },
               { signal },
             )
           : await conformByTime(
               ws.abs(rawRel),
-              outPath(ws, outRel),
+              outPath(ws, conformedRel),
               { ...base, inputSeconds: uploadedSeconds },
               { signal },
             );
+      if (range && keep?.path) {
+        progress(0.85, 'putting the new part into the kept take');
+        kept = {
+          from: keep.id,
+          psnrDb: await splicePart(ctx, {
+            keepPath: keep.path,
+            partPath: conformedRel,
+            outRel,
+            range,
+            shot,
+            clip,
+          }),
+        };
+      }
     } catch (error) {
       updateTake(
         ws.db,
@@ -536,6 +578,7 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
       costUsd: result.costUsd + directorUsd,
       remote: { interactionId: result.remote.interactionId },
       conform,
+      ...(kept ? { range, kept } : {}),
       createdBy: take.createdBy,
       generatedAt: new Date().toISOString(),
     });
@@ -548,7 +591,7 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
         costUsd: result.costUsd + directorUsd,
         remote: { ...remote, comparePath: compareRel },
         framesOut: conform.framesOut,
-        conform: { ...conform },
+        conform: { ...conform, ...(kept ? { range, kept } : {}) },
         error: null,
       },
       'daemon',
@@ -774,21 +817,34 @@ export const planTakeHandler: JobHandler = async (ctx) => {
     model: chosen,
     extra,
     attachments,
+    range,
+    keepFrom,
   } = job.payload as {
     shotId: string;
     model?: string;
     extra?: string;
     attachments?: string[];
+    range?: FrameRange;
+    keepFrom?: string;
   };
   const project = projectOfShot(ws.db, shotId);
   const model = chosen ?? projectModels(ws.db, project.id).video;
+  const outDir = `${projectCacheDir(project)}/take-plan/${job.id}`;
+  const shot = getShot(ws.db, shotId);
+  const clip = findActiveClip(ws.db, project.id);
+  const keep = keepFrom ? getTake(ws.db, keepFrom) : undefined;
+  const part =
+    range && keep?.path && clip
+      ? await cutPart(ctx, { shot, clip, range, keepPath: keep.path, dir: outDir, stem: 'plan' })
+      : undefined;
   const d = await directTake(ctx, {
     shotId,
     model,
     extra: extra?.trim() || null,
-    outDir: `${projectCacheDir(project)}/take-plan/${job.id}`,
+    outDir,
     stem: 'plan',
     attachments: attachments ?? [],
+    ...(part ? { part } : {}),
   });
   return {
     result: { model, prompt: d.prompt, inputs: d.inputs, director: d.record },

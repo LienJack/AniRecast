@@ -113,6 +113,20 @@ const attachOpt = (files: string[] | undefined): { attachments?: string[] } =>
       }
     : {};
 
+/** `--range 0-73` → frames 0 to 73 of the shot (0 = its first frame), with the take whose other frames stay. */
+function rangeOpt(
+  range: string | undefined,
+  keep: string | undefined,
+): { range?: { start: number; end: number }; keepFrom?: string } {
+  if (!range) {
+    if (keep) throw new AniError('usage', '--keep goes with --range');
+    return {};
+  }
+  const m = /^(\d+)-(\d+)$/.exec(range.trim());
+  if (!m) throw new AniError('usage', '--range is the first and last frame of the shot, e.g. 0-73');
+  return { range: { start: Number(m[1]), end: Number(m[2]) }, ...(keep ? { keepFrom: keep } : {}) };
+}
+
 const boardRole = (role: string): BoardRole => {
   if (!BOARD_ROLES.includes(role as BoardRole))
     throw new AniError('usage', `--role must be one of ${BOARD_ROLES.join(', ')}`);
@@ -498,6 +512,11 @@ export function registerGenerate(program: Command): void {
       '--model <id>',
       'video model for this request (default: the project choice; see `project models`)',
     )
+    .option(
+      '--range <first-last>',
+      "redo only these frames of the shot (0 = its first, e.g. 0-73); the others are kept from --keep's take",
+    )
+    .option('--keep <takeId>', 'with --range: the take whose other frames stay as they are')
     .option('--wait', 'wait for generation')
     .action(
       command(
@@ -514,10 +533,15 @@ export function registerGenerate(program: Command): void {
             retryBlocked?: boolean;
             model?: string;
             attach?: string[];
+            range?: string;
+            keep?: string;
             wait?: boolean;
           },
         ) =>
           withWorkspace(globals(), async (ws) => {
+            const part = rangeOpt(opts.range, opts.keep);
+            if (part.range && (opts.all || shotIds.length !== 1))
+              throw new AniError('usage', '--range is for one shot at a time');
             const project = getProject(ws.db, projectRef);
             const model = opts.model ?? projectModels(ws.db, project.id).video;
             // Revising a take stays on that take's tier unless told otherwise.
@@ -551,6 +575,7 @@ export function registerGenerate(program: Command): void {
                 retryBlocked: Boolean(opts.retryBlocked),
                 model,
                 ...attachOpt(opts.attach),
+                ...part,
               }),
             );
             return {
@@ -577,19 +602,33 @@ export function registerGenerate(program: Command): void {
       '--attach <files...>',
       'images to give with the instructions (an attached image path or any image file)',
     )
+    .option('--range <first-last>', 'plan only these frames of the shot (with --keep, as `take generate`)')
+    .option('--keep <takeId>', 'with --range: the take whose other frames stay as they are')
     .option('--wait')
     .action(
-      command((shotId: string, opts: { model?: string; extra?: string; attach?: string[]; wait?: boolean }) =>
-        withWorkspace(globals(), async (ws) => {
-          const job = queueTakePlan(ws, shotId, actorFromEnv(), {
-            ...attachOpt(opts.attach),
-            ...(opts.model ? { model: opts.model } : {}),
-            ...(opts.extra ? { extra: opts.extra } : {}),
-          });
-          if (!opts.wait) return { job };
-          await waitAll(ws, [job.id], true);
-          return { plan: latestShotJob(ws, shotId, 'take.plan') };
-        }),
+      command(
+        (
+          shotId: string,
+          opts: {
+            model?: string;
+            extra?: string;
+            attach?: string[];
+            range?: string;
+            keep?: string;
+            wait?: boolean;
+          },
+        ) =>
+          withWorkspace(globals(), async (ws) => {
+            const job = queueTakePlan(ws, shotId, actorFromEnv(), {
+              ...attachOpt(opts.attach),
+              ...(opts.model ? { model: opts.model } : {}),
+              ...(opts.extra ? { extra: opts.extra } : {}),
+              ...rangeOpt(opts.range, opts.keep),
+            });
+            if (!opts.wait) return { job };
+            await waitAll(ws, [job.id], true);
+            return { plan: latestShotJob(ws, shotId, 'take.plan') };
+          }),
       ),
     );
   take

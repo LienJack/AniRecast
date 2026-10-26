@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { AniError } from '@anirecast/shared';
+import { exec } from './exec.ts';
 import { type FfmpegRunOptions, ffmpeg } from './ffmpeg.ts';
 import { probe } from './probe.ts';
 
@@ -515,4 +516,98 @@ export async function composeReference(
     [...inputs, '-filter_complex', chains.join(';'), '-map', '[out]', '-frames:v', '1', '-q:v', '3', output],
     opts,
   );
+}
+
+/**
+ * Puts `part` (exactly end − start + 1 frames) in place of frames start–end of `base`, keeping every other frame:
+ * a partial take redoes only what the human rejected.
+ */
+export async function spliceRange(
+  base: string,
+  part: string,
+  output: string,
+  {
+    start,
+    end,
+    frames,
+    fpsNum,
+    fpsDen,
+  }: { start: number; end: number; frames: number; fpsNum: number; fpsDen: number },
+  opts: FfmpegRunOptions = {},
+): Promise<void> {
+  ensureDir(output);
+  const rate = `${fpsNum}/${fpsDen}`;
+  const pieces: string[] = [];
+  const graph: string[] = [];
+  if (start > 0) {
+    graph.push(`[0:v]trim=start_frame=0:end_frame=${start},setpts=PTS-STARTPTS[a]`);
+    pieces.push('[a]');
+  }
+  graph.push(`[1:v]trim=start_frame=0:end_frame=${end - start + 1},setpts=PTS-STARTPTS[b]`);
+  pieces.push('[b]');
+  if (end < frames - 1) {
+    graph.push(`[0:v]trim=start_frame=${end + 1},setpts=PTS-STARTPTS[c]`);
+    pieces.push('[c]');
+  }
+  graph.push(`${pieces.join('')}concat=n=${pieces.length}:v=1:a=0,setsar=1,format=yuv420p[v]`);
+  await ffmpeg(
+    [
+      '-i',
+      base,
+      '-i',
+      part,
+      '-filter_complex',
+      graph.join(';'),
+      '-map',
+      '[v]',
+      '-an',
+      '-fps_mode',
+      'cfr',
+      '-r',
+      rate,
+      '-frames:v',
+      String(frames),
+      '-c:v',
+      'libx264',
+      '-preset',
+      'medium',
+      '-crf',
+      '12',
+      output,
+    ],
+    { ...opts, totalFrames: frames },
+  );
+}
+
+/**
+ * Mean luma PSNR (dB) between frames [from, from + count) of two clips; Infinity when identical. A re-encode of
+ * the same frames scores well above 40, a shifted or different frame far below.
+ */
+export async function rangePsnr(
+  a: string,
+  b: string,
+  { from, count }: { from: number; count: number },
+  opts: FfmpegRunOptions = {},
+): Promise<number> {
+  const trim = `trim=start_frame=${from}:end_frame=${from + count},setpts=PTS-STARTPTS`;
+  const { stderr } = await exec(
+    'ffmpeg',
+    [
+      '-hide_banner',
+      '-nostdin',
+      '-i',
+      a,
+      '-i',
+      b,
+      '-lavfi',
+      `[0:v]${trim}[x];[1:v]${trim}[y];[x][y]psnr`,
+      '-f',
+      'null',
+      '-',
+    ],
+    opts.signal ? { signal: opts.signal } : {},
+  );
+  const m = /PSNR y:(inf|[\d.]+)/.exec(stderr);
+  if (!m) throw new AniError('internal', 'ffmpeg printed no PSNR');
+  return m[1] === 'inf' ? Number.POSITIVE_INFINITY : Number(m[1]);
 }

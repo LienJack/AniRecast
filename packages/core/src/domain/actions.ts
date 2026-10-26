@@ -41,7 +41,7 @@ import { assertSelectableModel, projectModels } from './models.ts';
 import { markShotGenerationStale, recomputeShotModes } from './modes.ts';
 import { listTextOverlays } from './overlays.ts';
 import { getPersona } from './personas.ts';
-import { planBoard, planDesign, planOriginalDesign, planTake, sha256File } from './plan.ts';
+import { type FrameRange, planBoard, planDesign, planOriginalDesign, planTake, sha256File } from './plan.ts';
 import { type GenerationTier, getProject, listProjects } from './projects.ts';
 import { getShot, listKeyframes, listShots, projectOfShot } from './shots.ts';
 import { getSource } from './sources.ts';
@@ -190,11 +190,15 @@ export function queueTake(
     retryBlocked?: boolean;
     model?: string;
     attachments?: string[];
+    /** Redo only these frames of the shot (0 = its first); the others are kept from `keepFrom`. */
+    range?: FrameRange;
+    keepFrom?: string;
   } = {},
 ) {
   const config = loadConfig();
   const projectId = projectOfShot(ws.db, shotId).id;
   const model = opts.model ?? projectModels(ws.db, projectId).video;
+  const part = opts.range ? partialTake(ws, shotId, tier, opts.range, opts.keepFrom) : undefined;
   const attached = checkAttachments(ws, projectId, opts.attachments);
   assertNotBlockedOut(ws.db, config, shotId, opts.retryBlocked);
   if (config.provider !== 'fake' && process.env.ANIRECAST_PROVIDER !== 'fake')
@@ -216,7 +220,7 @@ export function queueTake(
       boardId: plan.boardId,
       prompt: plan.prompt,
       model,
-      params: plan.params,
+      params: part ? { ...plan.params, ...part } : plan.params,
       inputs: plan.inputs,
       parentId: opts.fromTakeId ?? null,
       createdBy: actor,
@@ -232,6 +236,45 @@ export function queueTake(
     maxAttempts: 2,
   });
   return { take, job };
+}
+
+/**
+ * A take that redoes only some frames of a shot and keeps the others from an earlier take (the human approved
+ * most of it): the range must be a real part of the shot, and the kept take a finished video of the same size.
+ */
+function partialTake(
+  ws: Workspace,
+  shotId: string,
+  tier: GenerationTier,
+  range: FrameRange,
+  keepFrom: string | undefined,
+): { range: FrameRange; keepFrom: string } {
+  const shot = getShot(ws.db, shotId);
+  const { start, end } = range;
+  if (
+    !Number.isInteger(start) ||
+    !Number.isInteger(end) ||
+    start < 0 ||
+    end < start ||
+    end >= shot.frameCount
+  )
+    throw new AniError(
+      'usage',
+      `Frames ${start}–${end} are not inside shot ${shot.orderIndex + 1} (0–${shot.frameCount - 1})`,
+    );
+  if (start === 0 && end === shot.frameCount - 1)
+    throw new AniError('usage', 'That is the whole shot: generate it without a range');
+  if (!keepFrom)
+    throw new AniError('usage', 'A range needs the take whose other frames are kept', {
+      hint: 'Pass --keep <take>.',
+    });
+  const keep = getTake(ws.db, keepFrom);
+  if (keep.shotId !== shotId) throw new AniError('usage', `Take ${keepFrom} is not a take of this shot`);
+  if (!keep.path || !['ready', 'approved', 'rejected', 'stale'].includes(keep.status))
+    throw new AniError('conflict', `Take v${keep.version} has no finished video to keep frames from`);
+  if (keep.tier !== tier)
+    throw new AniError('usage', `Take v${keep.version} is ${keep.tier}; the new part must be the same tier`);
+  return { range: { start, end }, keepFrom: keep.id };
 }
 
 /**
@@ -405,12 +448,27 @@ export function queueTakePlan(
   ws: Workspace,
   shotId: string,
   actor: string,
-  opts: { model?: string; extra?: string; attachments?: string[] } = {},
+  opts: {
+    model?: string;
+    extra?: string;
+    attachments?: string[];
+    range?: FrameRange;
+    keepFrom?: string;
+  } = {},
 ) {
   const shot = getShot(ws.db, shotId);
   if (shot.mode !== 'replace')
     throw new AniError('conflict', 'Only a replace shot has a video director plan');
   const attachments = checkAttachments(ws, projectOfShot(ws.db, shot.id).id, opts.attachments);
+  const part = opts.range
+    ? partialTake(
+        ws,
+        shot.id,
+        opts.keepFrom ? getTake(ws.db, opts.keepFrom).tier : 'final',
+        opts.range,
+        opts.keepFrom,
+      )
+    : undefined;
   return enqueueJob(ws.db, {
     type: 'take.plan',
     lane: 'generate',
@@ -420,6 +478,7 @@ export function queueTakePlan(
       ...(opts.model ? { model: opts.model } : {}),
       ...(opts.extra ? { extra: opts.extra } : {}),
       ...(attachments.length ? { attachments } : {}),
+      ...(part ?? {}),
     },
     requestedBy: actor,
     maxAttempts: 1,
