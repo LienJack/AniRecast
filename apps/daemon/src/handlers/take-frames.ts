@@ -105,16 +105,27 @@ export const takeFramesHandler: JobHandler = async (ctx) => {
             estimateImageCost(model, '1K', refs.length + 1),
           );
         try {
-          const result = await metered(ctx, { model, kind: 'image', shotId: shot.id }, () =>
-            services.provider.generateImage({
-              model,
-              prompt: prompt(frame),
-              images: [{ path: src(i), mimeType: 'image/png' }, ...refs],
-              aspectRatio: '16:9',
-              imageSize: '1K',
-              signal,
-            }),
-          );
+          // A dropped connection is retried here (twice, with a pause): one bad frame must not fail the part.
+          const call = () =>
+            metered(ctx, { model, kind: 'image', shotId: shot.id }, () =>
+              services.provider.generateImage({
+                model,
+                prompt: prompt(frame),
+                images: [{ path: src(i), mimeType: 'image/png' }, ...refs],
+                aspectRatio: '16:9',
+                imageSize: '1K',
+                signal,
+              }),
+            );
+          let result: Awaited<ReturnType<typeof call>> | undefined;
+          for (let attempt = 0; !result; attempt++) {
+            try {
+              result = await call();
+            } catch (error) {
+              if (signal.aborted || toEnvelopeError(error).code !== 'transient' || attempt >= 2) throw error;
+              await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
+            }
+          }
           recordCost(ws.db, {
             jobId: job.id,
             projectId: project.id,

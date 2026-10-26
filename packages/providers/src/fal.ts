@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { stat as fsStat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { AniError, isTextOnlyVideoModel } from '@anirecast/shared';
 import type {
@@ -134,7 +134,31 @@ export class FalProvider implements Provider {
     return { authorization: `Key ${this.#key}` };
   }
 
+  /** Files already on fal's CDN this run (path, size and mtime → URL): design sheets go up once, not per frame. */
+  readonly #uploaded = new Map<string, string>();
+
+  /** Uploads several files, at most four at a time (dozens at once broke fal's HTTP/2 streams). */
+  async #uploadAll(media: LocalMedia[], signal?: AbortSignal): Promise<string[]> {
+    const urls: string[] = new Array(media.length);
+    let next = 0;
+    const worker = async () => {
+      for (let i = next++; i < media.length; i = next++) urls[i] = await this.#upload(media[i]!, signal);
+    };
+    await Promise.all(Array.from({ length: Math.min(4, media.length) }, worker));
+    return urls;
+  }
+
   async #upload(media: LocalMedia, signal?: AbortSignal): Promise<string> {
+    const stat = await fsStat(media.path).catch(() => null);
+    const key = stat ? `${media.path}:${stat.size}:${stat.mtimeMs}` : null;
+    const cached = key ? this.#uploaded.get(key) : undefined;
+    if (cached) return cached;
+    const url = await this.#uploadOnce(media, signal);
+    if (key) this.#uploaded.set(key, url);
+    return url;
+  }
+
+  async #uploadOnce(media: LocalMedia, signal?: AbortSignal): Promise<string> {
     const init = await netFetch(
       STORAGE,
       {
@@ -252,7 +276,7 @@ export class FalProvider implements Provider {
       // One reference per new character, replacing the main people left to right; 5–30 s input.
       if (!req.images.length)
         throw new AniError('usage', 'MiniMax H3 Recast needs a reference image of each new character');
-      const imageUrls = await Promise.all(req.images.slice(0, 4).map((m) => this.#upload(m, req.signal)));
+      const imageUrls = await this.#uploadAll(req.images.slice(0, 4), req.signal);
       input = {
         prompt: plainRefs(req.prompt, (n) => `reference image ${n + 1}`).slice(0, 2000),
         video_url: videoUrl,
@@ -260,7 +284,7 @@ export class FalProvider implements Provider {
         resolution: high ? '1080P' : '768P',
       };
     } else if (family === 'wan-reference') {
-      const imageUrls = await Promise.all(req.images.slice(0, 9).map((m) => this.#upload(m, req.signal)));
+      const imageUrls = await this.#uploadAll(req.images.slice(0, 9), req.signal);
       input = {
         prompt: toWanReferencePrompt(req.prompt),
         reference_video_urls: [videoUrl],
@@ -283,7 +307,7 @@ export class FalProvider implements Provider {
         audio_setting: 'origin',
       };
     } else {
-      const imageUrls = await Promise.all(req.images.map((m) => this.#upload(m, req.signal)));
+      const imageUrls = await this.#uploadAll(req.images, req.signal);
       input = {
         prompt: toSeedancePrompt(req.prompt),
         video_urls: [videoUrl],
@@ -330,7 +354,7 @@ export class FalProvider implements Provider {
       throw new AniError('usage', `fal endpoint ${endpoint} is not set up for reference images`, {
         hint: 'Use fal:openai/gpt-image-2.5/sunburst/edit.',
       });
-    const imageUrls = await Promise.all(req.images.slice(0, 16).map((m) => this.#upload(m, req.signal)));
+    const imageUrls = await this.#uploadAll(req.images.slice(0, 16), req.signal);
     const long = req.imageSize === '1K' ? 1536 : 2048;
     const short = Math.round(((req.imageSize === '1K' ? 1536 : 2048) * 9) / 16 / 16) * 16;
     const image_size =
