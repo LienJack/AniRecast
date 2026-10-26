@@ -6,6 +6,7 @@ import {
   type DirectorBrief,
   type FrameRange,
   findActiveClip,
+  getShot,
   type InputRef,
   projectOfShot,
   recordCost,
@@ -244,11 +245,12 @@ export async function directTake(
   const videoAbs = ws.abs(brief.video);
   // The vision model refuses very short clips ("invalid argument" on a 10-frame part): those go as frames only.
   const clip = findActiveClip(ws.db, projectOfShot(ws.db, input.shotId).id);
-  const partSeconds =
-    input.part && clip
-      ? ((input.part.range.end - input.part.range.start + 1) * clip.fpsDen) / clip.fpsNum
-      : Number.POSITIVE_INFINITY;
-  const withVideo = statSync(videoAbs).size <= INLINE_VIDEO_BYTES && partSeconds >= 1;
+  // Whole shots too: shot 23 is 8 frames, and Codex's preview failed the same way.
+  const frames = input.part
+    ? input.part.range.end - input.part.range.start + 1
+    : getShot(ws.db, input.shotId).frameCount;
+  const clipSeconds = clip ? (frames * clip.fpsDen) / clip.fpsNum : Number.POSITIVE_INFINITY;
+  const withVideo = statSync(videoAbs).size <= INLINE_VIDEO_BYTES && clipSeconds >= 1;
   const media = [
     ...(withVideo
       ? [{ path: videoAbs, mimeType: 'video/mp4', label: 'Video 1: the original shot to edit' }]
