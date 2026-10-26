@@ -91,7 +91,7 @@ describe('selectable models', () => {
     updateProjectSettings(ws.db, projectId, { styleNotes: 'thin brown lines, two-tone cel shading' }, 'user');
     updateShot(ws.db, shotId, { lighting: 'Warm late-afternoon light from the left.' }, 'user');
     const board = planBoard(ws, shotId).prompt;
-    expect(board).toContain("This anime's style: thin brown lines, two-tone cel shading");
+    expect(board).toContain("This anime's style:\nthin brown lines, two-tone cel shading");
     expect(board).toContain('Light and colour of this frame: Warm late-afternoon light from the left.');
     expect(board).toMatch(/never 3D, painterly, semi-realistic or photographic/);
     const take = planTake(ws, shotId, 'draft', { model: H3 }).prompt;

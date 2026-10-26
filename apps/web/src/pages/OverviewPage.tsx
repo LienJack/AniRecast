@@ -125,13 +125,67 @@ function ModelsCard({ projectRef, models }: { projectRef: string; models: Projec
  * 畫風與光影: the notes every design, board and take prompt carries (written here, or read from the clip by the
  * vision model), and how many generated shots know their lighting.
  */
+const BIBLE_FIELDS: Array<[string, string]> = [
+  ['lineArt', '線條'],
+  ['faces', '臉與眼睛'],
+  ['hair', '頭髮'],
+  ['shading', '賽璐璐陰影'],
+  ['colour', '色彩設計'],
+  ['compositing', '撮影效果'],
+  ['backgrounds', '美術背景'],
+  ['motion', '動態'],
+];
+
+/** 畫面風格分析: the style bible, field by field, and the frames chosen as art style references. */
+function StyleBibleView({ bible, refs }: { bible: Record<string, unknown>; refs: string[] }) {
+  const avoid = Array.isArray(bible.avoid) ? (bible.avoid as string[]) : [];
+  return (
+    <div className="flex flex-col gap-2 text-xs">
+      <dl className="grid grid-cols-[5.5rem_1fr] gap-x-3 gap-y-1.5">
+        {BIBLE_FIELDS.filter(([k]) => typeof bible[k] === 'string' && (bible[k] as string).trim()).map(
+          ([k, label]) => (
+            <div key={k} className="contents">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd>{bible[k] as string}</dd>
+            </div>
+          ),
+        )}
+        {avoid.length ? (
+          <div className="contents">
+            <dt className="text-muted-foreground">避免</dt>
+            <dd className="flex flex-wrap gap-1">
+              {avoid.map((a) => (
+                <Tag key={a} tone="danger">
+                  {a}
+                </Tag>
+              ))}
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+      {refs.length ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-muted-foreground">畫風參考幀（會跟著角色參考一起給模型）</span>
+          {refs.map((r) => (
+            <Thumb key={r} src={fileUrl(r)} alt="畫風參考幀" className="h-16 w-28 rounded" zoom />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function StyleCard({
   projectRef,
   notes,
+  bible,
+  refs,
   shots,
 }: {
   projectRef: string;
   notes: string;
+  bible: Record<string, unknown> | null;
+  refs: string[];
   shots: ProjectOverview['shots'];
 }) {
   const [text, setText] = useState(notes);
@@ -152,10 +206,13 @@ function StyleCard({
       <CardHeader>
         <CardTitle>畫風與光影</CardTitle>
         <span className="ml-auto text-muted-foreground text-xs">
-          角色設計、分鏡圖、分鏡視頻的提示詞都會帶上；光影 {lit}/{generated.length} 個分鏡已分析
+          畫面風格分析：角色設計、分鏡圖、分鏡視頻的 AI 導演都照這份還原原片畫風；光影與撮影效果 {lit}/
+          {generated.length} 個分鏡已分析
         </span>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
+        {bible ? <StyleBibleView bible={bible} refs={refs} /> : null}
+        <span className="text-[11px] text-muted-foreground">總結（可以自己補充，會一起給模型）</span>
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -168,7 +225,7 @@ function StyleCard({
             size="sm"
             variant="outline"
             disabled={analyze.isPending}
-            title="視覺模型看 6 張代表幀寫畫風說明，再逐一看換角／去字分鏡的光影（約 USD 0.1）"
+            title="視覺模型看 6 張代表幀和 4 張最近的特寫，寫出畫風聖經（線條、臉與眼睛、陰影、色彩、撮影、背景、動態、避免），挑畫風參考幀；再逐一看換角／去字分鏡的光影與撮影效果（約 USD 0.1）"
             onClick={() => analyze.mutate(lit > 0 && lit === generated.length)}
           >
             <ScanSearchIcon />
@@ -291,7 +348,13 @@ export function OverviewPage() {
           </CardContent>
         </Card>
         <ModelsCard projectRef={ref} models={o.models} />
-        <StyleCard projectRef={ref} notes={String(o.project.settings.styleNotes ?? '')} shots={o.shots} />
+        <StyleCard
+          projectRef={ref}
+          notes={String(o.project.settings.styleNotes ?? '')}
+          bible={(o.project.settings.styleBible as Record<string, unknown> | undefined) ?? null}
+          refs={Array.isArray(o.project.settings.styleRefs) ? (o.project.settings.styleRefs as string[]) : []}
+          shots={o.shots}
+        />
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <Card>

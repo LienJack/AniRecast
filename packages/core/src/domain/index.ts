@@ -20,4 +20,5 @@ export * from './references.ts';
 export * from './shots.ts';
 export * from './signature.ts';
 export * from './sources.ts';
+export * from './style.ts';
 export * from './versions.ts';

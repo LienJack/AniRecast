@@ -19,10 +19,10 @@ import { approvedBoard, type BoardRole, getBoard, getTake, type InputRef } from 
 import { type Bbox, overlaysToRemove, type TextOverlay } from './overlays.ts';
 import { getPersona, type Persona, type PersonaImage } from './personas.ts';
 import type { GenerationTier } from './projects.ts';
-import { getProject } from './projects.ts';
 import { listReferences } from './references.ts';
 import { getShot, type Keyframe, listKeyframes, listShots, projectOfShot, type Shot } from './shots.ts';
 import { placeTracklet, replacementSignature } from './signature.ts';
+import { projectStyleRefs, styleText } from './style.ts';
 
 /** Nano Banana 2.1 accepts at most five character reference images per request. */
 export const MAX_CHARACTER_REFS = 5;
@@ -231,12 +231,12 @@ function styleInstruction(ws: Workspace, shot: Shot, uses: PersonaUse[], medium:
     .map((u) => u.entries.find((e) => e.cast)?.cast?.id)
     .map((id) => (id ? getCastAnalysis(ws.db, id)?.data?.style : undefined))
     .find((s) => s?.trim());
-  const notes = projectStyleNotes(ws, projectId) || castStyle || '';
+  const notes = projectStyleNotes(ws, projectId, medium === 'shot' ? 'video' : 'image') || castStyle || '';
   const who = uses.length > 1 ? 'the new characters' : 'the new character';
   const light = shot.lighting?.trim();
   return [
     `Art style: draw ${who} exactly the way this anime draws its characters — the same line weight and line colour, eye and face construction, cel shading with the same shadow shapes, colour palette, saturation and level of detail as the original ${medium}. Flat 2D anime cel animation; never 3D, painterly, semi-realistic or photographic.`,
-    notes ? `This anime's style: ${notes}` : '',
+    notes ? `This anime's style:\n${notes}` : '',
     light
       ? `Light and colour of this ${medium}: ${light} Light ${who} the same way (light direction and colour, shadow side, rim light, colour grading).`
       : `Light ${who} like the rest of the original ${medium}: same light direction and colour, shadows and colour grading.`,
@@ -406,10 +406,16 @@ export function planTake(
   };
 }
 
-/** A project's style notes (from the style analysis), if any. */
-export function projectStyleNotes(ws: Workspace, projectId: string): string {
-  const notes = getProject(ws.db, projectId).settings.styleNotes;
-  return typeof notes === 'string' ? notes.trim() : '';
+/**
+ * A project's style for prompts: the style bible (畫面風格分析; motion only for video) with the human's notes,
+ * else the notes alone, if any.
+ */
+export function projectStyleNotes(
+  ws: Workspace,
+  projectId: string,
+  medium: 'image' | 'video' = 'image',
+): string {
+  return styleText(ws.db, projectId, medium);
 }
 
 /**
@@ -921,9 +927,14 @@ export function boardBrief(ws: Workspace, boardId: string, maxRefs: number): Dir
   }
   const overlay = overlayInstruction(overlaysToRemove(ws.db, shot.id, shot.removeOtherOverlays));
   if (overlay) facts.push(overlay);
-  const notes = projectStyleNotes(ws, project.id);
-  if (notes) facts.push(`This anime's drawing style: ${notes}`);
-  if (shot.lighting?.trim()) facts.push(`Light and colour of the shot: ${shot.lighting.trim()}`);
+  const notes = projectStyleNotes(ws, project.id, 'image');
+  if (notes) facts.push(`This anime's drawing style (its style bible):\n${notes}`);
+  if (shot.lighting?.trim()) facts.push(`Light, colour and compositing of the shot: ${shot.lighting.trim()}`);
+  for (const ref of projectStyleRefs(ws.db, project.id))
+    reference(
+      'an art style reference: a frame of this anime showing how it draws faces, eyes, line art and shading',
+      ref,
+    );
   const extra = typeof board.params.extra === 'string' ? board.params.extra : null;
   return { facts, images: images.filter((i) => existsSync(ws.abs(i.path))), extra, maxRefs };
 }
@@ -1004,9 +1015,14 @@ export function takeBrief(
   }
   const overlay = overlayInstruction(overlaysToRemove(ws.db, shot.id, shot.removeOtherOverlays));
   if (overlay) facts.push(overlay);
-  const notes = projectStyleNotes(ws, project.id);
-  if (notes) facts.push(`This anime's drawing style: ${notes}`);
-  if (shot.lighting?.trim()) facts.push(`Light and colour of the shot: ${shot.lighting.trim()}`);
+  const notes = projectStyleNotes(ws, project.id, 'video');
+  if (notes) facts.push(`This anime's drawing and animation style (its style bible):\n${notes}`);
+  if (shot.lighting?.trim()) facts.push(`Light, colour and compositing of the shot: ${shot.lighting.trim()}`);
+  for (const ref of projectStyleRefs(ws.db, project.id))
+    reference(
+      'an art style reference: a frame of this anime showing how it draws faces, eyes, line art and shading',
+      ref,
+    );
   return {
     facts,
     images,

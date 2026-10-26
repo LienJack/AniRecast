@@ -12,6 +12,7 @@ import {
   queueStyleAnalysis,
   replaceShots,
   setKeyframes,
+  styleText,
   updateShot,
   updateSource,
 } from '@anirecast/core';
@@ -60,8 +61,20 @@ describe('art style and lighting analysis', () => {
     const provider = new FakeProvider({
       vision: (req) => {
         asked.push(req);
-        return req.prompt.includes('drawing style')
-          ? { style: 'Thin dark lines, two-tone cel shading, soft pastel palette.' }
+        return req.prompt.includes('style bible')
+          ? {
+              summary: 'Thin dark lines, two-tone cel shading, soft pastel palette.',
+              lineArt: 'Thin dark-brown lines, tapered at the ends.',
+              faces: 'Large eyes with two highlights at the top left.',
+              hair: 'Clumped strands with one band of highlight.',
+              shading: 'Two hard-edged tones; shadows shift toward violet.',
+              colour: 'Soft pastels, medium saturation.',
+              compositing: 'Light diffusion glow on highlights.',
+              backgrounds: 'Painted, detailed, slightly blurred.',
+              motion: 'Drawn on twos.',
+              avoid: ['3D render', 'smooth CG skin'],
+              styleReferences: [1],
+            }
           : { lighting: 'Soft daylight from the upper left, cool shadows.' };
       },
     });
@@ -84,9 +97,17 @@ describe('art style and lighting analysis', () => {
         }
         await new Promise((r) => setTimeout(r, 100));
       }
-      expect(getProject(cli.db, project.id).settings.styleNotes).toBe(
-        'Thin dark lines, two-tone cel shading, soft pastel palette.',
-      );
+      const settings = getProject(cli.db, project.id).settings;
+      expect(settings.styleNotes).toBe('Thin dark lines, two-tone cel shading, soft pastel palette.');
+      expect(settings.styleBible).toMatchObject({ faces: 'Large eyes with two highlights at the top left.' });
+      // The frame the analyser named becomes the art style reference.
+      expect(settings.styleRefs).toEqual(['projects/op/kf0.jpg']);
+      // Prompts get the bible field by field; motion only for video.
+      const image = styleText(cli.db, project.id, 'image');
+      expect(image).toContain('Faces and eyes: Large eyes with two highlights at the top left.');
+      expect(image).toContain('Never: 3D render; smooth CG skin.');
+      expect(image).not.toContain('Drawn on twos');
+      expect(styleText(cli.db, project.id, 'video')).toContain('Motion: Drawn on twos.');
       // Only the replace shot was missing lighting; the kept shot is not generated, the clean one had it.
       expect(getShot(cli.db, shots[0]!.id).lighting).toBe('Soft daylight from the upper left, cool shadows.');
       expect(getShot(cli.db, shots[1]!.id).lighting).toBeNull();
