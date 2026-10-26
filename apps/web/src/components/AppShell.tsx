@@ -231,7 +231,7 @@ export function AppShell() {
 function StepFooter({ projectRef }: { projectRef: string }) {
   const { pathname } = useLocation();
   const step = stepOfPath(pathname);
-  const isDetail = /^\/projects\/[^/]+\/(review|cast)\/[^/]+/.test(pathname);
+  const isDetail = /^\/projects\/[^/]+\/(review|cast|shots)\/[^/]+/.test(pathname);
   if (!step || isDetail) return null;
   const i = STEPS.findIndex((s) => s.id === step);
   const prev = STEPS[i - 1];

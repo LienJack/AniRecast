@@ -1,16 +1,6 @@
 import { Link, useParams } from '@tanstack/react-router';
-import {
-  AlertTriangleIcon,
-  ClapperboardIcon,
-  CombineIcon,
-  FrameIcon,
-  ScanSearchIcon,
-  ScissorsIcon,
-  Trash2Icon,
-  TypeIcon,
-  UsersRoundIcon,
-} from 'lucide-react';
-import { useId, useState } from 'react';
+import { AlertTriangleIcon, ScanSearchIcon, TypeIcon, UsersRoundIcon } from 'lucide-react';
+import { useState } from 'react';
 import {
   ConfirmDialog,
   EmptyState,
@@ -22,7 +12,6 @@ import {
   Thumb,
 } from '@/components/common';
 import { FrameWithOverlays, ModeBadge, StageBadge } from '@/components/domain';
-import { FramePlayer } from '@/components/FramePlayer';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import {
@@ -38,105 +27,13 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { api, fileUrl } from '@/lib/api';
-import { formatTimecode } from '@/lib/format';
 import { MODE_LABEL, OMNI_MAX_SECONDS, OVERLAY_CATEGORIES, OVERLAY_LABEL, SHOT_MODES } from '@/lib/labels';
 import { qk, useAction, useOverview, useShot } from '@/lib/queries';
-import type { Clip, OverlayCategory, OverviewShot, ShotMode } from '@/lib/types';
+import type { OverlayCategory, OverviewShot } from '@/lib/types';
+import { cn } from '@/lib/utils';
 
-type FrameDialog = { kind: 'split' | 'rep'; shot: OverviewShot } | null;
-
-function ShotFrameDialog({
-  state,
-  clip,
-  projectRef,
-  onClose,
-}: {
-  state: NonNullable<FrameDialog>;
-  clip: Clip;
-  projectRef: string;
-  onClose: () => void;
-}) {
-  const { kind, shot } = state;
-  const fps = { num: clip.fpsNum, den: clip.fpsDen };
-  const initial = kind === 'rep' ? shot.repFrame : Math.floor((shot.startFrame + shot.endFrame + 1) / 2);
-  const [frame, setFrame] = useState(initial);
-  // A shot with generated versions is split after deleting them (files go to trash/), as the button says.
-  const split = useAction(
-    async (at: number) => {
-      if (shot.versions > 0) await api.post(`/api/shots/${shot.id}/discard-versions`);
-      return api.post(`/api/shots/${shot.id}/split`, { at });
-    },
-    {
-      success: '已拆分，正在重建兩個分鏡的關鍵幀',
-      invalidate: [qk.overview(projectRef), ['shot']],
-      onSuccess: onClose,
-    },
-  );
-  const rep = useAction((repFrame: number) => api.patch(`/api/shots/${shot.id}`, { repFrame }), {
-    success: '已更新代表幀',
-    onSuccess: onClose,
-  });
-  const splitValid = frame > shot.startFrame && frame <= shot.endFrame;
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>
-            {kind === 'split' ? '拆分' : '改選代表幀'} · 分鏡 #{shot.orderIndex + 1}
-          </DialogTitle>
-          <DialogDescription>
-            {kind === 'split'
-              ? '移到新分鏡的第一幀後按「在這一幀切開」。這一幀會成為後半段的開頭。'
-              : '代表幀用來生成分鏡圖。移到想要的那一幀後確認。'}
-            範圍 f {shot.startFrame}–{shot.endFrame}。
-          </DialogDescription>
-        </DialogHeader>
-        {clip.proxyPath ? (
-          <FramePlayer
-            src={fileUrl(clip.proxyPath) ?? ''}
-            fps={fps}
-            totalFrames={clip.frameCount}
-            range={[shot.startFrame, shot.endFrame]}
-            initialFrame={initial}
-            onFrame={setFrame}
-          />
-        ) : (
-          <ErrorState error={new Error('節選的代理檔還沒產生')} className="m-0" />
-        )}
-        <DialogFooter className="items-center">
-          <span className="mr-auto font-mono text-muted-foreground text-xs">
-            目前 f {frame}（{formatTimecode(frame, fps)}）
-          </span>
-          <Button variant="ghost" onClick={onClose}>
-            取消
-          </Button>
-          {kind === 'split' ? (
-            <Button
-              variant={shot.versions > 0 ? 'destructive' : 'default'}
-              disabled={!splitValid || split.isPending}
-              title={
-                shot.versions > 0
-                  ? `先刪除這個分鏡的 ${shot.versions} 個生成版本（檔案移到 trash/，可找回），再切開`
-                  : undefined
-              }
-              onClick={() => split.mutate(frame)}
-            >
-              <ScissorsIcon />
-              {shot.versions > 0 ? `刪除 ${shot.versions} 個舊版本並在這一幀切開` : '在這一幀切開'}
-            </Button>
-          ) : (
-            <Button disabled={rep.isPending} onClick={() => rep.mutate(frame)}>
-              <FrameIcon />
-              設為代表幀
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function OverlayPanel({ shotId }: { shotId: string }) {
+/** Subtitles of one shot: what each overlaid text is and whether it is removed (used on the shot edit page). */
+export function OverlayPanel({ shotId }: { shotId: string }) {
   const detail = useShot(shotId);
   const update = useAction(
     (v: { id: string; remove?: boolean; category?: OverlayCategory }) =>
@@ -190,164 +87,66 @@ function OverlayPanel({ shotId }: { shotId: string }) {
   );
 }
 
-function ShotCard({
-  shot,
-  next,
-  projectRef,
-  onFrameDialog,
-  onMerge,
-}: {
-  shot: OverviewShot;
-  next: OverviewShot | undefined;
-  projectRef: string;
-  onFrameDialog: (kind: 'split' | 'rep') => void;
-  onMerge: () => void;
-}) {
-  const [showOverlays, setShowOverlays] = useState(false);
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
-  const discard = useAction(
-    () =>
-      api.post<{ boards: number; takes: number; trash: string | null }>(
-        `/api/shots/${shot.id}/discard-versions`,
-      ),
-    {
-      success: (r) =>
-        `已刪除分鏡圖 ${r.boards} 張、分鏡視頻 ${r.takes} 個（檔案移到 ${r.trash ?? 'trash/'}）`,
-      invalidate: [['project'], ['shot']],
-      onSuccess: () => setConfirmDiscard(false),
-    },
-  );
-  const switchId = useId();
-  const setMode = useAction((mode: ShotMode) => api.patch(`/api/shots/${shot.id}`, { mode }), {
-    success: (_r, mode) => `分鏡 #${shot.orderIndex + 1} 改為${MODE_LABEL[mode]}`,
-  });
-  const setOther = useAction(
-    (removeOtherOverlays: boolean) => api.patch(`/api/shots/${shot.id}`, { removeOtherOverlays }),
-    { success: '已更新' },
-  );
+/** A shot in the list: picture and facts only; opening it leads to the shot edit page with every action. */
+function ShotCard({ shot, projectRef }: { shot: OverviewShot; projectRef: string }) {
   const long = (shot.seconds ?? 0) > OMNI_MAX_SECONDS;
   return (
-    <Card className={shot.mode === 'exclude' ? 'opacity-60' : undefined}>
-      <div className="relative">
-        <Thumb
-          src={fileUrl(shot.thumb)}
-          alt={`分鏡 ${shot.orderIndex + 1}`}
-          className="aspect-video w-full rounded-t-lg"
-          zoom
-        />
-        <span className="absolute top-1.5 left-1.5 rounded bg-black/70 px-1.5 font-mono text-xs">
-          #{shot.orderIndex + 1}
-        </span>
-        <span className="absolute right-1.5 bottom-1.5 rounded bg-black/70 px-1.5 font-mono text-[11px]">
-          {shot.seconds?.toFixed(2)} 秒
-        </span>
-        {long ? (
-          <span
-            className="absolute top-1.5 right-1.5 flex items-center gap-1 rounded bg-amber-500/90 px-1.5 text-[11px] text-black"
-            title="超過 Omni 的 10 秒上限，生成時會拆成多段"
-          >
-            <AlertTriangleIcon className="size-3" />
-            &gt;10 秒
-          </span>
-        ) : null}
-      </div>
-      <div className="flex flex-col gap-2 p-2.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <ModeBadge mode={shot.mode} />
-          {shot.modeSource === 'user' ? <Tag tone="muted">手動</Tag> : null}
-          <StageBadge stage={shot.stage} />
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground text-xs">
-          <span className="font-mono">
-            f {shot.startFrame}–{shot.endFrame}（{shot.frameCount}）
-          </span>
-          <span className="flex items-center gap-1" title="出場角色數">
-            <UsersRoundIcon className="size-3" />
-            {shot.castCount}
-          </span>
-          <span className="flex items-center gap-1" title="疊加字幕數">
-            <TypeIcon className="size-3" />
-            {shot.overlays}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Select value={shot.mode} onValueChange={(v) => setMode.mutate(v as ShotMode)}>
-            <SelectTrigger size="sm" className="flex-1" aria-label="處理方式">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {SHOT_MODES.map((m) => (
-                <SelectItem key={m} value={m}>
-                  {MODE_LABEL[m]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button asChild size="sm" variant="outline">
-            <Link to="/projects/$ref/review/$shotId" params={{ ref: projectRef, shotId: shot.id }}>
-              <ClapperboardIcon />
-              評審
-            </Link>
-          </Button>
-        </div>
-        <div className="flex items-center gap-2">
-          <Switch
-            id={switchId}
-            checked={shot.removeOtherOverlays}
-            onCheckedChange={(v) => setOther.mutate(v)}
+    <Link
+      to="/projects/$ref/shots/$shotId"
+      params={{ ref: projectRef, shotId: shot.id }}
+      className="group block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      title="打開分鏡：播放、拆開、合併、處理方式、字幕"
+    >
+      <Card
+        className={cn(
+          'overflow-hidden transition-colors group-hover:border-foreground/40',
+          shot.mode === 'exclude' && 'opacity-60',
+        )}
+      >
+        <div className="relative">
+          <Thumb
+            src={fileUrl(shot.thumb)}
+            alt={`分鏡 ${shot.orderIndex + 1}`}
+            className="aspect-video w-full"
           />
-          <Label htmlFor={switchId} className="text-[11px]">
-            連片名與其他疊字一起去掉
-          </Label>
-        </div>
-        <div className="flex flex-wrap gap-1">
-          <Button size="sm" variant="ghost" onClick={() => onFrameDialog('split')}>
-            <ScissorsIcon />
-            拆分
-          </Button>
-          <Button size="sm" variant="ghost" disabled={!next} onClick={onMerge}>
-            <CombineIcon />
-            與下一鏡合併
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => onFrameDialog('rep')}>
-            <FrameIcon />
-            代表幀 f {shot.repFrame}
-          </Button>
-          <Button
-            size="sm"
-            variant={showOverlays ? 'secondary' : 'ghost'}
-            aria-expanded={showOverlays}
-            onClick={() => setShowOverlays((v) => !v)}
-          >
-            <TypeIcon />
-            字幕
-          </Button>
-          {shot.versions > 0 ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="text-red-300 hover:text-red-200"
-              title="刪除這個分鏡的所有分鏡圖和分鏡視頻，之後就能自由拆分、合併"
-              onClick={() => setConfirmDiscard(true)}
+          <span className="absolute top-1.5 left-1.5 rounded bg-black/70 px-1.5 font-mono text-xs">
+            #{shot.orderIndex + 1}
+          </span>
+          <span className="absolute right-1.5 bottom-1.5 rounded bg-black/70 px-1.5 font-mono text-[11px]">
+            {shot.seconds?.toFixed(2)} 秒
+          </span>
+          {long ? (
+            <span
+              className="absolute top-1.5 right-1.5 flex items-center gap-1 rounded bg-amber-500/90 px-1.5 text-[11px] text-black"
+              title="超過 10 秒，生成前要拆開"
             >
-              <Trash2Icon />
-              刪除舊版本（{shot.versions}）
-            </Button>
+              <AlertTriangleIcon className="size-3" />
+              &gt;10 秒
+            </span>
           ) : null}
         </div>
-        {showOverlays ? <OverlayPanel shotId={shot.id} /> : null}
-        <ConfirmDialog
-          open={confirmDiscard}
-          onOpenChange={setConfirmDiscard}
-          title={`刪除分鏡 #${shot.orderIndex + 1} 的 ${shot.versions} 個生成版本？`}
-          description="這個分鏡的所有分鏡圖和分鏡視頻（包括已通過的）都會刪除，評審紀錄一起刪掉，相關的 Codex 任務會取消。檔案和紀錄會移到 Workspace 的 trash/versions/ 資料夾，需要時可以找回。刪除後這個分鏡就能自由拆分、合併，之後要重新生成。"
-          confirmLabel="刪除舊版本"
-          destructive
-          pending={discard.isPending}
-          onConfirm={() => discard.mutate(undefined)}
-        />
-      </div>
-    </Card>
+        <div className="flex flex-col gap-1.5 p-2.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <ModeBadge mode={shot.mode} />
+            {shot.mode === 'keep' || shot.mode === 'exclude' ? null : <StageBadge stage={shot.stage} />}
+            {shot.versions > 0 ? <Tag tone="muted">{shot.versions} 個版本</Tag> : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground text-xs">
+            <span className="font-mono">
+              f {shot.startFrame}–{shot.endFrame}（{shot.frameCount}）
+            </span>
+            <span className="flex items-center gap-1" title="出場角色數">
+              <UsersRoundIcon className="size-3" />
+              {shot.castCount}
+            </span>
+            <span className="flex items-center gap-1" title="疊加字幕數">
+              <TypeIcon className="size-3" />
+              {shot.overlays}
+            </span>
+          </div>
+        </div>
+      </Card>
+    </Link>
   );
 }
 
@@ -406,8 +205,6 @@ function DetectDialog({ projectRef, onClose }: { projectRef: string; onClose: ()
 export function ShotsPage() {
   const { ref } = useParams({ from: '/projects/$ref' });
   const overview = useOverview(ref);
-  const [frameDialog, setFrameDialog] = useState<FrameDialog>(null);
-  const [merge, setMerge] = useState<[OverviewShot, OverviewShot] | null>(null);
   const [detectOpen, setDetectOpen] = useState(false);
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
   const analyze = useAction(() => api.post(`/api/projects/${encodeURIComponent(ref)}/shots/analyze`), {
@@ -415,15 +212,6 @@ export function ShotsPage() {
     invalidate: [qk.jobs],
     onSuccess: () => setAnalyzeOpen(false),
   });
-  const mergeAction = useAction(
-    async (pair: [OverviewShot, OverviewShot]) => {
-      // Shots with generated versions are merged after deleting them (the dialog says so).
-      for (const s of pair) if (s.versions > 0) await api.post(`/api/shots/${s.id}/discard-versions`);
-      return api.post('/api/shots/merge', { first: pair[0].id, second: pair[1].id });
-    },
-    { success: '已合併', onSuccess: () => setMerge(null) },
-  );
-  const mergeVersions = merge ? merge[0].versions + merge[1].versions : 0;
   if (overview.isPending) return <Loading />;
   if (overview.isError) return <ErrorState error={overview.error} />;
   const { shots, clip } = overview.data;
@@ -476,30 +264,11 @@ export function ShotsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3 p-5">
-          {shots.map((s, i) => (
-            <ShotCard
-              key={s.id}
-              shot={s}
-              next={shots[i + 1]}
-              projectRef={ref}
-              onFrameDialog={(kind) => setFrameDialog({ kind, shot: s })}
-              onMerge={() => {
-                const n = shots[i + 1];
-                if (n) setMerge([s, n]);
-              }}
-            />
+          {shots.map((s) => (
+            <ShotCard key={s.id} shot={s} projectRef={ref} />
           ))}
         </div>
       )}
-      {frameDialog && clip ? (
-        <ShotFrameDialog
-          key={`${frameDialog.kind}-${frameDialog.shot.id}`}
-          state={frameDialog}
-          clip={clip}
-          projectRef={ref}
-          onClose={() => setFrameDialog(null)}
-        />
-      ) : null}
       {detectOpen ? <DetectDialog projectRef={ref} onClose={() => setDetectOpen(false)} /> : null}
       <ConfirmDialog
         open={analyzeOpen}
@@ -509,20 +278,6 @@ export function ShotsPage() {
         confirmLabel="開始分析"
         pending={analyze.isPending}
         onConfirm={() => analyze.mutate(undefined)}
-      />
-      <ConfirmDialog
-        open={Boolean(merge)}
-        onOpenChange={(o) => !o && setMerge(null)}
-        title={merge ? `合併分鏡 #${merge[0].orderIndex + 1} 和 #${merge[1].orderIndex + 1}？` : ''}
-        description={
-          mergeVersions > 0
-            ? `兩個相鄰分鏡會合成一個，關鍵幀會重新產生。它們共有 ${mergeVersions} 個生成版本，合併前會先刪除（檔案移到 trash/versions/，可找回），之後要重新生成。`
-            : '兩個相鄰分鏡會合成一個，關鍵幀會重新產生。'
-        }
-        confirmLabel={mergeVersions > 0 ? `刪除 ${mergeVersions} 個舊版本並合併` : '合併'}
-        destructive={mergeVersions > 0}
-        pending={mergeAction.isPending}
-        onConfirm={() => merge && mergeAction.mutate(merge)}
       />
     </div>
   );

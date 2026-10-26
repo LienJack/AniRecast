@@ -21,6 +21,7 @@ const page = {
   overview: lazyRouteComponent(() => import('@/pages/OverviewPage'), 'OverviewPage'),
   clip: lazyRouteComponent(() => import('@/pages/ClipPage'), 'ClipPage'),
   shots: lazyRouteComponent(() => import('@/pages/ShotsPage'), 'ShotsPage'),
+  shotEdit: lazyRouteComponent(() => import('@/pages/ShotEditPage'), 'ShotEditPage'),
   cast: lazyRouteComponent(() => import('@/pages/CastPage'), 'CastPage'),
   castDetail: lazyRouteComponent(() => import('@/pages/CastPage'), 'CastDetailPage'),
   design: lazyRouteComponent(() => import('@/pages/DesignPage'), 'DesignPage'),
@@ -101,6 +102,11 @@ const projectTasksRoute = createRoute({
 });
 const clipRoute = createRoute({ getParentRoute: () => projectRoute, path: 'clip', component: page.clip });
 const shotsRoute = createRoute({ getParentRoute: () => projectRoute, path: 'shots', component: page.shots });
+const shotEditRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'shots/$shotId',
+  component: page.shotEdit,
+});
 const castRoute = createRoute({ getParentRoute: () => projectRoute, path: 'cast', component: page.cast });
 const castDetailRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -148,6 +154,7 @@ const routeTree = rootRoute.addChildren([
     sourceRoute,
     clipRoute,
     shotsRoute,
+    shotEditRoute,
     castRoute,
     castDetailRoute,
     designRoute,
