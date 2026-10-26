@@ -35,6 +35,7 @@ import {
 } from '@/components/domain';
 import { Generating, ShimmerText, useActiveJob } from '@/components/generating';
 import { ShotCastEditor } from '@/components/shot-cast';
+import { TakeVersions } from '@/components/take-versions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -579,6 +580,11 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                 ) : null}
               </CardHeader>
               <CardContent>
+                <TakeVersions
+                  takes={d.takes}
+                  current={take}
+                  onSelect={(id) => setTarget({ type: 'take', id })}
+                />
                 {take && takeCompare ? (
                   <CompareSlider
                     ref={sliderRef}
