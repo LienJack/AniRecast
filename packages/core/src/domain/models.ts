@@ -23,6 +23,15 @@ export function projectModels(db: Db, projectRef: string): ProjectModels {
   };
 }
 
+/** A model asked for on one request (regenerate with another model): it must be in the catalogue of its kind. */
+export function assertSelectableModel(kind: 'image' | 'video', model: string): void {
+  const allowed = (kind === 'video' ? VIDEO_MODELS : IMAGE_MODELS).map((m) => m.id);
+  if (!allowed.includes(model))
+    throw new AniError('usage', `${model} is not a selectable ${kind} model`, {
+      hint: `One of: ${allowed.join(', ')}`,
+    });
+}
+
 /** Chooses the project's models; only models in the catalogue (a null clears back to the default). */
 export function setProjectModels(
   db: Db,

@@ -34,7 +34,7 @@ import {
   shotStage,
   type Verdict,
 } from './generation.ts';
-import { projectModels } from './models.ts';
+import { assertSelectableModel, projectModels } from './models.ts';
 import { markShotGenerationStale, recomputeShotModes } from './modes.ts';
 import { listTextOverlays } from './overlays.ts';
 import { getPersona } from './personas.ts';
@@ -316,10 +316,19 @@ export function queueStillTake(ws: Workspace, shotId: string, tier: GenerationTi
   return { take, job };
 }
 
-/** Review of a design sheet: approve, request changes (Codex revises it) or regenerate with the same inputs. */
+/**
+ * Review of a design sheet: approve, request changes (Codex revises it) or regenerate with the same inputs — on its
+ * own model unless another is asked for.
+ */
 function submitDesignReview(
   ws: Workspace,
-  input: { targetId: string; verdict: Verdict; comment?: string | null; actor: string },
+  input: {
+    targetId: string;
+    verdict: Verdict;
+    comment?: string | null;
+    model?: string | null;
+    actor: string;
+  },
 ) {
   const design = getDesign(ws.db, input.targetId);
   const review = reviewDesign(ws.db, {
@@ -348,7 +357,7 @@ function submitDesignReview(
   if (input.verdict === 'regenerate') {
     const [queued] = queueDesign(ws, design.projectId, null, input.actor, {
       fromDesignId: design.id,
-      model: design.model,
+      model: input.model ?? design.model,
     });
     return { review, queued: { design: queued!.design, jobId: queued!.job.id } };
   }
@@ -377,7 +386,10 @@ export function settleCast(
   return { modeChanges: recomputeShotModes(ws.db, projectId, actor), staleVersions: stale };
 }
 
-/** Records a verdict and performs its follow-up (agent task for changes, a new version for regenerate). */
+/**
+ * Records a verdict and performs its follow-up (agent task for changes, a new version for regenerate). Regenerate
+ * keeps the version's model unless `model` names another one of the same kind.
+ */
 export function submitReview(
   ws: Workspace,
   input: {
@@ -385,11 +397,14 @@ export function submitReview(
     verdict: Verdict;
     comment?: string | null;
     annotations?: unknown[];
+    model?: string | null;
     actor: string;
   },
 ) {
-  if (input.targetId.startsWith('dsg_')) return submitDesignReview(ws, input);
   const isBoard = input.targetId.startsWith('brd_');
+  if (input.model && input.verdict === 'regenerate')
+    assertSelectableModel(isBoard || input.targetId.startsWith('dsg_') ? 'image' : 'video', input.model);
+  if (input.targetId.startsWith('dsg_')) return submitDesignReview(ws, input);
   const target = isBoard ? getBoard(ws.db, input.targetId) : getTake(ws.db, input.targetId);
   const review = addReview(ws.db, {
     targetType: isBoard ? 'board' : 'take',
@@ -418,10 +433,13 @@ export function submitReview(
   }
   if (input.verdict === 'regenerate') {
     const queued = isBoard
-      ? queueBoard(ws, target.shotId, input.actor, { fromBoardId: input.targetId, model: target.model })
+      ? queueBoard(ws, target.shotId, input.actor, {
+          fromBoardId: input.targetId,
+          model: input.model ?? target.model,
+        })
       : queueTake(ws, target.shotId, (target as ReturnType<typeof getTake>).tier, input.actor, {
           fromTakeId: input.targetId,
-          model: target.model,
+          model: input.model ?? target.model,
         });
     return {
       review,

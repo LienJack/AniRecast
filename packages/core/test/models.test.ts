@@ -110,6 +110,25 @@ describe('selectable models', () => {
     ws.close();
   });
 
+  it('regenerating can switch to another model of the same kind, and only to one', () => {
+    const { ws, shotId } = fixture();
+    const before = listBoards(ws.db, shotId)[0]!;
+    const gpt = 'fal:openai/gpt-image-2.5/sunburst/edit';
+    const r = submitReview(ws, { targetId: before.id, verdict: 'regenerate', model: gpt, actor: 'user' }) as {
+      queued: { board: { model: string } };
+    };
+    expect(r.queued.board.model).toBe(gpt);
+    // A storyboard frame is an image: a video model, or one not in the catalogue, is refused before anything is queued.
+    expect(() =>
+      submitReview(ws, { targetId: before.id, verdict: 'regenerate', model: H3, actor: 'user' }),
+    ).toThrow(/not a selectable image model/);
+    expect(() =>
+      submitReview(ws, { targetId: before.id, verdict: 'regenerate', model: 'dall-e-2', actor: 'user' }),
+    ).toThrow(/not a selectable image model/);
+    expect(listBoards(ws.db, shotId)).toHaveLength(2);
+    ws.close();
+  });
+
   it('gives each video model the references it takes', () => {
     const { ws, shotId } = fixture();
     const roles = (model: string) =>

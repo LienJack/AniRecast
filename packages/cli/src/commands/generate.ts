@@ -582,12 +582,18 @@ export function registerGenerate(program: Command): void {
     );
   review
     .command('regenerate <version>')
-    .description('Same inputs, new attempt')
+    .description("Same inputs, new attempt (on the version's own model unless --model names another)")
+    .option('--model <id>', 'draw it with another model of the same kind (see `anirecast project models`)')
     .option('--wait')
     .action(
-      command((id: string, opts: { wait?: boolean }) =>
+      command((id: string, opts: { wait?: boolean; model?: string }) =>
         withWorkspace(globals(), async (ws) => {
-          const result = submitReview(ws, { targetId: id, verdict: 'regenerate', actor: actorFromEnv() });
+          const result = submitReview(ws, {
+            targetId: id,
+            verdict: 'regenerate',
+            model: opts.model ?? null,
+            actor: actorFromEnv(),
+          });
           return { ...result, ...(result.queued ? await waitAll(ws, [result.queued.jobId], opts.wait) : {}) };
         }),
       ),

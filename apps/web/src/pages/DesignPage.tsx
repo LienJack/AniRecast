@@ -29,7 +29,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { api, fileUrl } from '@/lib/api';
 import { formatAgo, formatUsd } from '@/lib/format';
 import { VERDICT_LABEL, VERDICT_TONE } from '@/lib/labels';
-import { qk, useAction, useDesigns, useOverview, usePersonas, useProjectTasks } from '@/lib/queries';
+import {
+  qk,
+  useAction,
+  useDesigns,
+  useModels,
+  useOverview,
+  usePersonas,
+  useProjectTasks,
+} from '@/lib/queries';
 import type {
   AgentTask,
   AnalysisItem,
@@ -85,15 +93,37 @@ function SheetPanel({
     }
   }, [latestId]);
   const v = sheet.versions.find((x) => x.id === selectedId) ?? sheet.latest ?? undefined;
+  // The model this panel's buttons draw with: picked here, else the shown version's own (so 重新生成 repeats it),
+  // else the binding's choice.
+  const images = useModels().data?.image;
+  const [picked, setPicked] = useState<string | undefined>(undefined);
+  const own = v && images?.some((m) => m.id === v.model) ? v.model : undefined;
+  const drawWith = picked ?? own ?? model;
+  const modelPicker = (
+    <div className="flex items-center gap-1.5">
+      <span className="shrink-0 text-[11px] text-muted-foreground">模型</span>
+      <ModelSelect
+        kind="image"
+        value={drawWith}
+        onChange={setPicked}
+        label={`${personaName}・${text.title}用的圖片模型`}
+        className="min-w-0 flex-1"
+      />
+    </div>
+  );
   const base = `/api/projects/${encodeURIComponent(projectRef)}/designs${subject === 'original' ? '/original' : ''}`;
   const generate = useAction(
     (body: { fromDesignId?: string; extra?: string }) =>
-      api.post(base, { castId, kind: sheet.kind, ...body, ...(model ? { model } : {}) }),
+      api.post(base, { castId, kind: sheet.kind, ...body, ...(drawWith ? { model: drawWith } : {}) }),
     { success: `已排入生成：${personaName}・${text.title}`, invalidate: [qk.designs(projectRef)] },
   );
   const review = useAction(
     (r: { verdict: 'approve' | 'changes' | 'regenerate'; comment?: string }) =>
-      api.post('/api/reviews', { targetId: v?.id, ...r }),
+      api.post('/api/reviews', {
+        targetId: v?.id,
+        ...r,
+        ...(r.verdict === 'regenerate' && drawWith ? { model: drawWith } : {}),
+      }),
     {
       success: (_d, r) =>
         r.verdict === 'changes'
@@ -187,13 +217,17 @@ function SheetPanel({
           Codex {t.status === 'needs_user' ? `需要你回覆：${t.question ?? ''}` : '正在依意見修改…'}
         </div>
       ))}
-      {!v ? (
-        <Button size="sm" disabled={generate.isPending} onClick={() => generate.mutate({})}>
-          <SparklesIcon />
-          生成{text.title}
-        </Button>
+      {!v || v.status === 'failed' ? (
+        <div className="flex flex-col gap-1.5">
+          {modelPicker}
+          <Button size="sm" disabled={generate.isPending} onClick={() => generate.mutate({})}>
+            <SparklesIcon />
+            {v ? '再' : ''}生成{text.title}
+          </Button>
+        </div>
       ) : isFinished(v) ? (
         <div className="flex flex-col gap-1.5">
+          {modelPicker}
           <div className="flex flex-wrap gap-1.5">
             {v.status !== 'approved' && v.status !== 'rejected' ? (
               <Button
@@ -209,7 +243,7 @@ function SheetPanel({
               size="sm"
               variant="outline"
               disabled={review.isPending}
-              title="同樣的輸入再畫一次"
+              title="同樣的輸入再畫一次（用上面選的模型）"
               onClick={() => review.mutate({ verdict: 'regenerate' })}
             >
               <RefreshCwIcon />

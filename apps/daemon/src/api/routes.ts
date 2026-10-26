@@ -807,14 +807,19 @@ export function registerRoutes(
   );
   app.post('/api/reviews', async (c) =>
     handle(c, async () => {
-      const b = await body<{ targetId: string; verdict: Verdict; comment?: string; annotations?: unknown[] }>(
-        c,
-      );
+      const b = await body<{
+        targetId: string;
+        verdict: Verdict;
+        comment?: string;
+        annotations?: unknown[];
+        model?: string;
+      }>(c);
       return submitReview(ws, {
         targetId: b.targetId,
         verdict: b.verdict,
         comment: b.comment ?? null,
         annotations: b.annotations ?? [],
+        model: b.model ?? null,
         actor: USER,
       });
     }),

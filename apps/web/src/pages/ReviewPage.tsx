@@ -54,7 +54,7 @@ import {
   VERDICT_LABEL,
   VERDICT_TONE,
 } from '@/lib/labels';
-import { useAction, useOverview, useShot } from '@/lib/queries';
+import { useAction, useModels, useOverview, useShot } from '@/lib/queries';
 import type {
   AgentTask,
   Board,
@@ -305,6 +305,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
   const [tier, setTier] = useState<GenerationTier>(d.project.tier);
   // Models default to the project's choice; a request can try another.
   const projectModels = useOverview(projectRef).data?.models;
+  const models = useModels();
   const [boardModel, setBoardModel] = useState<string | undefined>(undefined);
   const [takeModel, setTakeModel] = useState<string | undefined>(undefined);
   const imageModel = boardModel ?? projectModels?.image;
@@ -351,12 +352,19 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
     d.keyframes.find((k) => k.role === 'mid');
   const removable = d.overlays.filter((o) => o.remove);
 
+  // 直接重生 repeats the version's own model unless one was picked below for its kind.
+  const regenModel = current
+    ? ((target?.type === 'board' ? boardModel : takeModel) ?? current.model)
+    : undefined;
+  const modelLabel = (id: string | undefined) =>
+    [...(models.data?.image ?? []), ...(models.data?.video ?? [])].find((m) => m.id === id)?.label ?? id;
   const review = useAction(
     (v: { verdict: Verdict; comment?: string }) =>
       api.post<ReviewResult>('/api/reviews', {
         targetId: current?.id,
         verdict: v.verdict,
         comment: v.comment,
+        ...(v.verdict === 'regenerate' && regenModel ? { model: regenModel } : {}),
       }),
     {
       success: (r, v) =>
@@ -729,6 +737,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                       disabled={
                         review.isPending || current.status === 'queued' || current.status === 'generating'
                       }
+                      title={`同樣的輸入再生成一次（${modelLabel(regenModel)}；換模型請在下面「生成」選）`}
                       onClick={() => review.mutate({ verdict: 'regenerate' })}
                     >
                       <RefreshCwIcon />
