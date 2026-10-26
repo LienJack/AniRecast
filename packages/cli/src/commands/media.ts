@@ -457,9 +457,12 @@ export function registerMedia(program: Command): void {
     .description(
       'Delete every storyboard frame and take of a shot (files go to trash/versions/…) so it can be split or merged',
     )
+    .option('--takes-only', 'delete only the shot videos; the storyboard frames stay')
     .action(
-      command((shotId: string) =>
-        withWorkspace(globals(), (ws) => discardShotVersions(ws, shotId, actorFromEnv())),
+      command((shotId: string, opts: { takesOnly?: boolean }) =>
+        withWorkspace(globals(), (ws) =>
+          discardShotVersions(ws, shotId, actorFromEnv(), Date.now(), { takesOnly: Boolean(opts.takesOnly) }),
+        ),
       ),
     );
   shots

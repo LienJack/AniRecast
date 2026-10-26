@@ -168,7 +168,11 @@ describe('the video director', () => {
         expect(done.inputs.map((i) => i.role)).toEqual(['video', 'ref:R1+R2']);
         expect(done.inputs[1]!.path).toMatch(/takes\/t001-ref1\.jpg$/);
         expect(existsSync(path.join(root, done.inputs[1]!.path))).toBe(true);
-        expect(done.params.director).toMatchObject({ notes: ANSWER.notes });
+        expect(done.params.director).toMatchObject({ notes: ANSWER.notes, critique: { changes: [] } });
+        // The instruction was reviewed once more, against the clip and the exact image sent, before the request.
+        expect(asked).toHaveLength(2);
+        expect(asked[1]!.prompt).toContain('expensive request');
+        expect(asked[1]!.images.map((i) => i.mimeType)).toEqual(['video/mp4', 'image/jpeg']);
       },
     );
   }, 90_000);

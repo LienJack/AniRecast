@@ -964,6 +964,7 @@ export function boardBrief(ws: Workspace, boardId: string, maxRefs: number): Dir
 
 /** The director's brief for a shot video: the shot itself, the facts, and the references the video model may get. */
 export interface TakeBrief extends DirectorBrief {
+  shotId: string;
   /** The shot's source clip, which the director watches. */
   video: string;
   /** Library character names, never to be written in a video prompt (Omni's safety filter blocked some). */
@@ -1048,6 +1049,7 @@ export function takeBrief(
     images,
     extra: opts.extra?.trim() || null,
     maxRefs: opts.maxRefs,
+    shotId: shot.id,
     video: shot.sourcePath,
     names: uses.map((u) => u.persona.name),
   };

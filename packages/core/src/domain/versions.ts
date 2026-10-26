@@ -32,6 +32,8 @@ export function discardShotVersions(
   shotId: string,
   actor: string,
   now: number = Date.now(),
+  /** Only the shot videos (old drafts before remaking at 1080p): the storyboard frames stay. */
+  opts: { takesOnly?: boolean } = {},
 ): { boards: number; takes: number; trash: string | null } {
   if (actor.startsWith('codex:'))
     throw new AniError('conflict', "Deleting versions is the human's decision", {
@@ -39,14 +41,14 @@ export function discardShotVersions(
     });
   const shot = getShot(ws.db, shotId);
   const project = projectOfShot(ws.db, shotId);
-  const boards = listBoards(ws.db, shotId);
+  const boards = opts.takesOnly ? [] : listBoards(ws.db, shotId);
   const takes = listTakes(ws.db, shotId);
   if (!boards.length && !takes.length) return { boards: 0, takes: 0, trash: null };
   if ([...boards, ...takes].some((v) => v.status === 'queued' || v.status === 'generating'))
     throw new AniError('conflict', 'A version of this shot is still being generated', {
       hint: 'Wait for it or cancel its job, then delete.',
     });
-  const trash = `trash/versions/${project.slug}/${shot.id}-${now}`;
+  const trash = `trash/versions/${project.slug}/${shot.id}-${now}${opts.takesOnly ? '-takes' : ''}`;
   mkdirSync(ws.abs(trash), { recursive: true });
   // Files: each version, its provenance JSON next to it, and a take's review compare clip.
   const files = new Set<string>();
@@ -91,14 +93,14 @@ export function discardShotVersions(
       { ...all.params, now },
     );
     run(ws.db, 'DELETE FROM takes WHERE shot_id = :shotId', { shotId });
-    run(ws.db, 'DELETE FROM boards WHERE shot_id = :shotId', { shotId });
+    if (!opts.takesOnly) run(ws.db, 'DELETE FROM boards WHERE shot_id = :shotId', { shotId });
     appendEvent(ws.db, {
       actor,
       kind: 'shot.versions_deleted',
       entityType: 'shot',
       entityId: shotId,
       projectId: project.id,
-      payload: { boards: boards.length, takes: takes.length, trash },
+      payload: { boards: boards.length, takes: takes.length, trash, takesOnly: Boolean(opts.takesOnly) },
     });
   });
   return { boards: boards.length, takes: takes.length, trash };

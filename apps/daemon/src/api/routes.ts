@@ -376,8 +376,13 @@ export function registerRoutes(
       return [a, b];
     }),
   );
-  app.post('/api/shots/:id/discard-versions', (c) =>
-    handle(c, () => discardShotVersions(ws, c.req.param('id'), USER)),
+  app.post('/api/shots/:id/discard-versions', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ takesOnly?: boolean }>(c).catch(() => ({}) as { takesOnly?: boolean });
+      return discardShotVersions(ws, c.req.param('id'), USER, Date.now(), {
+        takesOnly: Boolean(b.takesOnly),
+      });
+    }),
   );
   app.post('/api/shots/merge', async (c) =>
     handle(c, async () => {

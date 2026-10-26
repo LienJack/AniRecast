@@ -8,6 +8,7 @@ import {
   projectOfShot,
   recordCost,
   sha256File,
+  type TakeBrief,
   takeBrief,
 } from '@anirecast/core';
 import { composeReference } from '@anirecast/media';
@@ -25,6 +26,8 @@ export interface DirectorRecord {
   /** The references chosen, in the order the generator receives them after the frame. */
   references: Array<{ id: string; label: string; path: string }>;
   costUsd: number;
+  /** A video instruction is reviewed once before the paid request: what the review changed. */
+  critique?: { changes: string[]; kept?: string };
 }
 
 interface BoardAnswer {
@@ -327,6 +330,19 @@ export async function directTake(
     inputs.push({ role: `ref:${id}`, path, sha256: sha256File(ws.abs(path)) });
     references.push({ id, label: s.what || s.refs.map((x) => x.label).join(' + '), path });
   }
+  // A shot video is expensive: the instruction is reviewed against the clip and the exact images sent before
+  // the request goes out; a review that breaks the rules is ignored and the draft stands.
+  const reviewed = await critiqueTake(ctx, {
+    model,
+    spec,
+    draft: text,
+    brief,
+    withVideo,
+    videoAbs,
+    sent: references.map((r, k) => ({ label: `<IMAGE_REF_${k}>: ${r.label}`, path: ws.abs(r.path) })),
+    sendsCount: sends.length,
+  });
+  text = reviewed.prompt;
   const final = brief.extra ? `${text}\nAdditional instructions: ${brief.extra}` : text;
   return {
     prompt: final,
@@ -336,9 +352,119 @@ export async function directTake(
       notes: (data.notes ?? '').trim(),
       analysis: data.analysis ?? {},
       references,
-      costUsd: usd,
+      costUsd: usd + reviewed.costUsd,
+      critique: reviewed.critique,
     },
   };
+}
+
+interface CritiqueAnswer {
+  prompt?: string;
+  changes?: string[];
+}
+
+/**
+ * The second look before an expensive video request: the draft instruction is checked against the clip and the
+ * exact images that will be sent, and returned corrected (same <IMAGE_REF_k> numbering) with what changed.
+ */
+async function critiqueTake(
+  ctx: JobContext,
+  input: {
+    model: string;
+    spec: VideoModelSpec;
+    draft: string;
+    brief: TakeBrief;
+    withVideo: boolean;
+    videoAbs: string;
+    sent: Array<{ label: string; path: string }>;
+    sendsCount: number;
+  },
+): Promise<{ prompt: string; costUsd: number; critique: DirectorRecord['critique'] }> {
+  const { workspace: ws, services, signal, job } = ctx;
+  const media = [
+    ...(input.withVideo
+      ? [{ path: input.videoAbs, mimeType: 'video/mp4', label: 'Video 1: the original shot' }]
+      : []),
+    ...input.sent.map((s) => ({ path: s.path, mimeType: mimeFor(s.path), label: s.label })),
+  ];
+  const prompt = [
+    `You review a video-edit instruction before it is sent to ${input.spec.label} — an expensive request that cannot be undone.`,
+    'The media: ' + media.map((m) => m.label).join('; ') + '.',
+    'Facts the instruction must respect:',
+    ...input.brief.facts.map((f) => `- ${f}`),
+    ...(input.brief.extra ? [`- Mandatory requirement from the human: ${input.brief.extra}`] : []),
+    '',
+    'Draft instruction:',
+    input.draft,
+    '',
+    'Check it carefully and fix what is wrong:',
+    '1. every <IMAGE_REF_k> is used for what that image really shows (look at each one), and only these refs exist;',
+    '2. the motion, gestures, expression changes, camera movement and timing match the video exactly;',
+    '3. who is replaced is unambiguous (position and looks), the count of people is right, and everyone and everything else stays unchanged;',
+    "4. each new character's face, hair, eyes and outfit match her reference images and storyboard frames, with the outfit rule from the facts;",
+    "5. the style part names this anime's specific traits from the style bible and what to avoid; anime motion feel is kept;",
+    '6. no library character names; no added text; the instruction is concise and concrete, not padded with generic adjectives.',
+    'Return the final instruction (keep what is right, same <IMAGE_REF_k> numbering) and the list of changes you made — each one short, in Traditional Chinese; an empty list if the draft was already right.',
+  ].join('\n');
+  try {
+    if (services.provider.name !== 'fake')
+      assertWithinBudget(
+        ws.db,
+        services.config.budget.capUsd,
+        estimateVisionCost(input.model, media.length + 8),
+      );
+    const answer = await onceMore(ctx, () =>
+      metered(ctx, { model: input.model, kind: 'vision', shotId: input.brief.shotId }, () =>
+        services.provider.analyzeImages<CritiqueAnswer>({
+          model: input.model,
+          prompt,
+          images: media.map((m) => ({ path: m.path, mimeType: m.mimeType })),
+          responseSchema: {
+            type: 'object',
+            properties: { prompt: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } } },
+            required: ['prompt', 'changes'],
+          },
+          signal,
+        }),
+      ),
+    );
+    const usd = answer.provider === 'fake' ? 0 : answer.costUsd;
+    recordCost(ws.db, {
+      jobId: job.id,
+      projectId: projectOfShot(ws.db, input.brief.shotId).id,
+      provider: answer.provider,
+      model: input.model,
+      usage: answer.usage,
+      usd,
+    });
+    let text = (answer.data?.prompt ?? '').trim();
+    const used = [...text.matchAll(/<IMAGE_REF_(\d+)>/g)].map((m) => Number(m[1]));
+    const valid = text.length >= 80 && used.length > 0 && used.every((k) => k < input.sendsCount);
+    if (!valid)
+      return {
+        prompt: input.draft,
+        costUsd: usd,
+        critique: { changes: [], kept: 'the review broke the rules; the draft stands' },
+      };
+    for (const name of input.brief.names)
+      if (name.trim().length > 1)
+        text = text.replace(
+          new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
+          'the new character',
+        );
+    return {
+      prompt: text,
+      costUsd: usd,
+      critique: { changes: (answer.data?.changes ?? []).map((c) => c.trim()).filter(Boolean) },
+    };
+  } catch (error) {
+    if (signal.aborted) throw error;
+    return {
+      prompt: input.draft,
+      costUsd: 0,
+      critique: { changes: [], kept: `review failed (${toEnvelopeError(error).message}); the draft stands` },
+    };
+  }
 }
 
 /** A network hiccup is tried once more (after a short wait) before the director gives up for the template. */
