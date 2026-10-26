@@ -96,6 +96,18 @@ export function ReviewIndexPage() {
   return <Navigate to="/projects/$ref/review/$shotId" params={{ ref, shotId: pick.id }} replace />;
 }
 
+/** A partial take says which frames it redid and which version the other frames come from. */
+function PartOf({ take, takes }: { take: Take; takes: Take[] }) {
+  const range = take.params.range as { start: number; end: number } | undefined;
+  if (!range) return null;
+  const kept = takes.find((t) => t.id === take.params.keepFrom);
+  return (
+    <span className="text-sky-300">
+      只重做第 {range.start}–{range.end} 幀{kept ? `，其餘沿用 v${kept.version}` : ''}
+    </span>
+  );
+}
+
 const comparePathOf = (take: Take): string | null =>
   typeof take.remote.comparePath === 'string' ? take.remote.comparePath : null;
 
@@ -566,6 +578,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                 {take ? (
                   <span className="flex items-center gap-1.5 text-muted-foreground text-xs">
                     v{take.version} · {TIER_LABEL[take.tier]} · <VersionBadge status={take.status} />
+                    <PartOf take={take} takes={d.takes} />
                     {approvedTake && approvedTake.id !== take.id ? (
                       <button
                         type="button"
