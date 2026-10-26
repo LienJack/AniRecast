@@ -50,7 +50,11 @@ function fixture() {
 
 describe('attached images', () => {
   it('labels them after the other images, in the generator’s syntax', () => {
-    const base = { prompt: 'p', params: {}, inputs: [{ role: 'frame', path: 'a.jpg' }] };
+    const base = {
+      prompt: 'p',
+      params: {} as Record<string, unknown>,
+      inputs: [{ role: 'frame', path: 'a.jpg' }],
+    };
     expect(attachToPlan(base, ['x.png'], 'image').prompt).toContain('Image 2 is an image the human attached');
     // Tiled crops reach a design model as one image.
     const tiled = {
@@ -61,7 +65,7 @@ describe('attached images', () => {
     // A video model numbers its references from 0 and takes only so many.
     const video = {
       prompt: 'p',
-      params: {},
+      params: {} as Record<string, unknown>,
       inputs: [
         { role: 'video', path: 'v.mp4' },
         { role: 'board', path: 'b.png' },
