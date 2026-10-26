@@ -36,6 +36,7 @@ import {
 } from '@/components/domain';
 import { Generating, ShimmerText, useActiveJob } from '@/components/generating';
 import { ModelSelect } from '@/components/models';
+import { ShotCastEditor } from '@/components/shot-cast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -796,6 +797,14 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                   </SelectContent>
                 </Select>
               </div>
+              {shot.mode === 'replace' ? (
+                <ShotCastEditor
+                  shotId={shot.id}
+                  projectRef={projectRef}
+                  entries={d.cast}
+                  className="border-t pt-2"
+                />
+              ) : null}
               {generates ? (
                 <>
                   <Label htmlFor={extraId}>附加提示（可留空）</Label>

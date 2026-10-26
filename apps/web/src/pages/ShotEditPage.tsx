@@ -14,6 +14,7 @@ import { DiscussInCodex } from '@/components/codex';
 import { ConfirmDialog, ErrorState, Kbd, Loading, PageHeader, Tag } from '@/components/common';
 import { ModeBadge, StageBadge } from '@/components/domain';
 import { FramePlayer, type FramePlayerHandle } from '@/components/FramePlayer';
+import { ShotCastEditor } from '@/components/shot-cast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -264,7 +265,14 @@ export function ShotEditPage() {
                 <span className="text-muted-foreground">光影：</span>
                 {shot.lighting ?? '還沒分析（總覽的「畫風與光影」可以分析，生成時會照這段打光）'}
               </div>
-              {cast.length ? (
+              {shot.mode === 'replace' ? (
+                <ShotCastEditor
+                  shotId={shot.id}
+                  projectRef={ref}
+                  entries={d.cast}
+                  className="border-t pt-2"
+                />
+              ) : cast.length ? (
                 <div className="flex flex-wrap gap-1 text-xs">
                   <span className="text-muted-foreground">出場：</span>
                   {cast.map((e) => (

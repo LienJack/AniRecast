@@ -30,6 +30,7 @@ import {
   requestCancel,
   run,
   setOverlayRemoval,
+  setShotCastOverride,
   shotCast,
   splitCast,
   splitShot,
@@ -190,6 +191,40 @@ describe('shot modes', () => {
     const girl = createCastMember(ws.db, { projectId, label: 'girl' }, 'daemon');
     expect(() => mapCast(ws.db, girl.id, sword.id, 'user')).toThrow(/Only a character/);
     expect(mapCast(ws.db, girl.id, hero.id, 'user').cast.personaId).toBe(hero.id);
+    ws.close();
+  });
+
+  it('replaces several characters in one shot, each its own way', () => {
+    const { ws, projectId, shotIds } = fixture();
+    const shot = shotIds[0]!;
+    const [a, b] = [createPersona(ws, { name: 'A' }, 'user'), createPersona(ws, { name: 'B' }, 'user')];
+    const sword = createPersona(ws, { name: 'Sword', kind: 'item' }, 'user');
+    const chisato = createCastMember(ws.db, { projectId, label: '千束' }, 'daemon');
+    const takina = createCastMember(ws.db, { projectId, label: '瀧奈' }, 'daemon');
+    mapCast(ws.db, chisato.id, a.id, 'user');
+    mapCast(ws.db, takina.id, a.id, 'user');
+    // Someone the cast step dismissed is assigned again from the shot.
+    const door = createTracklet(ws.db, { shotId: shot, castMemberId: null });
+    markNotCharacter(ws.db, door.id, 'codex');
+    assignTracklet(ws.db, door.id, chisato.id, 'user');
+    createTracklet(ws.db, { shotId: shot, castMemberId: takina.id });
+    // 千束 follows the project's mapping; 瀧奈 becomes B in this shot only.
+    setShotCastOverride(ws.db, shot, takina.id, { personaId: b.slug, keep: false }, 'user');
+    expect(
+      shotCast(ws.db, shot).map((e) => [e.cast?.label, e.personaId, e.override?.personaId ?? null]),
+    ).toEqual([
+      ['千束', a.id, null],
+      ['瀧奈', b.id, b.id],
+    ]);
+    expect(shotCast(ws.db, shotIds[1]!)).toEqual([]);
+    // Keep the original here; only characters can stand in.
+    setShotCastOverride(ws.db, shot, chisato.id, { personaId: null, keep: true }, 'user');
+    expect(shotCast(ws.db, shot)[0]).toMatchObject({ personaId: null, override: { keep: true } });
+    expect(() =>
+      setShotCastOverride(ws.db, shot, chisato.id, { personaId: sword.id, keep: false }, 'user'),
+    ).toThrow(/Only a character/);
+    setShotCastOverride(ws.db, shot, chisato.id, null, 'user');
+    expect(shotCast(ws.db, shot)[0]).toMatchObject({ personaId: a.id, override: null });
     ws.close();
   });
 

@@ -632,6 +632,20 @@ export function setShotCastOverride(
   actor: string,
 ): void {
   tx(db, () => {
+    if (override?.personaId) {
+      const p = one<{ id: string; kind: string }>(
+        db,
+        'SELECT id, kind FROM personas WHERE id = :id OR slug = :id COLLATE NOCASE',
+        { id: override.personaId },
+      );
+      if (!p) throw new AniError('not_found', `Persona not found: ${override.personaId}`);
+      if (p.kind !== 'character')
+        throw new AniError(
+          'usage',
+          `Only a character from the library can replace a character (this is a ${p.kind})`,
+        );
+      override = { ...override, personaId: p.id };
+    }
     if (override === null) {
       run(db, 'DELETE FROM shot_cast_overrides WHERE shot_id = :shotId AND cast_member_id = :castMemberId', {
         shotId,
@@ -661,12 +675,14 @@ export interface ShotCastEntry {
   look: Look | null;
   /** Persona to render in this shot after overrides; null = keep the original character. */
   personaId: string | null;
+  /** This shot's own choice over the project's mapping: another library character, or keep the original. */
+  override: { personaId: string | null; keep: boolean } | null;
 }
 
 /** Who appears in a shot and which persona replaces them there. */
 export function shotCast(db: Db, shotId: string): ShotCastEntry[] {
   return listShotTracklets(db, shotId).map((t) => {
-    if (!t.castMemberId) return { tracklet: t, cast: null, look: null, personaId: null };
+    if (!t.castMemberId) return { tracklet: t, cast: null, look: null, personaId: null, override: null };
     const c = getCastMember(db, t.castMemberId);
     const override = one<{ persona_id: string | null; keep: number }>(
       db,
@@ -680,6 +696,7 @@ export function shotCast(db: Db, shotId: string): ShotCastEntry[] {
       cast: { id: c.id, label: c.label, personaId: c.personaId },
       look,
       personaId: c.status === 'active' ? personaId : null,
+      override: override ? { personaId: override.persona_id, keep: Boolean(override.keep) } : null,
     };
   });
 }
