@@ -1,4 +1,4 @@
-import { AniError, videoModelSpec } from '@anirecast/shared';
+import { AniError, newId, videoModelSpec } from '@anirecast/shared';
 import { loadConfig } from '../config.ts';
 import { all, fromJson, one } from '../db.ts';
 import { enqueueJob } from '../jobs.ts';
@@ -60,9 +60,11 @@ export function queueBoard(
     attachments?: string[];
     /** The key frame drawn in the same batch, which this first or last frame waits for and matches. */
     consistentWith?: string;
+    /** Extra bookkeeping kept on the board (a 生成全部分鏡圖 batch and its follow-ups). */
+    params?: Record<string, unknown>;
   } = {},
 ) {
-  const { model: chosen, attachments, consistentWith, ...planOpts } = opts;
+  const { model: chosen, attachments, consistentWith, params: extraParams, ...planOpts } = opts;
   const projectId = projectOfShot(ws.db, shotId).id;
   // A revision keeps the images attached to the version it revises.
   const prior = opts.fromBoardId
@@ -79,7 +81,7 @@ export function queueBoard(
     frame: plan.frame,
     prompt: plan.prompt,
     model: chosen ?? projectModels(ws.db, projectOfShot(ws.db, shotId).id).image,
-    params: consistentWith ? { ...plan.params, consistentWith } : plan.params,
+    params: { ...plan.params, ...(consistentWith ? { consistentWith } : {}), ...(extraParams ?? {}) },
     inputs: plan.inputs,
     parentId: opts.fromBoardId ?? null,
     createdBy: actor,
@@ -93,6 +95,55 @@ export function queueBoard(
     maxAttempts: 2,
   });
   return { board, job };
+}
+
+/**
+ * 生成全部分鏡圖: the key frame of every replace shot that has none yet. When a key frame is drawn, JEV compares the
+ * shot's first and last frames with it and only the ones that differ enough get their own storyboard frame (drawn
+ * from the key frame for consistency); when the whole batch is done, Codex reviews it (boards_review).
+ */
+export function queueAllBoards(
+  ws: Workspace,
+  projectRef: string,
+  actor: string,
+  opts: { model?: string } = {},
+) {
+  const project = getProject(ws.db, projectRef);
+  const clip = findActiveClip(ws.db, project.id);
+  if (!clip) throw new AniError('conflict', 'Project has no clip');
+  const batch = newId('bat');
+  const queued: Array<ReturnType<typeof queueBoard>> = [];
+  const skipped: Array<{ shotId: string; shotNo: number; reason: string }> = [];
+  for (const shot of listShots(ws.db, clip.id).filter((s) => s.mode === 'replace')) {
+    const live = listBoards(ws.db, shot.id).find(
+      (b) => b.role === 'key' && ['queued', 'generating', 'ready', 'approved'].includes(b.status),
+    );
+    const no = shot.orderIndex + 1;
+    if (live) {
+      skipped.push({
+        shotId: shot.id,
+        shotNo: no,
+        reason: live.status === 'approved' ? '關鍵幀已通過' : '已經有關鍵幀',
+      });
+      continue;
+    }
+    try {
+      queued.push(
+        queueBoard(ws, shot.id, actor, {
+          role: 'key',
+          ...(opts.model ? { model: opts.model } : {}),
+          params: { batch, followUps: ['first', 'last'] },
+        }),
+      );
+    } catch (error) {
+      skipped.push({
+        shotId: shot.id,
+        shotNo: no,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return { batch, queued, skipped };
 }
 
 /**

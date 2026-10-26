@@ -39,6 +39,7 @@ import {
   projectCacheDir,
   projectModels,
   projectOfShot,
+  queueAllBoards,
   queueBoard,
   queueBoards,
   queueCastAnalysis,
@@ -124,6 +125,20 @@ export function registerGenerate(program: Command): void {
   const board = program
     .command('board')
     .description('Storyboard frames (分鏡圖) via the project image model (Nano Banana 2.1 or GPT Image 2.5)');
+  board
+    .command('all <project>')
+    .description(
+      '生成全部分鏡圖: the key frame of every replace shot without one; JEV then decides which first/last frames differ enough to draw; Codex reviews the batch',
+    )
+    .option('--model <id>', 'image model (default: the project choice)')
+    .action(
+      command((projectRef: string, opts: { model?: string }) =>
+        withWorkspace(globals(), (ws) => {
+          const r = queueAllBoards(ws, projectRef, actorFromEnv(), opts.model ? { model: opts.model } : {});
+          return { batch: r.batch, boards: r.queued.map((q) => q.board), skipped: r.skipped };
+        }),
+      ),
+    );
   board
     .command('generate <project> [shots...]')
     .option('--all', 'every replace shot of the project')

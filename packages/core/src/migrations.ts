@@ -647,6 +647,36 @@ ALTER TABLE boards ADD COLUMN frame INTEGER;
 CREATE INDEX boards_role ON boards(shot_id, role, status);
 `,
   },
+  {
+    version: 11,
+    name: 'Codex reviews a whole batch of storyboard frames',
+    rebuildsTables: true,
+    // boards_review: after 生成全部分鏡圖, Codex looks over every frame of the batch (consistency, likeness, style,
+    // how faithful to the original) and redraws what is clearly off; approval stays with the human.
+    sql: `
+CREATE TABLE agent_tasks_v11 (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('review_feedback', 'cast_review', 'shot_review', 'boards_review')),
+  review_id TEXT REFERENCES reviews(id),
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  shot_id TEXT REFERENCES shots(id),
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL CHECK (status IN ('open', 'claimed', 'done', 'needs_user', 'cancelled')),
+  claimed_by TEXT,
+  claimed_at INTEGER,
+  question TEXT,
+  answer TEXT,
+  result_note TEXT,
+  result_target_id TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+INSERT INTO agent_tasks_v11 SELECT * FROM agent_tasks;
+DROP TABLE agent_tasks;
+ALTER TABLE agent_tasks_v11 RENAME TO agent_tasks;
+CREATE INDEX agent_tasks_status ON agent_tasks(status, created_at);
+`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

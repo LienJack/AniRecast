@@ -41,6 +41,8 @@ export interface RunnerOptions {
   services: Services;
   handlers: Map<string, JobHandler>;
   concurrency: Record<Lane, number>;
+  /** Job types with their own cap inside their lane (shot videos: one at a time). */
+  typeLimits?: Record<string, number>;
   workerId: string;
   pollMs?: number;
   log?: (message: string) => void;
@@ -62,7 +64,7 @@ export class JobRunner {
   private stopping = false;
 
   constructor(options: RunnerOptions) {
-    this.opts = { pollMs: 250, log: () => {}, ...options };
+    this.opts = { pollMs: 250, log: () => {}, typeLimits: {}, ...options };
   }
 
   start(): void {
@@ -99,10 +101,15 @@ export class JobRunner {
   }
 
   private fill(): void {
-    const { workspace, concurrency, workerId } = this.opts;
+    const { workspace, concurrency, workerId, typeLimits } = this.opts;
     for (const lane of Object.keys(concurrency) as Lane[]) {
       while (this.countLane(lane) < concurrency[lane]) {
-        const job = claimNextJob(workspace.db, lane, workerId);
+        const full = Object.entries(typeLimits)
+          .filter(
+            ([type, max]) => [...this.running.values()].filter((r) => r.job.type === type).length >= max,
+          )
+          .map(([type]) => type);
+        const job = claimNextJob(workspace.db, lane, workerId, Date.now(), full);
         if (!job) break;
         this.launch(job);
       }

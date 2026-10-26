@@ -50,6 +50,16 @@ function BoardPane({
   renderOriginal: (src: string | undefined, alt: string) => React.ReactNode;
 }) {
   const original = originalFrame(d, role, board, keyFrame);
+  // What JEV decided about this moment when the latest key frame was drawn in a batch.
+  const latestKey = d.boards.filter((b) => b.role === 'key').at(-1);
+  const decision =
+    role === 'key'
+      ? undefined
+      : (
+          latestKey?.params.followUpDecision as
+            | Partial<Record<BoardRole, { needed: boolean; similarity: number | null; reason: string }>>
+            | undefined
+        )?.[role];
   const job = useActiveJob('boardId', busy(board) ? board?.id : null);
   const label = BOARD_ROLE_LABEL[role];
   return (
@@ -97,8 +107,10 @@ function BoardPane({
               {board
                 ? `生成失敗${board.error ? `：${board.error}` : ''}`
                 : role === 'key'
-                  ? '按右側「生成分鏡圖」開始（首幀、關鍵幀、尾幀三張）'
-                  : `這一張還沒有：按「生成分鏡圖」；${label}看不到要替換的人時不會畫`}
+                  ? '還沒有關鍵幀：按下面的「生成關鍵幀」，或上面的「三張一起生成」'
+                  : decision && !decision.needed
+                    ? `JEV 判斷不用另外畫${decision.similarity != null ? `（和關鍵幀相似度 ${Math.round(decision.similarity * 100)}%）` : ''}：${decision.reason}。要畫可以按下面的「生成${label}」。`
+                    : `還沒有${label}：按下面的「生成${label}」；${label}看不到要替換的人時不會畫`}
             </div>
           )}
           {board ? (

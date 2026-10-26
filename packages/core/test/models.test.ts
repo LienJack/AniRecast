@@ -63,7 +63,7 @@ function fixture(): { ws: Workspace; projectId: string; shotId: string } {
 describe('selectable models', () => {
   it('lets a project choose its models from the catalogue only', () => {
     const { ws, projectId } = fixture();
-    expect(projectModels(ws.db, projectId).video).toBe('gemini-omni-1.1-flash');
+    expect(projectModels(ws.db, projectId).video).toBe('fal:bytedance/seedance-2.5/us/reference-to-video');
     expect(
       setProjectModels(
         ws.db,
@@ -75,7 +75,9 @@ describe('selectable models', () => {
     expect(() =>
       setProjectModels(ws.db, projectId, { video: 'fal:alibaba/wan-3.0/text-to-video' }, 'user'),
     ).toThrow(/not a selectable video model/);
-    expect(setProjectModels(ws.db, projectId, { video: null }, 'user').video).toBe('gemini-omni-1.1-flash');
+    expect(setProjectModels(ws.db, projectId, { video: null }, 'user').video).toBe(
+      'fal:bytedance/seedance-2.5/us/reference-to-video',
+    );
     ws.close();
   });
 

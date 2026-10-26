@@ -113,6 +113,8 @@ export async function startDaemon(options: StartOptions): Promise<DaemonHandle> 
       io: config.concurrency.io,
       agent: 1,
     },
+    // Images (storyboard frames, design sheets) share the generate lane; shot videos go one at a time.
+    typeLimits: { 'take.generate': config.concurrency.video ?? 1 },
     workerId: `${os.hostname()}:${process.pid}`,
     log,
   });

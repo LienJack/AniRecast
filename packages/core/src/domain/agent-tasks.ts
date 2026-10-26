@@ -2,7 +2,7 @@ import { AniError, newId } from '@anirecast/shared';
 import { all, type Db, fromJson, one, run, toJson, tx } from '../db.ts';
 import { appendEvent } from '../events.ts';
 
-export type AgentTaskKind = 'review_feedback' | 'cast_review' | 'shot_review';
+export type AgentTaskKind = 'review_feedback' | 'cast_review' | 'shot_review' | 'boards_review';
 export type AgentTaskStatus = 'open' | 'claimed' | 'done' | 'needs_user' | 'cancelled';
 /** A claim older than this is assumed abandoned and returned to the queue. */
 export const AGENT_CLAIM_TIMEOUT_MS = 30 * 60_000;

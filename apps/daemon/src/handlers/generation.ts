@@ -2,6 +2,7 @@ import { copyFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   assertWithinBudget,
+  type Board,
   boardFileStem,
   designDir,
   findActiveClip,
@@ -53,6 +54,7 @@ import {
 } from '@anirecast/providers';
 import { AniError, toEnvelopeError, uploadSeconds, videoModelSpec } from '@anirecast/shared';
 import type { JobContext, JobHandler } from '../runner.ts';
+import { finishBoardBatch, followUpKeyBoard } from './board-batch.ts';
 import { directBoard, directTake } from './director.ts';
 import { metered } from './metered.ts';
 import { outPath, span } from './util.ts';
@@ -192,13 +194,33 @@ export const generateBoardHandler: JobHandler = async (ctx) => {
       },
       'daemon',
     );
+    // 生成全部分鏡圖: a key frame decides its first and last frames; the last board of a batch starts Codex's review.
+    await afterBatchBoard(ctx, updated);
     return { result: { board: updated }, costUsd: result.costUsd + directorUsd };
   } catch (error) {
-    if (!signal.aborted)
-      updateBoard(ws.db, boardId, { status: 'failed', error: toEnvelopeError(error).message }, 'daemon');
+    if (!signal.aborted) {
+      const failed = updateBoard(
+        ws.db,
+        boardId,
+        { status: 'failed', error: toEnvelopeError(error).message },
+        'daemon',
+      );
+      await afterBatchBoard(ctx, failed, false);
+    }
     throw error;
   }
 };
+
+/** Batch bookkeeping never fails the board itself. */
+async function afterBatchBoard(ctx: JobContext, board: Board, drawn = true): Promise<void> {
+  if (!board.params.batch) return;
+  try {
+    if (drawn) await followUpKeyBoard(ctx, board);
+    await finishBoardBatch(ctx, getBoard(ctx.workspace.db, board.id));
+  } catch (error) {
+    ctx.progress(1, `batch bookkeeping failed: ${toEnvelopeError(error).message}`);
+  }
+}
 
 /** One character design sheet, drawn by the image model from the persona, style frames and a body crop. */
 export const generateDesignHandler: JobHandler = async (ctx) => {

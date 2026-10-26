@@ -206,6 +206,7 @@ export class AgentDispatcher {
   private threadName(task: AgentTask): string {
     const project = getProject(this.opts.workspace.db, task.projectId);
     if (task.kind === 'shot_review') return `AniRecast · ${project.name} · 分鏡判斷`;
+    if (task.kind === 'boards_review') return `AniRecast · ${project.name} · 分鏡圖總審`;
     if (task.kind === 'cast_review' || !task.shotId) return `AniRecast · ${project.name} · 角色辨識`;
     return `AniRecast · ${project.name} · 分鏡 ${getShot(this.opts.workspace.db, task.shotId).orderIndex + 1}`;
   }
@@ -214,7 +215,7 @@ export class AgentDispatcher {
     const db = this.opts.workspace.db;
     const root = this.opts.workspace.root;
     const scope: ThreadScope =
-      task.kind === 'shot_review'
+      task.kind === 'shot_review' || task.kind === 'boards_review'
         ? 'project_shots'
         : task.kind === 'cast_review' || !task.shotId
           ? 'project_cast'
@@ -306,6 +307,17 @@ export class AgentDispatcher {
   }
 
   private instructions(task: AgentTask): string {
+    if (task.kind === 'boards_review') {
+      const slug = getProject(this.opts.workspace.db, task.projectId).slug;
+      return [
+        `AniRecast 任務 ${task.id}（分鏡圖總審），已經替你領取。這是「生成全部分鏡圖」這一批的最終審核。`,
+        `1. 先執行 \`anirecast tasks show ${task.id}\`：payload.boards 列出每張分鏡圖（分鏡號、首幀／關鍵幀／尾幀、id、路徑），關鍵幀的 followUps 是 JEV 對首尾幀要不要畫的判斷。附上的總覽圖每列一個分鏡：原片關鍵幀｜關鍵幀分鏡圖｜首幀｜尾幀（深色格＝沒畫）。需要細看就開 boards 裡的路徑。`,
+        '2. 逐鏡檢查：替換的角色像不像她的設定集；同一鏡三張的人物是否一致（臉、髮型、服裝、配色）；是否還原原畫面的動作、構圖、位置和光影；畫風是否像原片（線條、眼睛、賽璐璐陰影）；有沒有畫錯人、多畫、漏畫或畫出文字。',
+        `3. 明顯有問題的才重畫，每張最多一次：\`anirecast board generate ${slug} --from <boardId> --extra "<具體要改什麼>" --wait\`，畫完看新圖確認。JEV 判斷不畫、但其實動作差很多的首尾幀，用 \`anirecast board generate ${slug} <shotId> --role first|last --wait\` 補。`,
+        '4. 不要按「通過」，那是人類的決定。',
+        `5. 完成時 \`anirecast tasks done ${task.id} --note "建議通過：#…；重畫了：#…（原因）；需要人看：#…（原因）"\`。`,
+      ].join('\n');
+    }
     return [
       `AniRecast 任務 ${task.id}（${task.kind === 'cast_review' ? '同一人識別判斷' : task.kind === 'shot_review' ? '分鏡切點判斷與最終檢查' : '評審意見'}），已經替你領取。`,
       `1. 先執行 \`anirecast tasks show ${task.id}\` 讀取完整內容（意見、目前版本、輸入檔路徑、建議步驟）。`,

@@ -5,5 +5,6 @@ export default defineConfig({
     include: ['packages/*/test/**/*.test.ts', 'apps/daemon/test/**/*.test.ts'],
     testTimeout: 30_000,
     pool: 'forks',
+    setupFiles: ['./vitest.setup.ts'],
   },
 });

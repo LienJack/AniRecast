@@ -192,6 +192,7 @@ export const TASK_KIND_LABEL: Record<string, string> = {
   review_feedback: '評審意見',
   cast_review: '同一人識別判斷',
   shot_review: '分鏡切點判斷',
+  boards_review: '分鏡圖總審',
 };
 
 export const TARGET_TYPE_LABEL: Record<string, string> = {

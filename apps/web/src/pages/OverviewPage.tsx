@@ -264,8 +264,22 @@ export function OverviewPage() {
   };
   const genBoards = useAction(
     (model: string | undefined) =>
-      api.post<BoardQueue>(`/api/projects/${encodeURIComponent(ref)}/boards`, model ? { model } : {}),
-    { onSuccess: (r) => report(r, '分鏡圖') },
+      api.post<{ queued: unknown[]; skipped: Array<{ shotNo: number; reason: string }> }>(
+        `/api/projects/${encodeURIComponent(ref)}/boards/all`,
+        model ? { model } : {},
+      ),
+    {
+      invalidate: [['project'], ['shot'], qk.jobs],
+      onSuccess: (r) => {
+        toast.success(
+          `已排入 ${r.queued.length} 個分鏡的關鍵幀；畫好後 JEV 判斷首尾幀要不要畫，全部完成後交給 Codex 總審`,
+          r.skipped.length
+            ? { description: `略過 ${r.skipped.length} 個分鏡（已經有關鍵幀或不能生成）` }
+            : undefined,
+        );
+        setBatch(null);
+      },
+    },
   );
   const genTakes = useAction(
     (v: { tier: GenerationTier; model: string | undefined }) =>
@@ -594,7 +608,7 @@ export function OverviewPage() {
         title={batch === 'boards' ? '為所有換角分鏡生成分鏡圖？' : `排入分鏡視頻（${TIER_LABEL[tier]}）？`}
         description={
           batch === 'boards'
-            ? '每個換角分鏡各生成一張新的分鏡圖。使用真實供應器時會產生費用。'
+            ? '每個還沒有關鍵幀的換角分鏡先畫關鍵幀（必畫）；畫好後 JEV 比較首幀、尾幀和關鍵幀，太像的就不畫，其餘照關鍵幀畫以保持人物一致；整批完成後交給 Codex 總審（不會替你按通過）。圖片同時最多 3 張。使用真實供應器時會產生費用。'
             : '只排入還需要生成的換角與去字分鏡（待生成、已過期或失敗的）。使用真實供應器時會產生費用。'
         }
         confirmLabel="開始生成"

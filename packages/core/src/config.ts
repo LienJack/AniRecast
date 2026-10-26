@@ -40,7 +40,8 @@ export interface LocalConfig {
   };
   /** Hard cap on paid provider spend recorded in the workspace cost ledger. null = no cap. */
   budget: { capUsd: number | null };
-  concurrency: { generate: number; media: number; io: number };
+  /** Jobs at once per lane; `video` caps shot videos inside the generate lane (images use the rest). */
+  concurrency: { generate: number; media: number; io: number; video: number };
   /**
    * Codex sessions (review tasks, discussions): the model and reasoning effort every thread and turn asks for;
    * null leaves it to Codex's own config.
@@ -77,7 +78,7 @@ export const DEFAULT_CONFIG: LocalConfig = {
   providers: { jev: { baseUrl: 'https://router.shengsuanyun.com/api/v1' } },
   continuity: { enabled: true, autoMerge: 0.85, review: 0.5, maxShotSeconds: 10 },
   budget: { capUsd: null },
-  concurrency: { generate: 2, media: 2, io: 2 },
+  concurrency: { generate: 3, media: 2, io: 2, video: 1 },
   codex: { autoDispatch: true, binPath: null, model: 'gpt-6.1-sol', effort: 'high' },
   pipeline: { autoAnalyze: true },
   // Omni allows 100 requests a day on API tier 2 (measured 2026-10-25); raise it after upgrading the tier.

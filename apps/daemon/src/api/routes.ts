@@ -67,6 +67,7 @@ import {
   projectOfShot,
   projectOverview,
   projectSummaries,
+  queueAllBoards,
   queueBoard,
   queueBoards,
   queueCastAnalysis,
@@ -770,6 +771,13 @@ export function registerRoutes(
       return {
         note: setDesignNote(ws.db, project.id, getPersona(ws.db, b.personaId).id, b.note ?? '', USER),
       };
+    }),
+  );
+  app.post('/api/projects/:ref/boards/all', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ model?: string }>(c);
+      if (b.model) imageModelOrThrow(b.model);
+      return queueAllBoards(ws, c.req.param('ref'), USER, b.model ? { model: b.model } : {});
     }),
   );
   app.post('/api/projects/:ref/boards', async (c) =>

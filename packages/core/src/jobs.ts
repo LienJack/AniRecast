@@ -134,13 +134,17 @@ export function claimNextJob(
   lane: Lane,
   workerId: string,
   now: number = Date.now(),
+  /** Job types at their own limit (shot videos one at a time): skipped, the next other job is taken. */
+  skipTypes: readonly string[] = [],
 ): Job | undefined {
   return tx(db, () => {
+    const skip = skipTypes.map((_, i) => `:skip${i}`).join(', ');
     const row = one<{ id: string }>(
       db,
       `SELECT id FROM jobs WHERE lane = :lane AND status = 'queued' AND cancel_requested = 0
+       ${skipTypes.length ? `AND type NOT IN (${skip})` : ''}
        ORDER BY created_at, id LIMIT 1`,
-      { lane },
+      { lane, ...Object.fromEntries(skipTypes.map((t, i) => [`skip${i}`, t])) },
     );
     if (!row) return undefined;
     run(
