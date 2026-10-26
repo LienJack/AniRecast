@@ -122,9 +122,18 @@ function PartOf({ take, takes }: { take: Take; takes: Take[] }) {
 const comparePathOf = (take: Take): string | null =>
   typeof take.remote.comparePath === 'string' ? take.remote.comparePath : null;
 
-function defaultTarget(d: ShotDetail): Target | null {
+/**
+ * The video shown when none is picked: the newest at the project tier that did not fail — a failed or cancelled
+ * attempt must not hide the good version before it (shot 34's cancelled touch-ups covered its approved v17).
+ */
+function shownTake(d: ShotDetail): Take | undefined {
   const tierTakes = d.takes.filter((t) => t.tier === d.project.tier);
-  const latestTake = tierTakes.at(-1) ?? d.takes.at(-1);
+  const list = tierTakes.length ? tierTakes : d.takes;
+  return list.filter((t) => t.status !== 'failed').at(-1) ?? list.at(-1);
+}
+
+function defaultTarget(d: ShotDetail): Target | null {
+  const latestTake = shownTake(d);
   const latestBoard = d.boards.at(-1);
   if (d.stage === 'board_review' && latestBoard) return { type: 'board', id: latestBoard.id };
   if (latestTake) return { type: 'take', id: latestTake.id };
@@ -403,10 +412,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
     }
   }, [latestIds, d]);
 
-  const take =
-    d.takes.find((t) => target?.type === 'take' && t.id === target.id) ??
-    d.takes.filter((t) => t.tier === d.project.tier).at(-1) ??
-    d.takes.at(-1);
+  const take = d.takes.find((t) => target?.type === 'take' && t.id === target.id) ?? shownTake(d);
   const approvedTake = d.takes.filter((t) => t.status === 'approved').at(-1);
   const busy = (v: { status: string } | undefined) => v?.status === 'queued' || v?.status === 'generating';
   const takeJob = useActiveJob('takeId', busy(take) ? take?.id : null);

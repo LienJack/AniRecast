@@ -26,7 +26,10 @@ const busy = (b: Board | undefined) => b?.status === 'queued' || b?.status === '
  */
 const shownBoard = (boards: Board[], role: BoardRole, selectedId: string | undefined) => {
   const own = boards.filter((b) => b.role === role);
-  return own.find((b) => b.id === selectedId) ?? own.at(-1);
+  // A failed newest attempt does not hide the frame before it.
+  return (
+    own.find((b) => b.id === selectedId) ?? own.filter((b) => b.status !== 'failed').at(-1) ?? own.at(-1)
+  );
 };
 const approvedOf = (boards: Board[], role: BoardRole) =>
   boards.find((b) => b.role === role && b.status === 'approved');
