@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { uploadSeconds, videoModelSpec } from '@anirecast/shared';
 import { describe, expect, it } from 'vitest';
 import {
   addPersonaImage,
@@ -75,6 +76,13 @@ describe('selectable models', () => {
     ws.close();
   });
 
+  it("pads uploads to each model's minimum and, for Wan 3.0, to whole seconds", () => {
+    expect(uploadSeconds(videoModelSpec('gemini-omni-1.1-flash'), 1.25)).toBe(1.25);
+    expect(uploadSeconds(videoModelSpec(H3), 1.25)).toBe(5);
+    expect(uploadSeconds(videoModelSpec('fal:alibaba/wan-3.0/reference-to-video'), 1.25)).toBe(2);
+    expect(uploadSeconds(videoModelSpec('fal:alibaba/wan-3.0/reference-to-video'), 5.3)).toBe(6);
+  });
+
   it('gives each video model the references it takes', () => {
     const { ws, shotId } = fixture();
     const roles = (model: string) =>
@@ -86,6 +94,8 @@ describe('selectable models', () => {
     expect(planTake(ws, shotId, 'draft', { model: H3 }).prompt).toContain('shown in <IMAGE_REF_0>.');
     // Wan edit: a single reference, the storyboard frame that already shows everyone replaced.
     expect(roles(WAN)).toEqual(['video', 'board']);
+    // Wan 3.0 reference-to-video: the storyboard frame and the character, like Omni.
+    expect(roles('fal:alibaba/wan-3.0/reference-to-video')).toEqual(['video', 'board', 'persona']);
     expect(planTake(ws, shotId, 'draft', { model: WAN }).prompt).toContain(
       'with the character shown in <IMAGE_REF_0>.',
     );

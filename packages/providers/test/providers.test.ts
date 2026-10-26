@@ -313,6 +313,24 @@ describe('fal and JEV routes', () => {
         resolution: '1080p',
         audio_setting: 'origin',
       });
+      await fal.editVideo({
+        ...base,
+        prompt: 'Replace the girl with the character shown in <IMAGE_REF_0> and <IMAGE_REF_1>.',
+        inputSeconds: 3,
+        model: 'fal:alibaba/wan-3.0/reference-to-video',
+      });
+      const wan3 = bodies['alibaba/wan-3.0/reference-to-video'] as Record<string, unknown>;
+      expect(wan3).toMatchObject({
+        reference_video_urls: ['https://cdn/video.mp4'],
+        reference_image_urls: ['https://cdn/a.png', 'https://cdn/b.png'],
+        duration: 3,
+        resolution: '480p',
+        aspect_ratio: '16:9',
+        audio: false,
+      });
+      expect(wan3.prompt).toMatch(/^Video 1 is the original anime shot\./);
+      expect(wan3.prompt).toContain('shown in Image 1 and Image 2.');
+      expect(falVideoFamily('fal:alibaba/wan-3.0/reference-to-video')).toBe('wan-reference');
       await expect(
         fal.editVideo({ ...base, images: [], model: 'fal:minimax/h3-max/recast' }),
       ).rejects.toThrow(/reference image of each new character/);

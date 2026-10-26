@@ -75,6 +75,9 @@ export function estimateVideoEditCost(
     // Per output second (fal pricing, 2026-10-25): H3 Recast 768P 0.30 / 1080P 0.45, Wan 2.7 edit 0.10 / 0.15.
     if (family === 'h3-recast') return Math.max(5, seconds) * (high ? 0.45 : 0.3);
     if (family === 'wan-edit') return Math.max(2, seconds) * (high ? 0.15 : 0.1);
+    // Wan 3.0 reference-to-video bills the reference video's seconds as well as the output's.
+    if (family === 'wan-reference')
+      return 2 * Math.max(2, Math.ceil(seconds)) * (high ? 0.2 : resolution === '720p' ? 0.1 : 0.05);
     return family === 'seedance-reference'
       ? seedanceEstimate(seconds, resolution)
       : Math.max(1, seconds) * FAL_OMNI_PER_SECOND;

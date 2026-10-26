@@ -20,7 +20,7 @@ const PLATFORM = 'https://api.fal.ai/v1';
 type Json = Record<string, unknown>;
 
 /** How a fal endpoint is driven for a video edit. */
-export type FalVideoFamily = 'omni-edit' | 'seedance-reference' | 'h3-recast' | 'wan-edit';
+export type FalVideoFamily = 'omni-edit' | 'seedance-reference' | 'h3-recast' | 'wan-edit' | 'wan-reference';
 
 export function falVideoFamily(model: string): FalVideoFamily | undefined {
   const id = model.startsWith(FAL_PREFIX) ? model.slice(FAL_PREFIX.length) : model;
@@ -28,6 +28,7 @@ export function falVideoFamily(model: string): FalVideoFamily | undefined {
   if (/seedance/.test(id) && id.endsWith('/reference-to-video')) return 'seedance-reference';
   if (/minimax\/h3/.test(id) && id.endsWith('/recast')) return 'h3-recast';
   if (/wan/.test(id) && id.endsWith('/edit-video')) return 'wan-edit';
+  if (/wan-3/.test(id) && id.endsWith('/reference-to-video')) return 'wan-reference';
   return undefined;
 }
 
@@ -64,6 +65,14 @@ export function falError(status: number, body: unknown, what: string): AniError 
 /** Prompts name references as <IMAGE_REF_n>; models without that syntax get plain words. */
 export const plainRefs = (prompt: string, name: (n: number) => string): string =>
   prompt.replace(/<IMAGE_REF_(\d+)>/g, (_m, n: string) => name(Number(n)));
+
+/**
+ * Wan 3.0 reference-to-video makes a new clip from references: Video 1 (the shot) gives motion, framing and
+ * timing; the images (storyboard frame, characters) are Image 1, 2 … in order.
+ */
+export function toWanReferencePrompt(prompt: string): string {
+  return `Video 1 is the original anime shot. Remake it shot for shot: the same camera movement, framing, composition, timing, background, lighting, colours and actions, in the same anime style; change only what follows. ${plainRefs(prompt, (n) => `Image ${n + 1}`)}`;
+}
 
 export function toSeedancePrompt(prompt: string): string {
   return `Edit @Video1. ${prompt.replace(/<IMAGE_REF_(\d+)>/g, (_m, n: string) => `@Image${Number(n) + 1}`)}`;
@@ -190,6 +199,18 @@ export class FalProvider implements Provider {
         video_url: videoUrl,
         reference_image_urls: imageUrls,
         resolution: high ? '1080P' : '768P',
+      };
+    } else if (family === 'wan-reference') {
+      const imageUrls = await Promise.all(req.images.slice(0, 9).map((m) => this.#upload(m, req.signal)));
+      input = {
+        prompt: toWanReferencePrompt(req.prompt),
+        reference_video_urls: [videoUrl],
+        reference_image_urls: imageUrls,
+        // Whole seconds only; the upload was padded to exactly this length.
+        duration: Math.max(2, Math.round(req.inputSeconds)),
+        resolution: high ? '1080p' : req.resolution === '720p' ? '720p' : '480p',
+        aspect_ratio: req.aspectRatio,
+        audio: false,
       };
     } else if (family === 'wan-edit') {
       // duration 0 keeps the input length; one optional reference image (the storyboard frame).

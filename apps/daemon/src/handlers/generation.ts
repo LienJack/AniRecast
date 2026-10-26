@@ -47,7 +47,7 @@ import {
   TIER_SIZE,
   TIER_UPLOAD_HEIGHT,
 } from '@anirecast/providers';
-import { AniError, toEnvelopeError, videoModelSpec } from '@anirecast/shared';
+import { AniError, toEnvelopeError, uploadSeconds, videoModelSpec } from '@anirecast/shared';
 import type { JobContext, JobHandler } from '../runner.ts';
 import { metered } from './metered.ts';
 import { outPath, span } from './util.ts';
@@ -269,15 +269,17 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
         },
       );
     }
-    // Short shots are padded (last frame held) to the model's minimum and frame step, then cut back.
-    const minFrames = Math.ceil((spec.minSeconds * clip.fpsNum) / clip.fpsDen);
+    // Short shots are padded (last frame held) to the model's minimum, whole seconds and frame step, then cut back.
+    const minFrames = Math.ceil((uploadSeconds(spec, seconds) * clip.fpsNum) / clip.fpsDen - 1e-6);
     const video = take.inputs.find((i) => i.role === 'video');
     if (!video) throw new AniError('internal', 'Take has no video input');
     const refs = take.inputs.filter((i) => i.role !== 'video');
     const resolution = TIER_RESOLUTION[take.tier];
     const uploadHeight = TIER_UPLOAD_HEIGHT[take.tier];
-    const uploadSeconds = Math.max(seconds, spec.minSeconds);
-    budgetCheck(ctx, estimateVideoEditCost(take.model, uploadSeconds, resolution, refs.length, uploadHeight));
+    budgetCheck(
+      ctx,
+      estimateVideoEditCost(take.model, uploadSeconds(spec, seconds), resolution, refs.length, uploadHeight),
+    );
     updateTake(ws.db, takeId, { status: 'generating', framesIn: shot.frameCount }, 'daemon');
 
     const cache = projectCacheDir(project);

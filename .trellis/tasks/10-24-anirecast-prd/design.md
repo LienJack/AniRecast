@@ -564,8 +564,11 @@ anirecast cost <p> [--shot <id>]
 ### 13.9 可選模型（Video-to-Video）
 
 - **圖片**：Nano Banana 2.1（Google 直連）、GPT Image 2.5 Sunburst（fal）。
-- **視頻**（都是 Video-to-Video 編輯）：Gemini Omni Flash 1.1（Google 直連）、Seedance 2.5（fal reference-to-video，`task: editing`）、MiniMax H3 Max Recast（fal）、Wan 2.7 Edit（fal）。
-  - Wan 3.0 在 fal 只有 reference-to-video，會重新生成整段，不是編輯，所以先不提供。
+- **視頻**（輸入原片分鏡、輸出換角後的同一鏡）：Gemini Omni Flash 1.1（Google 直連）、Seedance 2.5（fal reference-to-video，`task: editing`）、MiniMax H3 Max Recast（fal）、Wan 3.0（fal reference-to-video）、Wan 2.7 Edit（fal）。
+  - Wan 3.0 在 fal 只有 reference-to-video：把原片當參考影片（Video 1），分鏡圖和角色圖依序當 Image 1、2… 重新生成整段，不是逐幀編輯。
+  - Wan 3.0 的 `duration` 只能是整秒：上傳時用最後一幀補到下一個整秒，指定同樣的秒數，輸出後依時間對齊再剪回分鏡的幀數。參考影片的秒數也計費。
+  - 提示開頭固定是「Video 1 is the original anime shot. Remake it shot for shot…（鏡頭運動、構圖、時間、背景、光影、色彩、動作和畫風都照原片），只改下面這些」，後面接各角色的替換說明。
+  - Wan 2.7 Edit 保留，因為它是真正的逐幀編輯。
 - **每個模型的規格**（`VIDEO_MODELS`）：
   - 能收的參考圖：分鏡圖、每個新角色一張，或兩者都收。
   - 最短與最長輸入：H3 5 秒、Wan 2 秒、Seedance 2 秒。

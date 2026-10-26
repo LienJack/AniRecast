@@ -36,6 +36,8 @@ export interface VideoModelSpec {
   maxSeconds: number;
   /** Output comes in groups of this many frames (Omni: 4); uploads are padded to the step. */
   frameStep: number;
+  /** The model only makes whole seconds (Wan 3.0): uploads are padded to the next whole second. */
+  wholeSeconds?: boolean;
   /**
    * `frames`: output frame i is input frame i, conformed by count. `time`: the output has its own frame rate
    * (and maybe a slightly different length); it is scaled to the input length (±20%) and resampled to the shot.
@@ -96,9 +98,22 @@ export const VIDEO_MODELS: readonly VideoModelSpec[] = [
     timing: 'time',
   },
   {
+    id: 'fal:alibaba/wan-3.0/reference-to-video',
+    label: 'Wan 3.0（reference-to-video）',
+    note: 'fal；以原片為參考影片重新生成（不是逐幀編輯）；分鏡圖＋角色圖；長度補到整秒再剪回；輸入秒數也計費，480p 約 USD 0.10／秒',
+    minRefs: 0,
+    maxRefs: 9,
+    refStyle: 'any',
+    minSeconds: 2,
+    maxSeconds: 15,
+    frameStep: 1,
+    wholeSeconds: true,
+    timing: 'time',
+  },
+  {
     id: 'fal:fal-ai/wan/v2.7/edit-video',
     label: 'Wan 2.7 Edit',
-    note: 'fal；Wan 3.0 在 fal 還沒有影片編輯端點，先用 2.7；一張參考圖（分鏡圖）；輸入至少 2 秒；720p 約 USD 0.10／秒',
+    note: 'fal；真正的逐幀影片編輯；一張參考圖（分鏡圖）；輸入至少 2 秒；720p 約 USD 0.10／秒',
     minRefs: 0,
     maxRefs: 1,
     refStyle: 'board',
@@ -108,6 +123,12 @@ export const VIDEO_MODELS: readonly VideoModelSpec[] = [
     timing: 'time',
   },
 ];
+
+/** How long the upload must be for a shot of `seconds`: the model's minimum, then whole seconds if it needs them. */
+export function uploadSeconds(spec: VideoModelSpec, seconds: number): number {
+  const s = Math.max(seconds, spec.minSeconds);
+  return spec.wholeSeconds ? Math.ceil(s - 1e-6) : s;
+}
 
 /** The spec of a video model; unknown ids get a cautious default for their backend. */
 export function videoModelSpec(model: string): VideoModelSpec {
