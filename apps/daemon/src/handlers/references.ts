@@ -23,9 +23,16 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/537.36 (KHT
 /** Sites that only show images after logging in or via scripts: their pages give nothing to scrape. */
 const SKIP_HOSTS =
   /(^|\.)(pixiv\.net|x\.com|twitter\.com|instagram\.com|facebook\.com|tiktok\.com|youtube\.com)$/i;
-const IMAGE_EXT = /\.(png|jpe?g|webp)(\?|#|$)/i;
+/** An image file in a URL — also wiki-style paths that go on after it (…/sheet.png/revision/latest). */
+const IMAGE_EXT = /\.(png|jpe?g|webp)(?=[/?#]|$)/i;
+/** Page furniture, by file name: logos, icons, buttons, menu and share images, headings. */
+const FURNITURE =
+  /^(m|ttl)_|(^|[_-])(logo|icon|favicon|btn|button|share|sns|arrow|loading|spacer|nav|menu|bnr|banner)([_.-]|\d)/i;
 const MAX_PAGES = 6;
-const MAX_CANDIDATES = 36;
+const MAX_URLS_PER_PAGE = 80;
+const MAX_DOWNLOADS = 160;
+/** How many usable images the vision check sees, shared out between the pages. */
+const MAX_CHECKED = 40;
 const MAX_KEPT = 12;
 
 async function fetchWithin(url: string, ms: number, signal: AbortSignal): Promise<Response> {
@@ -43,8 +50,15 @@ export function imageUrlsOf(html: string, pageUrl: string): string[] {
   const add = (u: string | undefined) => {
     if (!u) return;
     try {
-      const abs = new URL(u.trim().replace(/&amp;/g, '&'), pageUrl).toString();
-      if (IMAGE_EXT.test(abs) && !found.includes(abs)) found.push(abs);
+      const url = new URL(u.trim().replace(/&amp;/g, '&'), pageUrl);
+      const abs = url.toString();
+      const name = decodeURIComponent(
+        url.pathname
+          .split('/')
+          .filter(Boolean)
+          .find((p) => IMAGE_EXT.test(p)) ?? '',
+      );
+      if (IMAGE_EXT.test(abs) && !FURNITURE.test(name) && !found.includes(abs)) found.push(abs);
     } catch {
       // not a URL
     }
@@ -84,7 +98,7 @@ export async function downloadImage(url: string, dir: string, signal: AbortSigna
         : type.includes('jpeg') || type.includes('jpg')
           ? '.jpg'
           : IMAGE_EXT.exec(url)?.[1]
-            ? `.${IMAGE_EXT.exec(url)?.[1]}`
+            ? `.${IMAGE_EXT.exec(url)?.[1]?.toLowerCase()}`
             : null;
     if (!ext) return null;
     const buf = Buffer.from(await res.arrayBuffer());
@@ -100,6 +114,20 @@ export async function downloadImage(url: string, dir: string, signal: AbortSigna
   } catch {
     return null;
   }
+}
+
+/** Runs `fn` over `items`, at most `limit` at a time, keeping their order. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
 }
 
 interface Verdict {
@@ -170,21 +198,33 @@ export const searchReferencesHandler: JobHandler = async (ctx: JobContext) => {
       // unreachable page: skip
     }
   }
+  const seen = new Set<string>();
   const candidates: Array<{ url: string; page: string }> = [];
-  for (const page of pages)
-    for (const url of imageUrlsOf(htmls.get(page) ?? '', page))
-      if (candidates.length < MAX_CANDIDATES && !candidates.some((c) => c.url === url))
-        candidates.push({ url, page });
+  for (const page of pages) {
+    const fresh = imageUrlsOf(htmls.get(page) ?? '', page).filter((url) => !seen.has(url));
+    for (const url of fresh.slice(0, MAX_URLS_PER_PAGE)) {
+      seen.add(url);
+      candidates.push({ url, page });
+    }
+  }
+  candidates.splice(MAX_DOWNLOADS);
 
   const tmp = path.join(ws.abs(projectCacheDir(project)), 'reference-search', job.id);
   mkdirSync(tmp, { recursive: true });
   try {
     progress(0.3, `downloading ${candidates.length} images from ${pages.length} pages`);
-    const files: Array<{ file: string; url: string; page: string }> = [];
-    for (const c of candidates) {
-      const file = await downloadImage(c.url, tmp, signal);
-      if (file) files.push({ file, ...c });
-    }
+    type Download = { file: string; url: string; page: string };
+    const got = (
+      await mapLimit(candidates, 6, async (c): Promise<Download | null> => {
+        const file = await downloadImage(c.url, tmp, signal);
+        return file ? { file, ...c } : null;
+      })
+    ).filter((g): g is Download => g !== null);
+    // Usable images, taken from each page in turn so one long page does not crowd out the others.
+    const byPage = pages.map((page) => got.filter((g) => g.page === page));
+    const files: Download[] = [];
+    for (let i = 0; files.length < MAX_CHECKED && byPage.some((list) => i < list.length); i++)
+      for (const list of byPage) if (list[i] && files.length < MAX_CHECKED) files.push(list[i]!);
     // The character as the clip shows her, to compare against.
     const own = castAppearances(ws, cast.id, 4)
       .map((a) => a.body ?? a.head)
@@ -267,7 +307,14 @@ export const searchReferencesHandler: JobHandler = async (ctx: JobContext) => {
       }
     }
     return {
-      result: { pages, downloaded: files.length, kept: kept.length, answer: found.text.slice(0, 1200) },
+      result: {
+        pages,
+        found: candidates.length,
+        usable: got.length,
+        checked: files.length,
+        kept: kept.length,
+        answer: found.text.slice(0, 1200),
+      },
       costUsd: cost,
     };
   } catch (error) {

@@ -37,17 +37,22 @@ describe('searching official design art', () => {
     const site = path.join(tmp, 'site');
     mkdirSync(site, { recursive: true });
     await picture(path.join(site, 'model.png'), '400x800');
-    await picture(path.join(site, 'banner.png'), '600x400');
+    await picture(path.join(site, 'promo.png'), '600x400');
     await picture(path.join(site, 'icon.png'), '48x48');
+    await picture(path.join(site, 'logo.png'), '400x400');
+    await picture(path.join(site, 'sheet.png'), '500x700');
     const server: Server = createServer((req, res) => {
       if (req.url === '/character/chisato') {
         res.setHeader('content-type', 'text/html; charset=utf-8');
         return res.end(
-          '<html><head><meta property="og:image" content="/img/banner.png"></head><body>' +
-            '<img src="/img/model.png"><img data-src="/img/icon.png"></body></html>',
+          '<html><head><meta property="og:image" content="/img/promo.png"></head><body>' +
+            '<img src="/img/model.png"><img data-src="/img/icon.png"><img src="/img/logo.png">' +
+            '<img src="/wiki/sheet.png/revision/latest?cb=1"></body></html>',
         );
       }
-      const name = req.url?.replace('/img/', '') ?? '';
+      const name = req.url?.startsWith('/wiki/sheet.png')
+        ? 'sheet.png'
+        : (req.url?.replace('/img/', '') ?? '');
       try {
         res.setHeader('content-type', 'image/png');
         res.end(readFileSync(path.join(site, name)));
@@ -89,7 +94,7 @@ describe('searching official design art', () => {
       }),
       vision: (req) => {
         visions.push(req);
-        // Image 1 is her crop from the clip; 2 and 3 come from the web, in page order (banner, model).
+        // Image 1 is her crop from the clip; 2–4 come from the web, in page order (promo picture, model, sheet).
         return {
           images: [
             { image: 2, sameCharacter: false, official: false, score: 0.1, kind: 'other' },
@@ -101,6 +106,7 @@ describe('searching official design art', () => {
               kind: 'turnaround',
               note: 'model sheet',
             },
+            { image: 4, sameCharacter: true, official: true, score: 0.8, kind: 'full body' },
           ],
         };
       },
@@ -127,15 +133,22 @@ describe('searching official design art', () => {
         }
         await new Promise((r) => setTimeout(r, 100));
       }
-      // The icon was too small to download; the banner was judged not official art of her.
-      expect(visions[0]?.images).toHaveLength(3);
+      // The icon was too small to download and the logo is page furniture by name; the promo picture was judged not
+      // official art of her. The wiki-style URL (…/sheet.png/revision/latest) still counts as an image.
+      expect(visions[0]?.images).toHaveLength(4);
       const refs = listReferences(cli.db, chisato.id);
       expect(refs.map((r) => [r.status, r.sourceUrl, r.pageUrl, r.label])).toEqual([
         ['candidate', `${base}/img/model.png`, `${base}/character/chisato`, 'turnaround：model sheet'],
+        [
+          'candidate',
+          `${base}/wiki/sheet.png/revision/latest?cb=1`,
+          `${base}/character/chisato`,
+          'full body',
+        ],
       ]);
       // A URL the human pastes is taken as chosen.
-      const pasted = await addReferenceFromUrl(cli, chisato.id, `${base}/img/banner.png`, 'user');
-      expect(pasted).toMatchObject({ status: 'accepted', sourceUrl: `${base}/img/banner.png` });
+      const pasted = await addReferenceFromUrl(cli, chisato.id, `${base}/img/promo.png`, 'user');
+      expect(pasted).toMatchObject({ status: 'accepted', sourceUrl: `${base}/img/promo.png` });
       cli.close();
     } finally {
       await daemon.stop();
