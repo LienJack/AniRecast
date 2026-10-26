@@ -26,8 +26,9 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
   do not pass `--retry-blocked` yourself; describe what you would change and `anirecast tasks ask`. Holding the
   board instead (`anirecast take still`) or keeping the original is the human's choice, not yours.
 - User decisions are locked (cast assignments made by the human). A `conflict … locked` error means leave it.
-- Generation tiers: `draft` (360p, cheapest, for iterating), `preview` (720p), `final` (1080p). Stay on the
-  project tier unless the task says otherwise; never jump to `final` on your own.
+- Shot videos are made at 1080p (`final`, the project tier); the human chose that for every video. Older
+  `draft` (360p) / `preview` (720p) takes may exist; `take promote` redoes an approved one at 1080p. Do not
+  switch a project to a lower tier on your own.
 
 ## Handling an agent task
 

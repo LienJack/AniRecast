@@ -66,6 +66,8 @@ describe('board → take → render with the fake provider', () => {
         '--name',
         'Gen Test',
       ]);
+      // New projects make 1080p videos; this one is set to the 360p draft tier like an older project.
+      await cliData(t, ['project', 'tier', project.slug, 'draft']);
       await cliData(t, ['clip', 'set', project.slug, '--in', 'f:0', '--out', 'f:155', '--wait']);
       await waitIdle(root);
       const persona = await cliData<{ id: string; slug: string }>(t, [
@@ -250,18 +252,18 @@ describe('board → take → render with the fake provider', () => {
       expect(existsSync(next.target.absPath)).toBe(true);
       expect(next.next).toContain('take generate');
 
-      // Promote an approved draft take to preview: same inputs, 720p output.
+      // Promote an approved draft take: redone at final with the same inputs, 1080p output.
       const promoted = await cliData<{ take: { id: string; tier: string } }>(t, [
         'take',
         'promote',
         shots[2]!.id,
         '--wait',
       ]);
-      expect(promoted.take.tier).toBe('preview');
+      expect(promoted.take.tier).toBe('final');
       const shownPromoted = await cliData<{ take: { path: string } }>(t, ['take', 'show', promoted.take.id]);
       expect(await probe(path.join(root, shownPromoted.take.path), { countFrames: true })).toMatchObject({
         frameCount: shots[2]!.frameCount,
-        height: 720,
+        height: 1080,
       });
 
       const cost = await cliData<{ totalUsd: number }>(t, ['cost']);

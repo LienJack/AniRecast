@@ -800,7 +800,8 @@ export function registerRoutes(
       const b = await body<{ retryBlocked?: boolean; model?: string }>(c);
       const take = getTake(ws.db, c.req.param('id'));
       if (take.status !== 'approved') throw new AniError('conflict', 'Only an approved take can be promoted');
-      const next = TIERS[TIERS.indexOf(take.tier) + 1];
+      // Shot videos are 1080p now: an approved draft or preview take is redone straight at final.
+      const next: GenerationTier | undefined = take.tier === 'final' ? undefined : 'final';
       if (!next) throw new AniError('conflict', 'Already at the final tier');
       if (b.model) videoModelOrThrow(b.model);
       // The approved look came from this take's model: the higher tier uses it too unless told otherwise.

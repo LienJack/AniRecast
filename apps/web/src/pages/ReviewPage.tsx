@@ -48,15 +48,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { api, fileUrl } from '@/lib/api';
 import { useAgentLive } from '@/lib/events';
 import { formatAgo, formatTime, formatUsd } from '@/lib/format';
-import {
-  MODE_LABEL,
-  SHOT_MODES,
-  STAGE_TONE,
-  TIER_LABEL,
-  TIERS,
-  VERDICT_LABEL,
-  VERDICT_TONE,
-} from '@/lib/labels';
+import { MODE_LABEL, SHOT_MODES, STAGE_TONE, TIER_LABEL, VERDICT_LABEL, VERDICT_TONE } from '@/lib/labels';
 import { useAction, useModels, useOverview, useShot } from '@/lib/queries';
 import type {
   AgentTask,
@@ -363,7 +355,8 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
   const [target, setTarget] = useState<Target | null>(() => defaultTarget(d));
   const [comment, setComment] = useState('');
   const [extra, setExtra] = useState('');
-  const [tier, setTier] = useState<GenerationTier>(d.project.tier);
+  // Every shot video is made at the project's tier: 1080p (final) unless an older project says otherwise.
+  const tier: GenerationTier = d.project.tier;
   // Models default to the project's choice; a request can try another.
   const projectModels = useOverview(projectRef).data?.models;
   const models = useModels();
@@ -753,7 +746,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                             onClick={() => promote.mutate(t.id)}
                           >
                             <ArrowUpCircleIcon />
-                            升級到{TIER_LABEL[TIERS[TIERS.indexOf(t.tier) + 1] ?? 'final']}
+                            升級到 1080p
                           </Button>
                         ) : null
                       }
@@ -902,18 +895,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                 <>
                   <ModelSelect kind="video" value={videoModel} onChange={setTakeModel} label="分鏡視頻模型" />
                   <div className="flex items-center gap-2">
-                    <Select value={tier} onValueChange={(v) => setTier(v as GenerationTier)}>
-                      <SelectTrigger size="sm" className="flex-1" aria-label="生成檔位">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TIERS.map((t) => (
-                          <SelectItem key={t} value={t}>
-                            {TIER_LABEL[t]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <span className="flex-1 text-muted-foreground text-xs">輸出 {TIER_LABEL[tier]}</span>
                     <Button
                       variant="secondary"
                       disabled={genTake.isPending}

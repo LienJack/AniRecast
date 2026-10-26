@@ -6,12 +6,11 @@ import { EmptyState, ErrorState, Kbd, Loading, PageHeader, Tag } from '@/compone
 import { Generating } from '@/components/generating';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { api, fileUrl } from '@/lib/api';
 import { formatTime } from '@/lib/format';
-import { RENDER_STATUS_LABEL, RENDER_STATUS_TONE, TIER_LABEL, TIERS } from '@/lib/labels';
+import { RENDER_STATUS_LABEL, RENDER_STATUS_TONE, TIER_LABEL } from '@/lib/labels';
 import { qk, useAction, useJobs, useOverview, useRenders } from '@/lib/queries';
-import type { GenerationTier, Job, Render } from '@/lib/types';
+import type { Job, Render } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { isTypingTarget } from '@/lib/video';
 
@@ -20,14 +19,13 @@ export function RendersPage() {
   const overview = useOverview(ref);
   const renders = useRenders(ref);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [tier, setTier] = useState<GenerationTier | null>(null);
   const sliderRef = useRef<CompareSliderHandle>(null);
 
   const create = useAction(
     (draft: boolean) =>
       api.post<{ render: Render; job: Job }>(`/api/projects/${encodeURIComponent(ref)}/renders`, {
         draft,
-        tier: tier ?? overview.data?.project.generationTier,
+        tier: overview.data?.project.generationTier,
       }),
     {
       success: (_r, draft) => (draft ? '已排入草稿合成' : '已排入正式合成'),
@@ -64,7 +62,7 @@ export function RendersPage() {
   const clip = overview.data.clip;
   const fps = clip ? { num: clip.fpsNum, den: clip.fpsDen } : { num: 24, den: 1 };
   const shotIndex = new Map(overview.data.shots.map((s) => [s.id, s.orderIndex + 1]));
-  const effectiveTier = tier ?? overview.data.project.generationTier;
+  const effectiveTier = overview.data.project.generationTier;
 
   return (
     <div className="flex flex-col">
@@ -79,18 +77,7 @@ export function RendersPage() {
         }
         actions={
           <>
-            <Select value={effectiveTier} onValueChange={(v) => setTier(v as GenerationTier)}>
-              <SelectTrigger size="sm" aria-label="合成檔位">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TIERS.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {TIER_LABEL[t]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <span className="text-muted-foreground text-xs">輸出 {TIER_LABEL[effectiveTier]}</span>
             <Button
               size="sm"
               variant="secondary"

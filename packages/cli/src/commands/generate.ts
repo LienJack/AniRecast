@@ -474,7 +474,7 @@ export function registerGenerate(program: Command): void {
   take
     .command('promote <shot>')
     .description(
-      'Regenerate the approved take at the next tier (draft → preview → final) with the same inputs',
+      'Regenerate the approved take at final (1080p) with the same inputs (every shot video is 1080p now)',
     )
     .option('--retry-blocked', 'send even if the safety filter keeps blocking this shot')
     .option('--wait')
@@ -483,8 +483,8 @@ export function registerGenerate(program: Command): void {
         withWorkspace(globals(), async (ws) => {
           const approved = approvedTake(ws.db, shotId);
           if (!approved) throw new AniError('conflict', 'This shot has no approved take to promote');
-          const next = TIERS[TIERS.indexOf(approved.tier) + 1];
-          if (!next) throw new AniError('conflict', 'Already at the final tier');
+          if (approved.tier === 'final') throw new AniError('conflict', 'Already at the final tier');
+          const next = 'final' as const;
           const q = queueTake(ws, shotId, next, actorFromEnv(), {
             fromTakeId: approved.id,
             retryBlocked: Boolean(opts.retryBlocked),

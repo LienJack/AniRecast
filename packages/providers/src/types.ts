@@ -104,8 +104,8 @@ export const TIER_RESOLUTION: Record<Tier, VideoResolution> = {
   preview: '720p',
   final: '1080p',
 };
-/** Upload height per tier; input tokens scale with it. Final's upload height is an M0 decision. */
-export const TIER_UPLOAD_HEIGHT: Record<Tier, number> = { draft: 360, preview: 720, final: 720 };
+/** Upload height per tier; input tokens scale with it. Final sends the shot at 1080 (every video is 1080p). */
+export const TIER_UPLOAD_HEIGHT: Record<Tier, number> = { draft: 360, preview: 720, final: 1080 };
 /** Conformed output size per tier. */
 export const TIER_SIZE: Record<Tier, { width: number; height: number }> = {
   draft: { width: 640, height: 360 },

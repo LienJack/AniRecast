@@ -16,7 +16,6 @@ import { ModeBadge, StageBadge, TaskCard } from '@/components/domain';
 import { ModelSelect } from '@/components/models';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { api, fileUrl } from '@/lib/api';
 import { formatDuration, formatTime, formatTimecode, formatUsd } from '@/lib/format';
@@ -27,7 +26,6 @@ import {
   STAGE_ORDER,
   STAGE_TONE,
   TIER_LABEL,
-  TIERS,
   type Tone,
 } from '@/lib/labels';
 import { qk, useAction, useOverview, useProjectCost, useWorkspace } from '@/lib/queries';
@@ -249,19 +247,19 @@ export function OverviewPage() {
         actions={
           <>
             <DiscussInCodex projectRef={ref} targetType="project" what="整個項目" />
-            <span className="text-muted-foreground text-xs">生成檔位</span>
-            <Select value={tier} onValueChange={(v) => setTier.mutate(v as GenerationTier)}>
-              <SelectTrigger size="sm" aria-label="生成檔位">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TIERS.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {TIER_LABEL[t]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {tier === 'final' ? (
+              <span className="text-muted-foreground text-xs">分鏡視頻 1080p</span>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={setTier.isPending}
+                title={`這個項目目前是${TIER_LABEL[tier]}；分鏡視頻一律用 1080p`}
+                onClick={() => setTier.mutate('final')}
+              >
+                改用 1080p
+              </Button>
+            )}
           </>
         }
       />

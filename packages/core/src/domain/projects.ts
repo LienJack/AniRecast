@@ -77,8 +77,9 @@ export function createProject(
     const id = newId('prj', now);
     run(
       db,
-      `INSERT INTO projects (id, slug, name, source_id, created_at, updated_at)
-       VALUES (:id, :slug, :name, :sourceId, :now, :now)`,
+      // Shot videos are made at 1080p (generation tier final) unless a project is set otherwise.
+      `INSERT INTO projects (id, slug, name, source_id, generation_tier, created_at, updated_at)
+       VALUES (:id, :slug, :name, :sourceId, 'final', :now, :now)`,
       { id, slug, name: input.name, sourceId: input.sourceId, now },
     );
     const project = getProject(db, id);
