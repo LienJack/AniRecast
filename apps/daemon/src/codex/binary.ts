@@ -63,3 +63,14 @@ export function resolveCodexCommand(
   }
   return found.sort((a, b) => compareVersions(b.version, a.version))[0];
 }
+
+/** The model and reasoning effort a turn asks for (config.codex); nothing set leaves it to Codex's own config. */
+export function codexTurnModel(codex: { model: string | null; effort: string | null }): {
+  model?: string;
+  effort?: string;
+} {
+  return {
+    ...(codex.model ? { model: codex.model } : {}),
+    ...(codex.effort ? { effort: codex.effort } : {}),
+  };
+}

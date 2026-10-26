@@ -8,7 +8,7 @@ import {
   type Workspace,
 } from '@anirecast/core';
 import { toEnvelopeError } from '@anirecast/shared';
-import { type CodexCommand, resolveCodexCommand } from './binary.ts';
+import { type CodexCommand, codexTurnModel, resolveCodexCommand } from './binary.ts';
 import type { AppServerClient, Notification } from './client.ts';
 import { codexCommandMissing, desktopProjectId, SKILL_PATH, startCodexClient } from './dispatcher.ts';
 
@@ -86,6 +86,7 @@ export class CodexDiscussions {
           approvalPolicy: 'never',
           sandbox: 'workspace-write',
           serviceName: 'anirecast',
+          ...(this.opts.config.codex.model ? { model: this.opts.config.codex.model } : {}),
           ...(projectId ? { projectId } : {}),
         },
       );
@@ -97,6 +98,7 @@ export class CodexDiscussions {
       const finished = this.waitForTurn(client, threadId);
       await client.request('turn/start', {
         threadId,
+        ...codexTurnModel(this.opts.config.codex),
         cwd: ws.root,
         approvalPolicy: 'never',
         sandboxPolicy: { type: 'workspaceWrite', networkAccess: false, writableRoots: [ws.root] },

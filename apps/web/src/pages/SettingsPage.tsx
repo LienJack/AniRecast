@@ -71,6 +71,14 @@ export function SettingsPage() {
                   }
                 />
                 <Row label="Codex 自動派發" value={settings.data.codex.autoDispatch ? '開啟' : '關閉'} />
+                <Row
+                  label="Codex 模型"
+                  value={
+                    settings.data.codex.model
+                      ? `${settings.data.codex.model}${settings.data.codex.effort ? `（推理 ${settings.data.codex.effort}）` : ''}`
+                      : '用 Codex 自己的設定'
+                  }
+                />
                 {settings.data.quota
                   .filter((q) => q.limit !== null)
                   .map((q) => (

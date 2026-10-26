@@ -211,7 +211,11 @@ export function registerRoutes(
           provider: process.env.ANIRECAST_PROVIDER ?? config.provider,
           models: config.models,
           budget: config.budget,
-          codex: { autoDispatch: config.codex.autoDispatch },
+          codex: {
+            autoDispatch: config.codex.autoDispatch,
+            model: config.codex.model,
+            effort: config.codex.effort,
+          },
           recentWorkspaces: config.recentWorkspaces,
         },
         spend: { totalUsd: totalSpend(ws.db) },
@@ -961,7 +965,11 @@ export function registerRoutes(
         limits: config.limits,
         continuity: config.continuity,
         budget: config.budget,
-        codex: { autoDispatch: config.codex.autoDispatch },
+        codex: {
+          autoDispatch: config.codex.autoDispatch,
+          model: config.codex.model,
+          effort: config.codex.effort,
+        },
         quota: quotaView(ws),
       };
     }),

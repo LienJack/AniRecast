@@ -84,11 +84,14 @@ describe('codex dispatcher (mock app-server)', () => {
         approvalPolicy: 'never',
         sandbox: 'workspace-write',
         serviceName: 'anirecast',
+        // The configured Codex model (gpt-6.1-sol by default) on the thread, and with its effort on the turn.
+        model: TEST_CONFIG.codex.model,
       });
       expect(calls.find((c) => c.method === 'thread/name/set').params.name).toBe(
         'AniRecast · Dispatch · 角色辨識',
       );
       const turn = calls.find((c) => c.method === 'turn/start');
+      expect(turn.params).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' });
       expect(turn.params.sandboxPolicy).toEqual({
         type: 'workspaceWrite',
         networkAccess: false,

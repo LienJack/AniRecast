@@ -21,7 +21,7 @@ import {
   type Workspace,
 } from '@anirecast/core';
 import { AniError, toEnvelopeError } from '@anirecast/shared';
-import { type CodexCommand, resolveCodexCommand } from './binary.ts';
+import { type CodexCommand, codexTurnModel, resolveCodexCommand } from './binary.ts';
 import { AppServerClient, type Notification } from './client.ts';
 
 export const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -221,7 +221,13 @@ export class AgentDispatcher {
           : 'shot';
     const scopeId = scope === 'shot' ? (task.shotId as string) : task.projectId;
     const projectId = await this.resolveProjectId(client);
-    const common = { cwd: root, approvalPolicy: 'never', sandbox: 'workspace-write' };
+    const { model } = this.opts.config.codex;
+    const common = {
+      cwd: root,
+      approvalPolicy: 'never',
+      sandbox: 'workspace-write',
+      ...(model ? { model } : {}),
+    };
     const existing = findCodexThread(db, scope, scopeId);
     if (existing) {
       try {
@@ -350,6 +356,7 @@ export class AgentDispatcher {
     );
     await client.request('turn/start', {
       threadId,
+      ...codexTurnModel(this.opts.config.codex),
       cwd: ws.root,
       approvalPolicy: 'never',
       sandboxPolicy: { type: 'workspaceWrite', networkAccess: false, writableRoots: [ws.root] },

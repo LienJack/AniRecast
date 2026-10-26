@@ -88,7 +88,7 @@ export interface WorkspaceInfo {
     provider: LocalConfig['provider'] | string;
     models: LocalConfig['models'];
     budget: LocalConfig['budget'];
-    codex: { autoDispatch: boolean };
+    codex: { autoDispatch: boolean; model: string | null; effort: string | null };
     recentWorkspaces: string[];
   };
   spend: { totalUsd: number };
@@ -154,7 +154,7 @@ export interface SettingsInfo {
   limits: LocalConfig['limits'];
   continuity: LocalConfig['continuity'];
   budget: LocalConfig['budget'];
-  codex: { autoDispatch: boolean };
+  codex: { autoDispatch: boolean; model: string | null; effort: string | null };
   quota: QuotaStatus[];
 }
 
