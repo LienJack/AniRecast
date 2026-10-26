@@ -210,15 +210,41 @@ export function ShotCastEditor({
         const open = expanded[g.key] ?? (g.entries.length <= 2 || doubts > 0);
         return (
           <div key={g.key} className="flex flex-col gap-1.5 rounded-md border bg-background/40 p-2">
-            <div className="flex items-start gap-2">
-              <div className="flex shrink-0 -space-x-6">
-                {g.entries.slice(0, 3).map((e, i) => (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="font-medium">{g.cast ? `「${g.label}」` : g.label}</span>
+              <span className="text-muted-foreground">{g.entries.length} 個偵測</span>
+              {pending.length ? (
+                <Tag tone="info">AI 判斷・待確認 {pending.length}</Tag>
+              ) : g.entries.every((e) => e.tracklet.assignedBy === 'user') ? (
+                <Tag tone="success">
+                  <CheckIcon />
+                  你已確認
+                </Tag>
+              ) : null}
+              {doubts ? <Tag tone="warning">AI 有 {doubts} 個看法不同</Tag> : null}
+              {pending.length ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-auto h-6 px-2 text-[11px]"
+                  disabled={busy}
+                  title="這一組都當成你的決定（之後 Codex 不會再改）"
+                  onClick={() => confirmAll.mutate(pending)}
+                >
+                  <CheckIcon />
+                  確認
+                </Button>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex shrink-0 -space-x-4">
+                {g.entries.slice(0, 4).map((e, i) => (
                   <Thumb
                     key={e.tracklet.id}
                     src={fileUrl(e.tracklet.bodyCropPath ?? e.tracklet.headCropPath)}
                     alt={`${g.label} ${i + 1}`}
                     fit="contain"
-                    className="size-14 rounded bg-background ring-2 ring-background"
+                    className="size-12 rounded bg-background ring-2 ring-background"
                     zoom
                     gallery={g.entries.map((x, k) => ({
                       src: fileUrl(x.tracklet.bodyCropPath ?? x.tracklet.headCropPath) ?? '',
@@ -227,87 +253,60 @@ export function ShotCastEditor({
                   />
                 ))}
               </div>
-              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="font-medium">{g.cast ? `「${g.label}」` : g.label}</span>
-                  <span className="text-muted-foreground">{g.entries.length} 個偵測</span>
-                  {pending.length ? (
-                    <Tag tone="info">AI 判斷・待確認 {pending.length}</Tag>
-                  ) : g.entries.every((e) => e.tracklet.assignedBy === 'user') ? (
-                    <Tag tone="success">
-                      <CheckIcon />
-                      你已確認
-                    </Tag>
+              {castId ? (
+                <>
+                  <ArrowRightIcon className="size-4 shrink-0 text-muted-foreground" />
+                  {now ? (
+                    <Thumb
+                      src={primaryImage(now)}
+                      alt={now.name}
+                      fit="contain"
+                      className="size-12 shrink-0 rounded"
+                      zoom
+                    />
                   ) : null}
-                  {doubts ? <Tag tone="warning">AI 有 {doubts} 個看法不同</Tag> : null}
-                  {pending.length ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="ml-auto h-6 px-2 text-[11px]"
-                      disabled={busy}
-                      title="這一組都當成你的決定（之後 Codex 不會再改）"
-                      onClick={() => confirmAll.mutate(pending)}
-                    >
-                      <CheckIcon />
-                      確認
-                    </Button>
-                  ) : null}
-                </div>
-                {castId ? (
-                  <>
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-10 shrink-0 text-muted-foreground">換成</span>
-                      <Select
-                        value={choice}
-                        disabled={busy}
-                        onValueChange={(v) => override.mutate({ castId, choice: v })}
-                      >
-                        <SelectTrigger size="sm" className="min-w-0 flex-1" aria-label={`${g.label} 換成誰`}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={PROJECT_DEFAULT}>
-                            照角色設定（{mapped ? `換成 ${mapped.name}` : '不換'}）
-                          </SelectItem>
-                          <SelectItem value={KEEP}>這一鏡保留原角色</SelectItem>
-                          {personas.map((p) => (
-                            <SelectItem key={p.id} value={p.id}>
-                              換成 {p.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                      {g.label}
-                      <ArrowRightIcon className="size-3" />
-                      {now ? <span className="text-violet-200">{now.name}</span> : <span>保留原角色</span>}
-                      {first.override ? <span className="text-sky-300">（只有這一鏡）</span> : null}
-                      {!mapped && !first.override ? (
-                        <span className="text-amber-200">（還沒綁定物料庫角色）</span>
-                      ) : null}
-                      <Link
-                        to="/projects/$ref/cast/$castId"
-                        params={{ ref: projectRef, castId }}
-                        className="ml-auto text-primary hover:underline"
-                      >
-                        角色頁
-                      </Link>
-                    </span>
-                  </>
-                ) : null}
-              </div>
-              {now ? (
-                <Thumb
-                  src={primaryImage(now)}
-                  alt={now.name}
-                  fit="contain"
-                  className="size-14 shrink-0 rounded"
-                  zoom
-                />
+                  <span className="min-w-0 text-[11px]">
+                    {now ? <span className="text-violet-200">{now.name}</span> : '保留原角色'}
+                    {first.override ? <span className="text-sky-300">（只有這一鏡）</span> : null}
+                    {!mapped && !first.override ? (
+                      <span className="block text-amber-200">還沒綁定物料庫角色</span>
+                    ) : null}
+                  </span>
+                </>
               ) : null}
             </div>
+            {castId ? (
+              <div className="flex items-center gap-1.5">
+                <span className="shrink-0 text-muted-foreground">換成</span>
+                <Select
+                  value={choice}
+                  disabled={busy}
+                  onValueChange={(v) => override.mutate({ castId, choice: v })}
+                >
+                  <SelectTrigger size="sm" className="min-w-0 flex-1" aria-label={`${g.label} 換成誰`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={PROJECT_DEFAULT}>
+                      照角色設定（{mapped ? `換成 ${mapped.name}` : '不換'}）
+                    </SelectItem>
+                    <SelectItem value={KEEP}>這一鏡保留原角色</SelectItem>
+                    {personas.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        換成 {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Link
+                  to="/projects/$ref/cast/$castId"
+                  params={{ ref: projectRef, castId }}
+                  className="shrink-0 text-[11px] text-primary hover:underline"
+                >
+                  角色頁
+                </Link>
+              </div>
+            ) : null}
             <button
               type="button"
               className="self-start text-[11px] text-muted-foreground hover:text-foreground"
