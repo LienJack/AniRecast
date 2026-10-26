@@ -1072,7 +1072,15 @@ export function takeBrief(
     maxRefs: number;
     attachments?: string[];
     /** A partial take: the part it redoes, its own clip, and the kept frames around it. */
-    part?: { range: FrameRange; video: string; seams: Array<{ label: string; path: string }> };
+    part?: {
+      range: FrameRange;
+      video: string;
+      seams: Array<{ label: string; path: string }>;
+      /** Hard cuts inside the part (frames of the shot), and whether it starts or ends at one. */
+      cuts?: number[];
+      startsAtCut?: boolean;
+      endsAtCut?: boolean;
+    };
   },
 ): TakeBrief {
   const shot = getShot(ws.db, shotId);
@@ -1118,6 +1126,16 @@ export function takeBrief(
     facts.push(
       `The model edits ONLY frames ${start}–${end} of this shot (${((end - start + 1) / fps).toFixed(2)} s): "the clip" and the video you watch are that part. The rest of the shot is already made and kept, so this part must join it seamlessly — the same new characters, looks, light and colour as the kept frames (shown in the references labelled "already made").`,
     );
+    const { cuts = [], startsAtCut, endsAtCut } = opts.part;
+    if (startsAtCut)
+      facts.push(
+        'This part starts at a cut: it opens on its own camera set-up (look at its first frame), not on the picture before it. Keep its framing, subject and scale exactly; do not continue the previous cut.',
+      );
+    if (endsAtCut) facts.push('This part ends at a cut: the picture after it is another camera set-up.');
+    for (const f of cuts)
+      facts.push(
+        `There is a cut inside this part at ${((f - start) / fps).toFixed(2)} s (frame ${f} of the shot): before and after it are different camera set-ups; keep both and the cut where it is.`,
+      );
   }
   if (shot.description?.trim()) facts.push(`What happens in the shot: ${shot.description.trim()}`);
   for (const use of uses) {

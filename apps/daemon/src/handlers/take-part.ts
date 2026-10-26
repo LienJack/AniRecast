@@ -1,5 +1,12 @@
 import type { Clip, FrameRange, Shot } from '@anirecast/core';
-import { decodedFrames, extractFrame, extractVideoSegment, rangePsnr, spliceRange } from '@anirecast/media';
+import {
+  decodedFrames,
+  extractFrame,
+  extractVideoSegment,
+  rangePsnr,
+  sceneChanges,
+  spliceRange,
+} from '@anirecast/media';
 import { AniError } from '@anirecast/shared';
 import type { JobContext } from '../runner.ts';
 import { outPath } from './util.ts';
@@ -21,7 +28,14 @@ export async function cutPart(
     dir,
     stem,
   }: { shot: Shot; clip: Clip; range: FrameRange; keepPath: string; dir: string; stem: string },
-): Promise<{ range: FrameRange; video: string; seams: Array<{ label: string; path: string }> }> {
+): Promise<{
+  range: FrameRange;
+  video: string;
+  seams: Array<{ label: string; path: string }>;
+  cuts: number[];
+  startsAtCut: boolean;
+  endsAtCut: boolean;
+}> {
   const { workspace: ws, signal } = ctx;
   if (!shot.sourcePath) throw new AniError('conflict', 'Shot source segment is not prepared yet');
   const frames = range.end - range.start + 1;
@@ -44,11 +58,20 @@ export async function cutPart(
       path,
     });
   };
-  if (range.start > 0)
+  // At a cut there is nothing to flow from or into: shot 24's part began at its close-up, was told to "start out
+  // of" the kept wide shot before it, and stayed a wide shot.
+  const changes = await sceneChanges(ws.abs(shot.sourcePath), { signal });
+  const cutAt = (f: number) => changes.some((c) => c.kind === 'cut' && Math.abs(c.frame - f) <= 1);
+  const startsAtCut = range.start > 0 && cutAt(range.start);
+  const endsAtCut = range.end < shot.frameCount - 1 && cutAt(range.end + 1);
+  const cuts = changes
+    .filter((c) => c.kind === 'cut' && c.frame > range.start + 1 && c.frame <= range.end)
+    .map((c) => c.frame);
+  if (range.start > 0 && !startsAtCut)
     await kept(range.start - 1, 'right before this part — it must start out of this frame');
-  if (range.end < shot.frameCount - 1)
+  if (range.end < shot.frameCount - 1 && !endsAtCut)
     await kept(range.end + 1, 'right after this part — it must flow into this frame');
-  return { range, video, seams };
+  return { range, video, seams, cuts, startsAtCut, endsAtCut };
 }
 
 /**
