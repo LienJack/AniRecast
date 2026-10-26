@@ -28,13 +28,17 @@ const FINISHED = ['ready', 'approved', 'stale', 'rejected'];
 const isBusy = (v: { status: string } | undefined) => v?.status === 'queued' || v?.status === 'generating';
 const invalidate = [['shot'], ['project']];
 
-/** The model a panel's buttons use: picked here, else the shown version's own (if in the catalogue), else the project's. */
+/**
+ * The model a panel's buttons use: picked here, else — for a storyboard frame — the shown version's own (if in the
+ * catalogue), else the project's. Videos always start from the project's video model, whatever made the one on show.
+ */
 function useModelPick(kind: 'image' | 'video', version: { model: string } | undefined, projectRef: string) {
   const catalogue = useModels().data;
   const project = useOverview(projectRef).data?.models;
   const [picked, setPicked] = useState<string | undefined>(undefined);
   const list = kind === 'image' ? catalogue?.image : catalogue?.video;
-  const own = version && list?.some((m) => m.id === version.model) ? version.model : undefined;
+  const own =
+    kind === 'image' && version && list?.some((m) => m.id === version.model) ? version.model : undefined;
   return [picked ?? own ?? (kind === 'image' ? project?.image : project?.video), setPicked] as const;
 }
 

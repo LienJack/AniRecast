@@ -35,12 +35,12 @@ import {
 } from '@/components/domain';
 import { Generating, ShimmerText, useActiveJob } from '@/components/generating';
 import { ShotCastEditor } from '@/components/shot-cast';
-import { TakeVersions } from '@/components/take-versions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TakeActions } from '@/components/version-actions';
+import { VersionStrip } from '@/components/version-strip';
 import { api, fileUrl } from '@/lib/api';
 import { useAgentLive } from '@/lib/events';
 import { formatAgo, formatTime, formatUsd } from '@/lib/format';
@@ -580,9 +580,11 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                 ) : null}
               </CardHeader>
               <CardContent>
-                <TakeVersions
-                  takes={d.takes}
+                <VersionStrip
+                  kind="video"
+                  versions={d.takes}
                   current={take}
+                  keys={target?.type === 'take'}
                   onSelect={(id) => setTarget({ type: 'take', id })}
                 />
                 {take && takeCompare ? (

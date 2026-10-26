@@ -665,7 +665,8 @@ export function settleCast(
 
 /**
  * Records a verdict and performs its follow-up (agent task for changes, a new version for regenerate). Regenerate
- * keeps the version's model unless `model` names another one of the same kind.
+ * uses `model` when it names one of the same kind; otherwise a storyboard frame keeps its own model and a video
+ * goes to the project's video model (the default for every video).
  */
 export function submitReview(
   ws: Workspace,
@@ -736,7 +737,7 @@ export function submitReview(
         })
       : queueTake(ws, target.shotId, (target as ReturnType<typeof getTake>).tier, input.actor, {
           fromTakeId: input.targetId,
-          model: input.model ?? target.model,
+          model: input.model ?? projectModels(ws.db, project.id).video,
         });
     return {
       review,

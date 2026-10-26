@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BoardActions } from '@/components/version-actions';
+import { VersionStrip } from '@/components/version-strip';
 import { api, fileUrl } from '@/lib/api';
 import { BOARD_ROLE_LABEL, BOARD_ROLES } from '@/lib/labels';
 import { useAction } from '@/lib/queries';
@@ -47,8 +48,11 @@ function BoardPane({
   keyFrame,
   renderOriginal,
   onSelect,
+  keys,
 }: {
   onSelect: (boardId: string) => void;
+  /** [ and ] switch this moment's versions (the board under review is one of them). */
+  keys: boolean;
   projectRef: string;
   d: ShotDetail;
   role: BoardRole;
@@ -72,6 +76,13 @@ function BoardPane({
   const label = BOARD_ROLE_LABEL[role];
   return (
     <div className="flex flex-col gap-3">
+      <VersionStrip
+        kind="image"
+        versions={d.boards.filter((b) => b.role === role)}
+        current={board}
+        keys={keys}
+        onSelect={onSelect}
+      />
       <div className="grid gap-3 md:grid-cols-2">
         <div className="flex flex-col gap-1">
           <span className="text-muted-foreground text-xs">
@@ -251,6 +262,7 @@ export function BoardTabs({
             <TabsContent key={r} value={r} className="pt-3">
               <BoardPane
                 onSelect={onSelect}
+                keys={Boolean(selected) && r === role}
                 projectRef={projectRef}
                 d={d}
                 role={r}
