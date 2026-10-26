@@ -1,18 +1,14 @@
 import { Link, Navigate, useNavigate, useParams } from '@tanstack/react-router';
 import {
   ArrowUpCircleIcon,
-  CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   ImageIcon,
-  MessageSquareIcon,
-  RefreshCwIcon,
   ScissorsIcon,
   SparklesIcon,
-  UndoIcon,
   VideoIcon,
 } from 'lucide-react';
-import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { BoardTabs } from '@/components/board-tabs';
 import { CompareSlider, type CompareSliderHandle } from '@/components/CompareSlider';
@@ -38,15 +34,12 @@ import {
   VersionBadge,
 } from '@/components/domain';
 import { Generating, ShimmerText, useActiveJob } from '@/components/generating';
-import { ModelSelect } from '@/components/models';
 import { ShotCastEditor } from '@/components/shot-cast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
+import { TakeActions } from '@/components/version-actions';
 import { api, fileUrl } from '@/lib/api';
 import { useAgentLive } from '@/lib/events';
 import { formatAgo, formatTime, formatUsd } from '@/lib/format';
@@ -59,18 +52,16 @@ import {
   VERDICT_LABEL,
   VERDICT_TONE,
 } from '@/lib/labels';
-import { qk, useAction, useModels, useOverview, useShot } from '@/lib/queries';
+import { useAction, useOverview, useShot } from '@/lib/queries';
 import type {
   AgentTask,
   Board,
-  BoardQueue,
   GenerationTier,
   OverviewShot,
   ReviewResult,
   ShotDetail,
   ShotMode,
   Take,
-  TakeQueue,
   Verdict,
   WithReviews,
 } from '@/lib/types';
@@ -362,23 +353,10 @@ export function ReviewPage() {
 function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewShot[]; projectRef: string }) {
   const navigate = useNavigate();
   const sliderRef = useRef<CompareSliderHandle>(null);
-  const commentRef = useRef<HTMLTextAreaElement>(null);
   const [target, setTarget] = useState<Target | null>(() => defaultTarget(d));
-  const [comment, setComment] = useState('');
-  const [extra, setExtra] = useState('');
   // Every shot video is made at the project's tier: 1080p (final) unless an older project says otherwise.
   const tier: GenerationTier = d.project.tier;
-  // Models default to the project's choice; a request can try another.
-  const projectModels = useOverview(projectRef).data?.models;
-  const models = useModels();
-  const [boardModel, setBoardModel] = useState<string | undefined>(undefined);
-  const [takeModel, setTakeModel] = useState<string | undefined>(undefined);
-  const imageModel = boardModel ?? projectModels?.image;
-  const videoModel = takeModel ?? projectModels?.video;
-  const [forceTake, setForceTake] = useState(false);
   const [confirmKeep, setConfirmKeep] = useState(false);
-  const commentId = useId();
-  const extraId = useId();
   const [tab, setTab] = useState<'board' | 'take'>(
     target?.type ?? (d.shot.mode === 'replace' ? 'board' : 'take'),
   );
@@ -407,16 +385,6 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
     d.takes.at(-1);
   const busy = (v: { status: string } | undefined) => v?.status === 'queued' || v?.status === 'generating';
   const takeJob = useActiveJob('takeId', busy(take) ? take?.id : null);
-  // 預覽 AI 提示詞: the video director's plan for the chosen model, without making the video.
-  const planning = useActiveJob('shotId', shot.id, 'take.plan');
-  const previewPlan = useAction(
-    () =>
-      api.post(`/api/shots/${shot.id}/takes/plan`, {
-        ...(videoModel ? { model: videoModel } : {}),
-        ...(extra.trim() ? { extra: extra.trim() } : {}),
-      }),
-    { success: '已排入：AI 導演看片並撰寫提示詞（約 USD 0.01–0.03）', invalidate: [qk.jobs] },
-  );
   const current: (WithReviews<Board> | WithReviews<Take>) | undefined =
     target?.type === 'board'
       ? d.boards.find((b) => b.id === target.id)
@@ -428,63 +396,15 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
     d.keyframes.find((k) => k.role === 'mid');
   const removable = d.overlays.filter((o) => o.remove);
 
-  // 直接重生 repeats the version's own model unless one was picked below for its kind.
-  const regenModel = current
-    ? ((target?.type === 'board' ? boardModel : takeModel) ?? current.model)
-    : undefined;
-  const modelLabel = (id: string | undefined) =>
-    [...(models.data?.image ?? []), ...(models.data?.video ?? [])].find((m) => m.id === id)?.label ?? id;
+  // Keyboard A approves the version on show; keeping the original is confirmed first.
   const review = useAction(
-    (v: { verdict: Verdict; comment?: string }) =>
-      api.post<ReviewResult>('/api/reviews', {
-        targetId: current?.id,
-        verdict: v.verdict,
-        comment: v.comment,
-        ...(v.verdict === 'regenerate' && regenModel ? { model: regenModel } : {}),
-      }),
+    (v: { verdict: Verdict }) =>
+      api.post<ReviewResult>('/api/reviews', { targetId: current?.id, verdict: v.verdict }),
     {
-      success: (r, v) =>
-        v.verdict === 'changes'
-          ? r.task
-            ? '意見已送出，Codex 會接手處理'
-            : '意見已送出'
-          : v.verdict === 'regenerate'
-            ? '已排入重新生成'
-            : `已${VERDICT_LABEL[v.verdict]}`,
-      onSuccess: (_r, v) => {
-        if (v.verdict === 'changes') setComment('');
-        setConfirmKeep(false);
-      },
+      success: (_r, v) => `已${VERDICT_LABEL[v.verdict]}`,
+      onSuccess: () => setConfirmKeep(false),
     },
   );
-
-  const reportQueue = (r: BoardQueue | TakeQueue, what: string) => {
-    if (r.queued.length) toast.success(`已排入${what}生成`);
-    for (const e of r.errors) toast.error(`${what}無法生成`, { description: e.error.message });
-  };
-  const genBoard = useAction(
-    () =>
-      api.post<BoardQueue>(`/api/projects/${encodeURIComponent(projectRef)}/boards`, {
-        shotIds: [shot.id],
-        ...(extra.trim() ? { extra: extra.trim() } : {}),
-        ...(imageModel ? { model: imageModel } : {}),
-      }),
-    { onSuccess: (r) => reportQueue(r, '分鏡圖') },
-  );
-  const genTake = useAction(
-    () =>
-      api.post<TakeQueue>(`/api/projects/${encodeURIComponent(projectRef)}/takes`, {
-        shotIds: [shot.id],
-        tier,
-        force: forceTake,
-        ...(extra.trim() ? { extra: extra.trim() } : {}),
-        ...(videoModel ? { model: videoModel } : {}),
-      }),
-    { onSuccess: (r) => reportQueue(r, '分鏡視頻') },
-  );
-  const stillTake = useAction(() => api.post(`/api/shots/${shot.id}/still-take`, { tier }), {
-    success: '已排入：用分鏡圖做靜態鏡頭（不呼叫模型、不收費）',
-  });
   const setMode = useAction((mode: ShotMode) => api.patch(`/api/shots/${shot.id}`, { mode }), {
     success: (_r, mode) => `處理方式改為${MODE_LABEL[mode]}`,
   });
@@ -492,7 +412,6 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
     success: '已排入下一檔生成，完成後需要再確認一次',
   });
 
-  const canApprove = current && (current.status === 'ready' || current.status === 'approved');
   const approve = () => {
     if (!current) return;
     if (current.status !== 'ready') {
@@ -500,14 +419,6 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
       return;
     }
     review.mutate({ verdict: 'approve' });
-  };
-  const requestChanges = () => {
-    if (!comment.trim()) {
-      toast.error('要求修改需要填寫意見');
-      commentRef.current?.focus();
-      return;
-    }
-    review.mutate({ verdict: 'changes', comment: comment.trim() });
   };
 
   const keys = useRef({ approve, prev, next });
@@ -520,10 +431,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
         s &&
         void navigate({ to: '/projects/$ref/review/$shotId', params: { ref: projectRef, shotId: s.id } });
       if (e.key === 'a' || e.key === 'A') k.approve();
-      else if (e.key === 'r' || e.key === 'R') {
-        commentRef.current?.focus();
-        e.preventDefault();
-      } else if (e.key === 'ArrowRight') go(k.next);
+      else if (e.key === 'ArrowRight') go(k.next);
       else if (e.key === 'ArrowLeft') go(k.prev);
       else if (e.key === ' ') sliderRef.current?.togglePlay();
       else if (e.key === ',') sliderRef.current?.step(-1);
@@ -537,7 +445,6 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
 
   const takeCompare = take ? comparePathOf(take) : null;
   const hasBoardStage = shot.mode === 'replace';
-  const boardApproved = d.boards.some((b) => b.status === 'approved');
   const generates = shot.mode === 'replace' || shot.mode === 'clean';
   const openTasks = d.tasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled');
 
@@ -554,7 +461,8 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
         description={
           <span>
             f {shot.startFrame}–{shot.endFrame}（{shot.frameCount} 幀，{d.seconds} 秒）· 目前檔位{' '}
-            {TIER_LABEL[d.project.tier]} · 快捷鍵 <Kbd>A</Kbd> 通過 <Kbd>R</Kbd> 要求修改 <Kbd>←</Kbd>
+            {TIER_LABEL[d.project.tier]} · 每張分鏡圖和視頻的操作都在它下面 · 快捷鍵 <Kbd>A</Kbd>{' '}
+            通過正在看的版本 <Kbd>←</Kbd>
             <Kbd>→</Kbd> 上／下一鏡 <Kbd>空白</Kbd> 播放 <Kbd>,</Kbd>
             <Kbd>.</Kbd> 逐幀
           </span>
@@ -616,6 +524,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
         <div className="flex min-w-0 flex-col gap-4">
           {hasBoardStage ? (
             <BoardTabs
+              projectRef={projectRef}
               d={d}
               selectedId={target?.type === 'board' ? target.id : undefined}
               onSelect={(id) => setTarget({ type: 'board', id })}
@@ -690,6 +599,15 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                     refLabel={(i) => `<IMAGE_REF_${i}>`}
                   />
                 ) : null}
+                {generates ? (
+                  <TakeActions
+                    projectRef={projectRef}
+                    d={d}
+                    take={take}
+                    tier={tier}
+                    onKeepOriginal={() => setConfirmKeep(true)}
+                  />
+                ) : null}
               </CardContent>
             </Card>
           ) : null}
@@ -753,78 +671,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
         <div className="flex flex-col gap-4">
           <Card>
             <CardHeader>
-              <CardTitle>評審</CardTitle>
-              {current ? (
-                <span className="flex items-center gap-1.5 text-muted-foreground text-xs">
-                  {target?.type === 'board' ? '分鏡圖' : '分鏡視頻'} v{current.version}
-                  <VersionBadge status={current.status} />
-                </span>
-              ) : null}
-            </CardHeader>
-            <CardContent className="flex flex-col gap-2">
-              {!current ? (
-                <span className="text-muted-foreground text-xs">還沒有可以評審的版本。</span>
-              ) : (
-                <>
-                  <Button
-                    variant="success"
-                    disabled={!canApprove || current.status === 'approved' || review.isPending}
-                    onClick={approve}
-                  >
-                    <CheckIcon />
-                    通過 <Kbd>A</Kbd>
-                  </Button>
-                  <Label htmlFor={commentId} className="mt-1">
-                    要求修改（必填意見，會交給 Codex 處理）
-                  </Label>
-                  <Textarea
-                    id={commentId}
-                    ref={commentRef}
-                    value={comment}
-                    onChange={(e) => setComment(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) requestChanges();
-                      if (e.key === 'Escape') e.currentTarget.blur();
-                    }}
-                    placeholder="例如：頭髮改成銀色，逆光再強一點（⌘↵ 送出）"
-                  />
-                  <Button
-                    variant="destructive"
-                    disabled={review.isPending || !comment.trim()}
-                    onClick={requestChanges}
-                  >
-                    <MessageSquareIcon />
-                    要求修改 <Kbd>R</Kbd>
-                  </Button>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      variant="outline"
-                      disabled={
-                        review.isPending || current.status === 'queued' || current.status === 'generating'
-                      }
-                      title={`同樣的輸入再生成一次（${modelLabel(regenModel)}；換模型請在下面「生成」選）`}
-                      onClick={() => review.mutate({ verdict: 'regenerate' })}
-                    >
-                      <RefreshCwIcon />
-                      直接重生
-                    </Button>
-                    <Button
-                      variant="outline"
-                      disabled={review.isPending}
-                      onClick={() => setConfirmKeep(true)}
-                    >
-                      <UndoIcon />
-                      此鏡沿用原片
-                    </Button>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>生成</CardTitle>
+              <CardTitle>這一鏡</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
@@ -850,104 +697,9 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                   check={d.castCheck}
                   className="border-t pt-2"
                 />
-              ) : null}
-              {generates ? (
-                <>
-                  <Label htmlFor={extraId}>附加提示（可留空）</Label>
-                  <Textarea
-                    id={extraId}
-                    value={extra}
-                    onChange={(e) => setExtra(e.target.value)}
-                    placeholder="加在提示詞後面的補充說明"
-                    className="min-h-12"
-                  />
-                </>
-              ) : null}
-              {hasBoardStage ? (
-                <div className="flex items-center gap-2">
-                  <ModelSelect
-                    kind="image"
-                    value={imageModel}
-                    onChange={setBoardModel}
-                    label="分鏡圖模型"
-                    className="min-w-0 flex-1"
-                  />
-                  <Button
-                    variant="secondary"
-                    disabled={genBoard.isPending}
-                    onClick={() => genBoard.mutate(undefined)}
-                  >
-                    <ImageIcon />
-                    生成分鏡圖
-                  </Button>
-                </div>
-              ) : null}
-              {generates ? (
-                <>
-                  <ModelSelect kind="video" value={videoModel} onChange={setTakeModel} label="分鏡視頻模型" />
-                  {shot.mode === 'replace' ? (
-                    <div className="flex flex-col gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={Boolean(planning) || previewPlan.isPending}
-                        title="AI 導演看原片和參考圖，寫好提示詞、整理要送的參考圖；不生成視頻"
-                        onClick={() => previewPlan.mutate(undefined)}
-                      >
-                        <SparklesIcon />
-                        {planning ? <ShimmerText>AI 導演看片中…</ShimmerText> : '預覽 AI 提示詞'}
-                      </Button>
-                      {d.takePlan?.status === 'failed' && !planning ? (
-                        <span className="text-red-300 text-xs">預覽失敗：{d.takePlan.error ?? ''}</span>
-                      ) : null}
-                      {d.takePlan?.result && !planning ? (
-                        <>
-                          <span className="text-[11px] text-muted-foreground">
-                            {modelLabel(d.takePlan.result.model)} 的預覽 · 生成時 AI 導演會再看一次
-                          </span>
-                          <DirectorNote
-                            params={{ director: d.takePlan.result.director }}
-                            prompt={d.takePlan.result.prompt}
-                            refLabel={(i) => `<IMAGE_REF_${i}>`}
-                            open
-                          />
-                        </>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <div className="flex items-center gap-2">
-                    <span className="flex-1 text-muted-foreground text-xs">輸出 {TIER_LABEL[tier]}</span>
-                    <Button
-                      variant="secondary"
-                      disabled={genTake.isPending}
-                      onClick={() => genTake.mutate(undefined)}
-                    >
-                      <VideoIcon />
-                      生成分鏡視頻
-                    </Button>
-                  </div>
-                  {hasBoardStage ? (
-                    <Label className="text-[11px]">
-                      <Checkbox checked={forceTake} onCheckedChange={(v) => setForceTake(v === true)} />
-                      分鏡圖未通過也強制生成
-                    </Label>
-                  ) : null}
-                  {hasBoardStage && boardApproved ? (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={stillTake.isPending}
-                      title="影片模型一直擋這個分鏡時使用：把已通過的分鏡圖做成同長度的鏡頭，帶一點推近"
-                      onClick={() => stillTake.mutate(undefined)}
-                    >
-                      <ImageIcon />
-                      改用分鏡圖做靜態鏡頭
-                    </Button>
-                  ) : null}
-                </>
-              ) : (
+              ) : !generates ? (
                 <span className="text-muted-foreground text-xs">沿用原片或排除的分鏡不需要生成。</span>
-              )}
+              ) : null}
             </CardContent>
           </Card>
 
@@ -964,7 +716,8 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
               ))}
               {!openTasks.length ? (
                 <span className="text-muted-foreground text-xs">
-                  這一鏡目前沒有進行中的 Codex 任務。按「要求修改」後會自動交給 Codex。
+                  這一鏡目前沒有進行中的 Codex 任務。在分鏡圖或視頻下面按「要求修改（Codex）」後會自動交給
+                  Codex。
                 </span>
               ) : null}
             </CardContent>

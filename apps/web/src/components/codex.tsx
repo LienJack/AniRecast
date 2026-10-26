@@ -2,6 +2,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { MessagesSquareIcon } from 'lucide-react';
 import { useId, useState } from 'react';
 import { Field, Tag } from '@/components/common';
+import { EMPTY_PROMPT, PromptBox, type PromptValue } from '@/components/prompt-box';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -13,7 +14,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { api } from '@/lib/api';
 import type { Tone } from '@/lib/labels';
 import { useAction } from '@/lib/queries';
@@ -58,16 +58,17 @@ export function DiscussInCodex({
 }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const [topic, setTopic] = useState('');
+  const [topic, setTopic] = useState<PromptValue>(EMPTY_PROMPT);
   const [openThread, setOpenThread] = useState(true);
-  const topicId = useId();
+  const _topicId = useId();
   const threadId = useId();
   const create = useAction(
     () =>
       api.post<DiscussionView>(`/api/projects/${encodeURIComponent(projectRef)}/codex`, {
         targetType,
         targetId: targetId ?? null,
-        topic: topic.trim(),
+        topic: topic.text.trim(),
+        ...(topic.images.length ? { attachments: topic.images } : {}),
         openThread,
       }),
     {
@@ -76,7 +77,7 @@ export function DiscussInCodex({
       invalidate: [['project'], ['codex']],
       onSuccess: (v) => {
         setOpen(false);
-        setTopic('');
+        setTopic(EMPTY_PROMPT);
         void navigate({
           to: '/projects/$ref/codex/$discussionId',
           params: { ref: projectRef, discussionId: v.handoff.id },
@@ -104,13 +105,13 @@ export function DiscussInCodex({
               會交回來，你在討論頁逐項勾選導入；導入前不會改任何東西，也不會花錢。
             </DialogDescription>
           </DialogHeader>
-          <Field label="想和 Codex 討論什麼？">
-            <Textarea
-              id={topicId}
+          <Field label="想和 Codex 討論什麼？（可以附圖：貼上、拖進來或按附加圖片）">
+            <PromptBox
+              projectRef={projectRef}
               value={topic}
-              onChange={(e) => setTopic(e.target.value)}
+              onChange={setTopic}
               placeholder="例如：這個分鏡已經被擋兩次，衣服要怎麼改才不會被當成不當內容，又像 DeepSeek？"
-              className="min-h-28"
+              label="想和 Codex 討論什麼"
               autoFocus
             />
           </Field>
@@ -124,7 +125,10 @@ export function DiscussInCodex({
             <Button variant="ghost" onClick={() => setOpen(false)}>
               取消
             </Button>
-            <Button disabled={!topic.trim() || create.isPending} onClick={() => create.mutate(undefined)}>
+            <Button
+              disabled={!topic.text.trim() || create.isPending}
+              onClick={() => create.mutate(undefined)}
+            >
               <MessagesSquareIcon />
               導出到 Codex
             </Button>

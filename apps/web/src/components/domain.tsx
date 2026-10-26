@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { DiscussInCodex } from '@/components/codex';
 import { Tag, Thumb } from '@/components/common';
 import { ShimmerText } from '@/components/generating';
+import { EMPTY_PROMPT, PromptBox, type PromptValue } from '@/components/prompt-box';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import { api } from '@/lib/api';
 import { formatAgo } from '@/lib/format';
 import {
@@ -137,12 +137,19 @@ export function TaskCard({
   showShot?: boolean;
   projectSlug?: string;
 }) {
-  const [answer, setAnswer] = useState('');
-  const answerTask = useAction((text: string) => api.post(`/api/tasks/${task.id}/answer`, { answer: text }), {
-    success: '已回覆，任務會繼續',
-    invalidate: [qk.tasks, ['project'], ['shot']],
-    onSuccess: () => setAnswer(''),
-  });
+  const [answer, setAnswer] = useState<PromptValue>(EMPTY_PROMPT);
+  const answerTask = useAction(
+    (v: PromptValue) =>
+      api.post(`/api/tasks/${task.id}/answer`, {
+        answer: v.text.trim(),
+        ...(v.images.length ? { attachments: v.images } : {}),
+      }),
+    {
+      success: '已回覆，任務會繼續',
+      invalidate: [qk.tasks, ['project'], ['shot']],
+      onSuccess: () => setAnswer(EMPTY_PROMPT),
+    },
+  );
   const cancel = useAction(() => api.post(`/api/tasks/${task.id}/cancel`), {
     success: '已取消任務',
     invalidate: [qk.tasks, ['project'], ['shot']],
@@ -187,11 +194,12 @@ export function TaskCard({
       {task.status === 'needs_user' && task.question ? (
         <div className="flex flex-col gap-1.5 rounded border border-amber-500/30 bg-amber-500/10 p-2">
           <div className="whitespace-pre-wrap text-amber-100 text-xs">Codex 問：{task.question}</div>
-          <Textarea
+          <PromptBox
+            projectRef={task.projectId ?? ''}
             value={answer}
-            onChange={(e) => setAnswer(e.target.value)}
-            placeholder="回覆 Codex…"
-            className="min-h-12 text-xs"
+            onChange={setAnswer}
+            placeholder="回覆 Codex…（可以附圖）"
+            label="回覆 Codex"
           />
           <div className="flex flex-wrap justify-end gap-1.5">
             <DiscussInCodex
@@ -204,8 +212,8 @@ export function TaskCard({
             />
             <Button
               size="sm"
-              disabled={!answer.trim() || answerTask.isPending}
-              onClick={() => answerTask.mutate(answer.trim())}
+              disabled={!answer.text.trim() || answerTask.isPending}
+              onClick={() => answerTask.mutate(answer)}
             >
               <SendIcon />
               回覆

@@ -19,6 +19,7 @@ import { EmptyState, ErrorState, Loading, PageHeader, Tag, Thumb } from '@/compo
 import { ActorLink, VersionBadge } from '@/components/domain';
 import { formatClock, Generating, ShimmerText, useActiveJob, useElapsed } from '@/components/generating';
 import { ModelSelect } from '@/components/models';
+import { EMPTY_PROMPT, PromptBox, type PromptValue, promptFields } from '@/components/prompt-box';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -87,7 +88,7 @@ function SheetPanel({
 }) {
   const text = KIND_TEXT[sheet.kind];
   const [selectedId, setSelectedId] = useState<string | undefined>(sheet.latest?.id);
-  const [comment, setComment] = useState('');
+  const [say, setSay] = useState<PromptValue>(EMPTY_PROMPT);
   // A new version (from here, the CLI or Codex) becomes the one on show.
   const latestId = sheet.latest?.id;
   const seen = useRef(latestId);
@@ -121,12 +122,12 @@ function SheetPanel({
   );
   const base = `/api/projects/${encodeURIComponent(projectRef)}/designs${subject === 'original' ? '/original' : ''}`;
   const generate = useAction(
-    (body: { fromDesignId?: string; extra?: string }) =>
+    (body: { fromDesignId?: string; extra?: string; attachments?: string[] }) =>
       api.post(base, { castId, kind: sheet.kind, ...body, ...(drawWith ? { model: drawWith } : {}) }),
     { success: `已排入生成：${personaName}・${text.title}`, invalidate: [qk.designs(projectRef)] },
   );
   const review = useAction(
-    (r: { verdict: 'approve' | 'changes' | 'regenerate'; comment?: string }) =>
+    (r: { verdict: 'approve' | 'changes' | 'regenerate'; comment?: string; attachments?: string[] }) =>
       api.post('/api/reviews', {
         targetId: v?.id,
         ...r,
@@ -141,7 +142,7 @@ function SheetPanel({
             : '已通過',
       invalidate: [qk.designs(projectRef), ['project']],
       onSuccess: (_d, r) => {
-        if (r.verdict === 'changes') setComment('');
+        if (r.verdict === 'changes') setSay(EMPTY_PROMPT);
       },
     },
   );
@@ -276,22 +277,22 @@ function SheetPanel({
               variant="ghost"
             />
           </div>
-          <Textarea
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            placeholder="要改什麼？例如：肩膀遮住、裙子長一點、髮色再淺一點…"
-            className="min-h-14 text-xs"
-            aria-label={`${personaName}・${text.title}的修改意見`}
+          <PromptBox
+            projectRef={projectRef}
+            value={say}
+            onChange={setSay}
+            placeholder="要改什麼？例如：肩膀遮住、裙子長一點、髮色再淺一點…（可以附圖、貼上或拖進來）"
+            label={`${personaName}・${text.title}的修改意見`}
           />
           <div className="flex flex-wrap justify-end gap-1.5">
             <Button
               size="sm"
               variant="outline"
-              disabled={!comment.trim() || generate.isPending}
-              title="不經過 Codex，把這段話直接加進提示詞重畫"
+              disabled={(!say.text.trim() && !say.images.length) || generate.isPending}
+              title="不經過 Codex，把這段話和附圖直接交給模型重畫"
               onClick={() => {
-                generate.mutate({ fromDesignId: v.id, extra: comment.trim() });
-                setComment('');
+                generate.mutate({ fromDesignId: v.id, ...promptFields(say) });
+                setSay(EMPTY_PROMPT);
               }}
             >
               <WandIcon />
@@ -299,9 +300,9 @@ function SheetPanel({
             </Button>
             <Button
               size="sm"
-              disabled={!comment.trim() || review.isPending}
-              title="交給 Codex：它會看圖、改提示詞、重畫並檢查"
-              onClick={() => review.mutate({ verdict: 'changes', comment: comment.trim() })}
+              disabled={!say.text.trim() || review.isPending}
+              title="交給 Codex：它會看圖和你的附圖、改提示詞、重畫並檢查"
+              onClick={() => review.mutate({ verdict: 'changes', ...promptFields(say, 'comment') })}
             >
               <SendIcon />
               要求修改（Codex）

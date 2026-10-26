@@ -41,6 +41,11 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
    people to replace, its last frame); `--from` keeps the role, `--role <role>` draws one moment, no flag draws
    all three (a first/last frame where nobody to replace is seen is skipped). The video waits for the key
    frame's approval; first and last help when approved.
+   The first and last frames keep the new characters identical to the key frame: drawn together, they wait for
+   it and get it as their first reference; drawn alone later, they use the approved (else latest) key frame.
+   Images the human attached to a comment are in the task's `annotations` (`type: image`, workspace paths) or
+   `answerImages`, and in your turn; pass the ones the model needs with `--attach <path>` (board, take and
+   design generate, take plan). A revision keeps the images of the version it revises.
    Prompts are written by the director inside each job (a vision model that reads the frame or watches the
    shot, the design sheets, the style and the light, then picks the references); `--extra` is passed to it as
    a mandatory requirement and also appended verbatim. A version's `params.director` holds its notes, its
