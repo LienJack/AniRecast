@@ -618,7 +618,8 @@ export async function rangePsnr(
     ],
     opts.signal ? { signal: opts.signal } : {},
   );
-  const m = /PSNR y:(inf|[\d.]+)/.exec(stderr);
+  // Video frames report y/u/v, images r/g/b; the y channel when there is one, else the average.
+  const m = /PSNR y:(inf|[\d.]+)/.exec(stderr) ?? /average:(inf|[\d.]+)/.exec(stderr);
   if (!m) throw new AniError('internal', 'ffmpeg printed no PSNR');
   return m[1] === 'inf' ? Number.POSITIVE_INFINITY : Number(m[1]);
 }

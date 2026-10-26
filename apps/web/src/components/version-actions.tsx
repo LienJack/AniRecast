@@ -7,6 +7,7 @@ import {
   UndoIcon,
   VideoIcon,
   WandIcon,
+  XIcon,
 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -41,6 +42,26 @@ function useModelPick(kind: 'image' | 'video', version: { model: string } | unde
   const own =
     kind === 'image' && version && list?.some((m) => m.id === version.model) ? version.model : undefined;
   return [picked ?? own ?? (kind === 'image' ? project?.image : project?.video), setPicked] as const;
+}
+
+/** 拒絕: this version is not wanted and needs nothing more — it leaves 待評審. */
+function RejectButton({ id }: { id: string }) {
+  const reject = useAction(() => api.post(`/api/versions/${id}/reject`, {}), {
+    invalidate,
+    success: '已拒絕',
+  });
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={reject.isPending}
+      title="不要這一版，也不用再處理：從「待評審」移到「已拒絕」"
+      onClick={() => reject.mutate(undefined)}
+    >
+      <XIcon />
+      拒絕
+    </Button>
+  );
 }
 
 /** Who handles a change request: by the shot's difficulty (auto), Codex, or Claude (a brief to start it on). */
@@ -221,6 +242,9 @@ export function BoardActions({
             通過{label}
           </Button>
         ) : null}
+        {finished && board.status !== 'rejected' && board.status !== 'approved' ? (
+          <RejectButton id={board.id} />
+        ) : null}
         {finished ? (
           <Button
             size="sm"
@@ -392,6 +416,9 @@ export function TakeActions({
             <CheckIcon />
             通過
           </Button>
+        ) : null}
+        {finished && take.status !== 'rejected' && take.status !== 'approved' ? (
+          <RejectButton id={take.id} />
         ) : null}
         {finished ? (
           <Button

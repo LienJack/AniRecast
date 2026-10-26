@@ -58,6 +58,7 @@ export async function cutPart(
   range: FrameRange;
   video: string;
   seams: Array<{ label: string; path: string }>;
+  frames: Array<{ label: string; path: string }>;
   cuts: number[];
   startsAtCut: boolean;
   endsAtCut: boolean;
@@ -99,7 +100,15 @@ export async function cutPart(
     await kept(range.start - 1, 'right before this part — it must start out of this frame');
   if (range.end < shot.frameCount - 1 && !endsAtCut && !lateCut && (wanted === 'both' || wanted === 'after'))
     await kept(range.end + 1, 'right after this part — it must flow into this frame');
-  return { range, video, seams, cuts, startsAtCut, endsAtCut };
+  // The part's own first, middle and last frames: the director's context, and all it gets when the part is too
+  // short to send as video.
+  const frameOf: Array<{ label: string; path: string }> = [];
+  for (const at of [...new Set([range.start, Math.round((range.start + range.end) / 2), range.end])]) {
+    const path = `${dir}/${stem}-part-f${at}.jpg`;
+    await extractFrame(ws.abs(shot.sourcePath), outPath(ws, path), at, clip.fpsNum, clip.fpsDen, { signal });
+    frameOf.push({ label: `frame ${at} of the shot, inside this part (the original)`, path });
+  }
+  return { range, video, seams, frames: frameOf, cuts, startsAtCut, endsAtCut };
 }
 
 /**

@@ -5,6 +5,7 @@ import {
   boardBrief,
   type DirectorBrief,
   type FrameRange,
+  findActiveClip,
   type InputRef,
   projectOfShot,
   recordCost,
@@ -217,7 +218,15 @@ export async function directTake(
     stem: string;
     attachments?: string[];
     /** A partial take: the part it redoes, its clip, and the kept frames around it. */
-    part?: { range: FrameRange; video: string; seams: Array<{ label: string; path: string }> };
+    part?: {
+      range: FrameRange;
+      video: string;
+      seams: Array<{ label: string; path: string }>;
+      frames?: Array<{ label: string; path: string }>;
+      cuts?: number[];
+      startsAtCut?: boolean;
+      endsAtCut?: boolean;
+    };
   },
 ): Promise<{ prompt: string; inputs: InputRef[]; record: DirectorRecord }> {
   const { workspace: ws, services, signal, job } = ctx;
@@ -233,7 +242,13 @@ export async function directTake(
   if (!brief.images.some((i) => i.use === 'reference'))
     throw new Error('no approved storyboard frame or design sheet to send');
   const videoAbs = ws.abs(brief.video);
-  const withVideo = statSync(videoAbs).size <= INLINE_VIDEO_BYTES;
+  // The vision model refuses very short clips ("invalid argument" on a 10-frame part): those go as frames only.
+  const clip = findActiveClip(ws.db, projectOfShot(ws.db, input.shotId).id);
+  const partSeconds =
+    input.part && clip
+      ? ((input.part.range.end - input.part.range.start + 1) * clip.fpsDen) / clip.fpsNum
+      : Number.POSITIVE_INFINITY;
+  const withVideo = statSync(videoAbs).size <= INLINE_VIDEO_BYTES && partSeconds >= 1;
   const media = [
     ...(withVideo
       ? [{ path: videoAbs, mimeType: 'video/mp4', label: 'Video 1: the original shot to edit' }]
@@ -255,7 +270,9 @@ export async function directTake(
     '',
     'The media in this message:',
     ...media.map((m) => `- ${m.label}`),
-    ...(withVideo ? [] : ['(The clip is too large to attach; the context frames show it.)']),
+    ...(withVideo
+      ? []
+      : ['(The clip is not attached — too large, or too short for video; the context frames show it.)']),
     '',
     'First watch the shot: the motion of each person (steps, turns, gestures, expressions changing), the camera movement, the timing, the light and how this anime draws people.',
     `Then decide what to send. ${sendRule(spec, max)} Only R… ids may be sent; each entry of "send" becomes one image (several ids = one composite: e.g. the replacement's turnaround with her expression sheet, or the original's sheet beside hers so the model sees which becomes which). The original character's approved sheets show who is replaced, cell for cell like the replacement's. Images the human attached matter: use them as their requirement says. Send at least ${Math.max(1, spec.minRefs)}. If the model takes more than the characters need and an art style reference is offered, you may send it as its own image and say it is only the art style reference.`,

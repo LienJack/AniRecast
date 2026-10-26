@@ -48,6 +48,7 @@ import {
   queueBoards,
   queueCastAnalysis,
   queueDesign,
+  queueFramesTake,
   queueOriginalDesign,
   queueReferenceSearch,
   queueStillTake,
@@ -55,6 +56,7 @@ import {
   queueTakeMerge,
   queueTakePlan,
   quotaOverview,
+  rejectVersion,
   resolveBindings,
   safetyBlockCount,
   setAnalysisPicks,
@@ -655,6 +657,40 @@ export function registerGenerate(program: Command): void {
       ),
     );
   take
+    .command('frames <project> <shot>')
+    .description(
+      '逐格重繪: redo frames a–b by redrawing each drawing with the image model (held frames share one) and keep the rest of --keep. For rapid cuts, flashes and graphic montages that a video model smooths over; one image per drawing',
+    )
+    .requiredOption('--range <first-last>', 'frames of the shot to redraw (0 = its first)')
+    .requiredOption('--keep <takeId>', 'the take whose other frames stay as they are')
+    .option('--extra <text>', 'who is who and what to keep, for this part')
+    .option('--model <id>', 'image model (default: the project choice)')
+    .option('--wait')
+    .action(
+      command(
+        (
+          _project: string,
+          shotId: string,
+          opts: { range: string; keep: string; extra?: string; model?: string; wait?: boolean },
+        ) =>
+          withWorkspace(globals(), async (ws) => {
+            const part = rangeOpt(opts.range, opts.keep);
+            const { take, job } = queueFramesTake(
+              ws,
+              shotId,
+              {
+                range: part.range!,
+                keepFrom: opts.keep,
+                ...(opts.extra ? { extra: opts.extra } : {}),
+                ...(opts.model ? { model: opts.model } : {}),
+              },
+              actorFromEnv(),
+            );
+            return { take, ...(await waitAll(ws, [job.id], opts.wait)) };
+          }),
+      ),
+    );
+  take
     .command('merge <base> <parts...>')
     .description(
       "Join partial takes made from <base> side by side (e.g. each cut of a shot redone in parallel with --range --keep <base>): each part's frames from its take, the rest from the base. No model, no cost",
@@ -760,6 +796,12 @@ export function registerGenerate(program: Command): void {
           }),
         ),
       ),
+    );
+  review
+    .command('reject <version>')
+    .description('拒絕: a board or take nobody wants, out of 待評審 with nothing more to do (a human call)')
+    .action(
+      command((id: string) => withWorkspace(globals(), (ws) => rejectVersion(ws.db, id, actorFromEnv()))),
     );
   review
     .command('request-changes <version>')

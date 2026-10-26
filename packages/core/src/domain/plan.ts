@@ -341,7 +341,7 @@ export function planTake(
   ws: Workspace,
   shotId: string,
   tier: GenerationTier,
-  opts: { extra?: string; fromTakeId?: string; model?: string } = {},
+  opts: { extra?: string; fromTakeId?: string; model?: string; range?: FrameRange } = {},
 ): Plan & { boardId: string | null } {
   const shot = getShot(ws.db, shotId);
   if (!shot.sourcePath) throw new AniError('conflict', 'Shot source segment is not prepared yet');
@@ -370,7 +370,11 @@ export function planTake(
   if (shot.mode === 'replace') {
     const board = approvedBoard(ws.db, shotId);
     if (board?.path) boardId = board.id;
-    const withBoard = Boolean(board?.path) && !textOnly && spec.refStyle !== 'per-character';
+    const withBoard =
+      Boolean(board?.path) &&
+      !textOnly &&
+      spec.refStyle !== 'per-character' &&
+      boardNear(shot, board?.frame ?? null, opts.range);
     if (withBoard && board?.path) refs.push({ role: 'board', path: board.path });
     const { uses, keyframe } = castInShot(ws, shot, 1);
     let idx = withBoard ? 1 : 0;
@@ -969,6 +973,14 @@ export interface FrameRange {
   end: number;
 }
 
+/** A storyboard frame (clip numbering) drawn within a dozen frames of a part of the shot — or any, for a whole take. */
+export function boardNear(shot: Shot, frame: number | null, range: FrameRange | undefined): boolean {
+  if (!range || (range.start === 0 && range.end === shot.frameCount - 1)) return true;
+  if (frame == null) return false;
+  const at = frame - shot.startFrame;
+  return at >= range.start - 12 && at <= range.end + 12;
+}
+
 /** Where a box sits in the frame, in words: vertical and horizontal place, and how close the person is. */
 function placeOf(b: number[]): string {
   const [x0, y0, x1, y1] = b as [number, number, number, number];
@@ -1076,6 +1088,8 @@ export function takeBrief(
       range: FrameRange;
       video: string;
       seams: Array<{ label: string; path: string }>;
+      /** Frames of the part itself, for the director's context (short parts cannot be watched as video). */
+      frames?: Array<{ label: string; path: string }>;
       /** Hard cuts inside the part (frames of the shot), and whether it starts or ends at one. */
       cuts?: number[];
       startsAtCut?: boolean;
@@ -1106,9 +1120,14 @@ export function takeBrief(
         use: 'context',
       });
   }
+  for (const f of opts.part?.frames ?? [])
+    images.push({ id: `C${++c}`, label: f.label, path: f.path, use: 'context' });
   for (const seam of opts.part?.seams ?? []) reference(seam.label, seam.path);
   for (const role of ['key', 'first', 'last'] as const) {
     const b = approvedBoard(ws.db, shot.id, role);
+    // A part only gets storyboard frames drawn near it: shot 34's montage frame, sent to a subway part, came back
+    // as montage strips.
+    if (b?.path && !boardNear(shot, b.frame, range)) continue;
     if (b?.path)
       reference(
         `the approved storyboard frame of the shot's ${role} frame: the original frame with everyone already replaced`,
@@ -1221,4 +1240,44 @@ function sheetReferences(
         sheet.path,
       );
   }
+}
+
+/**
+ * 逐格重繪: what the image model gets for each frame of a part — the shot's approved storyboard frames drawn near the
+ * part, each replacement's design sheets, who becomes whom (by the original character's name and looks), the outfit
+ * rule and the anime's style. Image 1 is always the frame itself; the references follow from Image 2.
+ */
+export function framesBrief(
+  ws: Workspace,
+  shotId: string,
+  range: FrameRange,
+  maxRefs: number,
+): { refs: Array<{ label: string; path: string }>; lines: string[] } {
+  const shot = getShot(ws.db, shotId);
+  const project = projectOfShot(ws.db, shot.id);
+  const { uses } = castInShot(ws, shot, 3, 'key');
+  const refs: Array<{ label: string; path: string }> = [];
+  const lines: string[] = [];
+  const boards = (['key', 'first', 'last'] as const)
+    .map((role) => approvedBoard(ws.db, shot.id, role))
+    .filter((b): b is NonNullable<typeof b> => Boolean(b?.path) && boardNear(shot, b?.frame ?? null, range));
+  for (const b of boards.slice(0, 2))
+    refs.push({ label: `approved storyboard frame (${b.role})`, path: b.path! });
+  if (refs.length)
+    lines.push(
+      `Image${refs.length > 1 ? 's' : ''} 2${refs.length > 1 ? `–${refs.length + 1}` : ''}: this shot's approved storyboard frame${refs.length > 1 ? 's' : ''} — the new characters exactly as the human approved them; draw them the same.`,
+    );
+  const room = Math.max(1, Math.floor((maxRefs - 1 - refs.length) / Math.max(1, uses.length)));
+  for (const use of uses) {
+    const label = use.entries.find((e) => e.cast)?.cast?.label;
+    const first = refs.length + 2;
+    for (const p of use.imagePaths.slice(0, room)) refs.push({ label: `${use.persona.name} sheet`, path: p });
+    const span = refs.length + 1 > first ? `Images ${first}–${refs.length + 1}` : `Image ${first}`;
+    lines.push(
+      `- ${label ? `「${label}」` : 'This person'}${use.persona.description ? '' : ''} becomes the character in ${span}${use.persona.description ? ` (${use.persona.description})` : ''}. ${lookInstruction(use, span)}`,
+    );
+  }
+  const style = projectStyleNotes(ws, project.id, 'image');
+  if (style) lines.push(`This anime's style (match it): ${style.split('\n')[0]}`);
+  return { refs, lines };
 }

@@ -124,6 +124,14 @@ are untouched. Notes:
   director is not shown frames that are about to change), then joined with no model call:
   `anirecast take merge <base> <partTake…> --wait` (the parts may not overlap).
 - A part that starts or ends at a cut gets no kept frame on that side; the director is told it is its own set-up.
+- **Rapid cuts, 2–4-frame flashes, graphic montages (strips, colour bars, split panels)**: a video model smooths
+  them over or invents another layout. Redraw them frame by frame instead:
+  `anirecast take frames <project> <shot> --range a-b --keep <take> --extra "<who is who in this part>" --wait`
+  — each drawing goes through the image model with the replacement's sheets (held frames share one edit), the
+  frames are assembled and put in place like any part; a frame the safety filter refuses keeps the previous edit
+  (listed in `conform.frames.fallbacks`). About one image per drawing. Join it with Wan parts by `take merge`.
+- Shot 34 of the Lycoris OP: the street turn (42–52) came out right from Wan; the montage (27–41), the pillar
+  (53–62) and the flashes (63–80) needed `take frames`.
 
 ## Handing a task to Claude
 
@@ -230,6 +238,8 @@ anirecast take plan <shot> [--model <id>] [--range a-b --keep <take>] --wait   #
 anirecast take generate <project> <shot> --range a-b --keep <take>   # redo only frames a–b, keep the rest of <take>
 anirecast shots cuts <shot>                 # hard cuts and fast motion inside a shot; `parts` are ranges for --range
 anirecast take merge <base> <parts...>      # join partial takes made side by side from <base> (no model, no cost)
+anirecast take frames <project> <shot> --range a-b --keep <take>   # 逐格重繪: redraw each drawing with the image model
+anirecast review reject <version>           # (human) 拒絕: out of 待評審, nothing more to do
 anirecast shots prepare <shot...>           # cut a damaged source segment again from the clip
 anirecast tasks handoff <task> --to claude --reason "…"   # hand a task that needs code to Claude Code
 anirecast design list <project>             # bindings: original → library character, analysis, note, sheets

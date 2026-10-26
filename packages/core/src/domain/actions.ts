@@ -216,7 +216,7 @@ export function queueTake(
     ? ((getTake(ws.db, opts.fromTakeId).params.attachments as string[]) ?? [])
     : [];
   const plan = attachToPlan(
-    planTake(ws, shotId, tier, { ...opts, model }),
+    planTake(ws, shotId, tier, { ...opts, model, ...(opts.range ? { range: opts.range } : {}) }),
     [...prior, ...attached],
     'video',
     videoModelSpec(model).maxRefs,
@@ -243,6 +243,50 @@ export function queueTake(
     payload: { takeId: take.id },
     requestedBy: actor,
     maxAttempts: 2,
+  });
+  return { take, job };
+}
+
+/**
+ * 逐格重繪: redo frames start–end of a shot by redrawing each drawing with the image model (held frames share one),
+ * then put them in place of those frames of `keepFrom`. For rapid cuts, flashes and graphic montages, where a video
+ * model smooths the picture over; costs one image per drawing.
+ */
+export function queueFramesTake(
+  ws: Workspace,
+  shotId: string,
+  opts: { range: FrameRange; keepFrom: string; extra?: string; model?: string },
+  actor: string,
+) {
+  const keep = getTake(ws.db, opts.keepFrom);
+  const part = partialTake(ws, shotId, keep.tier, opts.range, opts.keepFrom);
+  const projectId = projectOfShot(ws.db, shotId).id;
+  const imageModel = opts.model ?? projectModels(ws.db, projectId).image;
+  assertSelectableModel('image', imageModel);
+  const extra = opts.extra?.trim();
+  const take = createTake(
+    ws.db,
+    {
+      shotId,
+      tier: keep.tier,
+      boardId: keep.boardId,
+      prompt: `Frame by frame with ${imageModel}: frames ${part.range.start}–${part.range.end} redrawn one drawing at a time; the rest kept from v${keep.version}.${extra ? `\nAdditional instructions: ${extra}` : ''}`,
+      model: `frames:${imageModel}`,
+      params: { tier: keep.tier, ...part, method: 'frames', imageModel, ...(extra ? { extra } : {}) },
+      inputs: [],
+      parentId: keep.id,
+      createdBy: actor,
+    },
+    { force: true },
+  );
+  const job = enqueueJob(ws.db, {
+    type: 'take.frames',
+    lane: 'generate',
+    projectId,
+    payload: { takeId: take.id },
+    requestedBy: actor,
+    // Each image is paid once: a failed run is looked at, not repeated.
+    maxAttempts: 1,
   });
   return { take, job };
 }

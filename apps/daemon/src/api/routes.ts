@@ -86,6 +86,7 @@ import {
   readHandoffResultFile,
   readLock,
   recomputeShotModes,
+  rejectVersion,
   rememberWorkspace,
   renameCast,
   requestCancel,
@@ -908,6 +909,8 @@ export function registerRoutes(
       });
     }),
   );
+  // 拒絕: out of 待評審 with nothing more to do.
+  app.post('/api/versions/:id/reject', (c) => handle(c, () => rejectVersion(ws.db, c.req.param('id'), USER)));
   app.post('/api/reviews', async (c) =>
     handle(c, async () => {
       const b = await body<{

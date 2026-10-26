@@ -334,6 +334,21 @@ export const updateTake = (db: Db, id: string, patch: VersionPatch, actor: strin
 
 export type Verdict = 'approve' | 'changes' | 'regenerate' | 'keep_original';
 
+/**
+ * 拒絕: a storyboard frame or video the human does not want, with nothing more to do about it — it leaves 待評審
+ * (an approved one turns rejected too). Recorded in the version's events.
+ */
+export function rejectVersion(db: Db, id: string, actor: string): Board | Take {
+  const isBoard = id.startsWith('brd_');
+  const target = isBoard ? getBoard(db, id) : getTake(db, id);
+  if (!['ready', 'stale', 'approved'].includes(target.status))
+    throw new AniError('conflict', `Only a finished version can be rejected (this one is ${target.status})`);
+  return tx(db, () => {
+    patchVersion(db, isBoard ? 'boards' : 'takes', id, { status: 'rejected' }, actor);
+    return isBoard ? getBoard(db, id) : getTake(db, id);
+  });
+}
+
 export interface Review {
   id: string;
   targetType: 'board' | 'take' | 'render';

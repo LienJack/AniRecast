@@ -20,6 +20,7 @@ import {
   mapCast,
   openWorkspace,
   projectOfShot,
+  queueFramesTake,
   queueTake,
   queueTakeMerge,
   queueTakePlan,
@@ -396,6 +397,34 @@ describe('the video director', () => {
         expect(await rangePsnr(path.join(root, kept.path!), out, { from: 8, count: 8 })).toBeGreaterThan(40);
         expect(j).toMatchObject({ status: 'ready', costUsd: 0, conform: { base: kept.id } });
         expect((j.conform as { psnrDb: number[] }).psnrDb).toHaveLength(5);
+
+        // 逐格重繪: frames 2–9 redrawn one drawing at a time, the rest kept.
+        const cli4 = openWorkspace(root, { role: 'cli' });
+        const fr = queueFramesTake(
+          cli4,
+          shotId,
+          { range: { start: 2, end: 9 }, keepFrom: kept.id, extra: 'x' },
+          'user',
+        );
+        cli4.close();
+        expect(await waitJob(root, fr.job.id)).toBe('succeeded');
+        const cli5 = openWorkspace(root, { role: 'cli' });
+        const f = getTake(cli5.db, fr.take.id);
+        cli5.close();
+        expect(f.model).toMatch(/^frames:/);
+        expect(await probe(path.join(root, f.path!), { countFrames: true })).toMatchObject({
+          frameCount: 24,
+        });
+        expect(
+          await rangePsnr(path.join(root, kept.path!), path.join(root, f.path!), { from: 10, count: 14 }),
+        ).toBeGreaterThan(40);
+        const conform = f.conform as {
+          frames: { drawings: number; edited: number };
+          kept: { psnrDb: number[] };
+        };
+        expect(conform.frames.edited).toBe(conform.frames.drawings);
+        expect(conform.frames.drawings).toBeGreaterThan(0);
+        expect(conform.kept.psnrDb).toHaveLength(2);
       },
     );
   }, 120_000);

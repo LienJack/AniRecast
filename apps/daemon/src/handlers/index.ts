@@ -17,6 +17,7 @@ import { searchReferencesHandler } from './references.ts';
 import { shotCastHandler } from './shot-cast.ts';
 import { downloadSourceHandler, importSourceHandler } from './sources.ts';
 import { styleAnalysisHandler } from './style.ts';
+import { takeFramesHandler } from './take-frames.ts';
 import { mergeTakeHandler } from './take-part.ts';
 
 export function createHandlers(): Map<string, JobHandler> {
@@ -42,5 +43,6 @@ export function createHandlers(): Map<string, JobHandler> {
     ['shot.cast', shotCastHandler],
     ['take.plan', planTakeHandler],
     ['take.merge', mergeTakeHandler],
+    ['take.frames', takeFramesHandler],
   ]);
 }
