@@ -8,6 +8,7 @@ import type { Workspace } from '../workspace.ts';
 import {
   projectSummaries,
   queueBoard,
+  queueBoards,
   queueDesign,
   queueStillTake,
   queueTake,
@@ -29,7 +30,16 @@ import {
   resolveBindings,
   setDesignNote,
 } from './designs.ts';
-import { type Board, getBoard, getTake, listTakes, shotStage, type Take } from './generation.ts';
+import {
+  BOARD_ROLES,
+  type Board,
+  type BoardRole,
+  getBoard,
+  getTake,
+  listTakes,
+  shotStage,
+  type Take,
+} from './generation.ts';
 import { recomputeShotModes } from './modes.ts';
 import { getPersona, type Persona } from './personas.ts';
 import {
@@ -80,7 +90,7 @@ export type HandoffAction =
       extra?: string;
       why?: string;
     }
-  | { type: 'board.generate'; shot: string; from?: string; extra?: string; why?: string }
+  | { type: 'board.generate'; shot: string; from?: string; role?: BoardRole; extra?: string; why?: string }
   | {
       type: 'take.generate';
       shot: string;
@@ -97,6 +107,8 @@ export type HandoffAction =
   | { type: 'task.answer'; task: string; answer: string; why?: string }
   | { type: 'task.close'; task: string; note: string; why?: string };
 export type HandoffActionType = HandoffAction['type'];
+
+const ROLE_TEXT: Record<BoardRole, string> = { first: '首幀', key: '關鍵幀', last: '尾幀' };
 
 /** Actions that send a model request (and so may cost money and quota). */
 const PAID: ReadonlySet<HandoffActionType> = new Set(['design.generate', 'board.generate', 'take.generate']);
@@ -979,6 +991,9 @@ function parseResult(ws: Workspace, h: Handoff, raw: unknown, actor: string, now
       if (from && type === 'take.generate') base2 = tryGet(`${at}.from`, () => getTake(db, from));
       if (base2 && shot && base2.shotId !== shot.id)
         problems.push(`${at}.from: ${from} is not a version of ${shot.id}`);
+      const role = type === 'board.generate' && a.role ? (a.role as BoardRole) : undefined;
+      if (role && !BOARD_ROLES.includes(role))
+        problems.push(`${at}.role: must be one of ${BOARD_ROLES.join(', ')}`);
       if (shot) {
         const no = shotNo(db, shot.id);
         const what =
@@ -988,11 +1003,12 @@ function parseResult(ws: Workspace, h: Handoff, raw: unknown, actor: string, now
             type,
             shot: shot.id,
             ...(from && type !== 'take.still' ? { from } : {}),
+            ...(role && BOARD_ROLES.includes(role) ? { role } : {}),
             ...(extra && type !== 'take.still' ? { extra } : {}),
             ...(tier ? { tier } : {}),
             ...base,
           } as HandoffAction,
-          label: `${base2 ? `修正 ${no} 的${what}（依 v${base2.version}）` : `生成 ${no} 的${what}`}${tier ? `・${TIER_TEXT[tier]}` : ''}${type === 'take.still' ? '' : extraText(extra)}`,
+          label: `${base2 ? `修正 ${no} 的${what}（依 v${base2.version}）` : `生成 ${no} 的${role ? ROLE_TEXT[role] : ''}${what}`}${tier ? `・${TIER_TEXT[tier]}` : ''}${type === 'take.still' ? '' : extraText(extra)}`,
           paid: PAID.has(type),
         };
       }
@@ -1116,12 +1132,16 @@ function applyOne(ws: Workspace, h: Handoff, a: HandoffAction, actor: string): s
         ...(a.from ? { fromDesignId: a.from } : {}),
       }).map((q) => q.design.id);
     case 'board.generate':
-      return [
-        queueBoard(ws, a.shot, actor, {
-          ...(a.extra ? { extra: a.extra } : {}),
-          ...(a.from ? { fromBoardId: a.from } : {}),
-        }).board.id,
-      ];
+      // A revision or one moment; otherwise the shot's three storyboard frames.
+      return a.from || a.role
+        ? [
+            queueBoard(ws, a.shot, actor, {
+              ...(a.extra ? { extra: a.extra } : {}),
+              ...(a.from ? { fromBoardId: a.from } : {}),
+              ...(a.role ? { role: a.role } : {}),
+            }).board.id,
+          ]
+        : queueBoards(ws, a.shot, actor, a.extra ? { extra: a.extra } : {}).boards.map((q) => q.board.id);
     case 'take.generate':
       return [
         queueTake(ws, a.shot, tier(a.tier), actor, {

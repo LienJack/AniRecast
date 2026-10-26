@@ -15,7 +15,7 @@ import {
   designNote,
   getDesign,
 } from './designs.ts';
-import { approvedBoard, getBoard, getTake, type InputRef } from './generation.ts';
+import { approvedBoard, type BoardRole, getBoard, getTake, type InputRef } from './generation.ts';
 import { type Bbox, overlaysToRemove, type TextOverlay } from './overlays.ts';
 import { getPersona, type Persona, type PersonaImage } from './personas.ts';
 import type { GenerationTier } from './projects.ts';
@@ -111,15 +111,37 @@ function onScreenTogether(group: ShotCastEntry[], dets: Det[], frame: number): S
   return distinctHeads(own.filter((d) => d.frame === ref.frame)).map((k) => k.entry);
 }
 
-/** Who to replace in a shot, grouped by persona, and the keyframe to show the image model. */
+/** The keyframe a storyboard frame redraws: the shot's first or last frame, or its key frame. */
+export function roleKeyframe(ws: Workspace, shot: Shot, role: BoardRole): Keyframe {
+  if (role === 'key') {
+    const mapped = shotCast(ws.db, shot.id).filter((e) => e.personaId);
+    return boardKeyframe(ws, shot, detectionsOf(ws, mapped));
+  }
+  const frames = listKeyframes(ws.db, shot.id);
+  if (frames.length === 0)
+    throw new AniError('conflict', 'Shot has no keyframes yet', {
+      hint: 'Wait for shot preparation to finish.',
+    });
+  const sorted = [...frames].sort((a, b) => a.frame - b.frame);
+  return frames.find((k) => k.role === role) ?? (role === 'first' ? sorted[0]! : sorted.at(-1)!);
+}
+
+/**
+ * Who to replace in a shot, grouped by persona, and the keyframe to show the image model. For the first and
+ * last frames only the people seen in that frame count (someone who walks in later is not drawn there).
+ */
 function castInShot(
   ws: Workspace,
   shot: Shot,
   perPersonaCap: number,
+  role: BoardRole = 'key',
 ): { uses: PersonaUse[]; keyframe: Keyframe } {
-  const mapped = shotCast(ws.db, shot.id).filter((e) => e.personaId);
-  const dets = detectionsOf(ws, mapped);
-  const keyframe = boardKeyframe(ws, shot, dets);
+  const all = shotCast(ws.db, shot.id).filter((e) => e.personaId);
+  const allDets = detectionsOf(ws, all);
+  const keyframe = role === 'key' ? boardKeyframe(ws, shot, allDets) : roleKeyframe(ws, shot, role);
+  const seen = new Set(allDets.filter((d) => d.frame === keyframe.frame).map((d) => d.entry));
+  const mapped = role === 'key' ? all : all.filter((e) => seen.has(e));
+  const dets = role === 'key' ? allDets : allDets.filter((d) => mapped.includes(d.entry));
   const byCast = new Map<string, ShotCastEntry[]>();
   for (const e of mapped) {
     const key = `${e.personaId}\u0000${e.cast?.id ?? e.tracklet.id}`;
@@ -232,18 +254,28 @@ export interface Plan {
   params: Record<string, unknown>;
 }
 
-/** Board request for a replace shot: representative frame first, then persona references. */
+/**
+ * Board request for a replace shot: the frame of its moment (first, key or last) first, then persona references.
+ */
 export function planBoard(
   ws: Workspace,
   shotId: string,
-  opts: { extra?: string; fromBoardId?: string } = {},
-): Plan {
+  opts: { extra?: string; fromBoardId?: string; role?: BoardRole } = {},
+): Plan & { role: BoardRole; frame: number } {
   const shot = getShot(ws.db, shotId);
   if (shot.mode !== 'replace')
     throw new AniError('conflict', `Shot ${shotId} is ${shot.mode}; boards are for replace shots`);
   const base = opts.fromBoardId ? getBoard(ws.db, opts.fromBoardId) : undefined;
-  const { uses, keyframe } = castInShot(ws, shot, 2);
-  if (uses.length === 0) throw new AniError('conflict', 'No persona is mapped to anyone in this shot');
+  const role = opts.role ?? base?.role ?? 'key';
+  const { uses, keyframe } = castInShot(ws, shot, 2, role);
+  if (uses.length === 0)
+    throw new AniError(
+      'conflict',
+      role === 'key'
+        ? 'No persona is mapped to anyone in this shot'
+        : `Nobody to replace is seen in the ${role} frame of this shot`,
+      { details: { role } },
+    );
   const refs: Array<Omit<InputRef, 'sha256'>> = [{ role: 'frame', path: keyframe.path }];
   const lines = ['Image 1 is a frame from an anime opening.'];
   let next = 2;
@@ -271,9 +303,13 @@ export function planBoard(
     params: {
       aspectRatio: '16:9',
       imageSize: '1K',
+      role,
+      frame: keyframe.frame,
       signature: replacementSignature(ws.db, shotId),
       ...(base ? { fromBoardId: base.id } : {}),
     },
+    role,
+    frame: keyframe.frame,
   };
 }
 

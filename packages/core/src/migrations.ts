@@ -635,6 +635,18 @@ CREATE TABLE cast_references (
 CREATE INDEX cast_references_cast ON cast_references(cast_member_id, status);
 `,
   },
+  {
+    version: 10,
+    name: 'three storyboard frames per shot: first, key and last',
+    // Every board is drawn from one moment of the shot: its first frame, the key frame (the one showing the
+    // most people to replace) or its last frame. Earlier boards were all key frames. Versions stay numbered per
+    // shot, so the existing UNIQUE (shot_id, version) and file names hold.
+    sql: `
+ALTER TABLE boards ADD COLUMN role TEXT NOT NULL DEFAULT 'key' CHECK (role IN ('first', 'key', 'last'));
+ALTER TABLE boards ADD COLUMN frame INTEGER;
+CREATE INDEX boards_role ON boards(shot_id, role, status);
+`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

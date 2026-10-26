@@ -9,6 +9,8 @@ import {
   askUser,
   assertNotBlockedOut,
   assertQuota,
+  BOARD_ROLES,
+  type BoardRole,
   cancelAgentTask,
   claimAgentTask,
   claimNextAgentTask,
@@ -37,6 +39,7 @@ import {
   projectModels,
   projectOfShot,
   queueBoard,
+  queueBoards,
   queueCastAnalysis,
   queueDesign,
   queueOriginalDesign,
@@ -94,6 +97,12 @@ async function waitAll(ws: Workspace, jobIds: string[], wait?: boolean) {
   return { jobs };
 }
 
+const boardRole = (role: string): BoardRole => {
+  if (!BOARD_ROLES.includes(role as BoardRole))
+    throw new AniError('usage', `--role must be one of ${BOARD_ROLES.join(', ')}`);
+  return role as BoardRole;
+};
+
 export function registerGenerate(program: Command): void {
   const globals = () => program.opts<GlobalOptions>();
 
@@ -106,6 +115,7 @@ export function registerGenerate(program: Command): void {
     .option('--extra <text>', 'extra instructions appended to the prompt')
     .option('--prompt-file <file>', 'extra instructions from a file')
     .option('--from <boardId>', 'revise this board (adds --extra on top of its prompt inputs)')
+    .option('--role <role>', 'only one storyboard frame: first, key or last (default: all three)')
     .option(
       '--model <id>',
       'image model for this request (default: the project choice; see `project models`)',
@@ -121,6 +131,7 @@ export function registerGenerate(program: Command): void {
             extra?: string;
             promptFile?: string;
             from?: string;
+            role?: string;
             model?: string;
             wait?: boolean;
           },
@@ -130,15 +141,24 @@ export function registerGenerate(program: Command): void {
               ? [getBoard(ws.db, opts.from).shotId]
               : targetShots(ws, projectRef, shotIds, Boolean(opts.all), ['replace']);
             const extra = extraText(opts);
-            const queued = ids.map((id) =>
-              queueBoard(ws, id, actorFromEnv(), {
-                ...(extra ? { extra } : {}),
-                ...(opts.from ? { fromBoardId: opts.from } : {}),
-                ...(opts.model ? { model: opts.model } : {}),
-              }),
-            );
+            const base = { ...(extra ? { extra } : {}), ...(opts.model ? { model: opts.model } : {}) };
+            const skipped: Array<{ shotId: string; role: string; reason: string }> = [];
+            const queued = ids.flatMap((id) => {
+              if (opts.from || opts.role)
+                return [
+                  queueBoard(ws, id, actorFromEnv(), {
+                    ...base,
+                    ...(opts.from ? { fromBoardId: opts.from } : {}),
+                    ...(opts.role ? { role: boardRole(opts.role) } : {}),
+                  }),
+                ];
+              const r = queueBoards(ws, id, actorFromEnv(), base);
+              for (const s of r.skipped) skipped.push({ shotId: id, ...s });
+              return r.boards;
+            });
             return {
               boards: queued.map((q) => q.board),
+              ...(skipped.length ? { skipped } : {}),
               ...(await waitAll(
                 ws,
                 queued.map((q) => q.job.id),

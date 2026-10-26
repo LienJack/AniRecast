@@ -31,7 +31,15 @@ interface VersionCommon {
   createdAt: number;
 }
 
-export type Board = VersionCommon;
+/** Which moment of the shot a storyboard frame is drawn from. */
+export type BoardRole = 'first' | 'key' | 'last';
+export const BOARD_ROLES: readonly BoardRole[] = ['first', 'key', 'last'];
+
+export interface Board extends VersionCommon {
+  role: BoardRole;
+  /** The source frame it redraws. */
+  frame: number | null;
+}
 
 export interface Take extends VersionCommon {
   boardId: string | null;
@@ -57,6 +65,11 @@ interface VersionRow {
   cost_usd: number;
   created_by: string;
   created_at: number;
+}
+
+interface BoardRow extends VersionRow {
+  role: BoardRole;
+  frame: number | null;
 }
 
 interface TakeRow extends VersionRow {
@@ -85,6 +98,8 @@ const common = (r: VersionRow): VersionCommon => ({
   createdAt: r.created_at,
 });
 
+const toBoard = (r: BoardRow): Board => ({ ...common(r), role: r.role, frame: r.frame });
+
 const toTake = (r: TakeRow): Take => ({
   ...common(r),
   boardId: r.board_id,
@@ -99,9 +114,9 @@ export const boardFileStem = (version: number) => `b${pad(version)}`;
 export const takeFileStem = (version: number) => `t${pad(version)}`;
 
 export function getBoard(db: Db, id: string): Board {
-  const row = one<VersionRow>(db, 'SELECT * FROM boards WHERE id = :id', { id });
+  const row = one<BoardRow>(db, 'SELECT * FROM boards WHERE id = :id', { id });
   if (!row) throw new AniError('not_found', `Board not found: ${id}`);
-  return common(row);
+  return toBoard(row);
 }
 
 export function getTake(db: Db, id: string): Take {
@@ -111,14 +126,18 @@ export function getTake(db: Db, id: string): Take {
 }
 
 export const listBoards = (db: Db, shotId: string): Board[] =>
-  all<VersionRow>(db, 'SELECT * FROM boards WHERE shot_id = :shotId ORDER BY version', { shotId }).map(
-    common,
-  );
+  all<BoardRow>(db, 'SELECT * FROM boards WHERE shot_id = :shotId ORDER BY version', { shotId }).map(toBoard);
 export const listTakes = (db: Db, shotId: string): Take[] =>
   all<TakeRow>(db, 'SELECT * FROM takes WHERE shot_id = :shotId ORDER BY version', { shotId }).map(toTake);
 
-export const approvedBoard = (db: Db, shotId: string): Board | undefined =>
-  listBoards(db, shotId).find((b) => b.status === 'approved');
+/** The approved storyboard frame of one moment of the shot (the key frame unless said). */
+export const approvedBoard = (db: Db, shotId: string, role: BoardRole = 'key'): Board | undefined =>
+  listBoards(db, shotId).find((b) => b.status === 'approved' && b.role === role);
+/** The approved storyboard frames of a shot, by moment. */
+export const approvedBoards = (db: Db, shotId: string): Partial<Record<BoardRole, Board>> =>
+  Object.fromEntries(
+    BOARD_ROLES.map((r) => [r, approvedBoard(db, shotId, r)] as const).filter(([, b]) => b),
+  ) as Partial<Record<BoardRole, Board>>;
 export const approvedTake = (db: Db, shotId: string): Take | undefined =>
   listTakes(db, shotId)
     .filter((t) => t.status === 'approved')
@@ -142,7 +161,11 @@ function nextVersion(db: Db, table: 'boards' | 'takes', shotId: string): number 
   );
 }
 
-export function createBoard(db: Db, input: NewVersion, now: number = Date.now()): Board {
+export function createBoard(
+  db: Db,
+  input: NewVersion & { role?: BoardRole; frame?: number | null },
+  now: number = Date.now(),
+): Board {
   return tx(db, () => {
     const shot = getShot(db, input.shotId);
     if (shot.mode !== 'replace')
@@ -151,12 +174,14 @@ export function createBoard(db: Db, input: NewVersion, now: number = Date.now())
     const version = nextVersion(db, 'boards', input.shotId);
     run(
       db,
-      `INSERT INTO boards (id, shot_id, version, status, prompt, model, params_json, inputs_json, parent_id, created_by, created_at)
-       VALUES (:id, :shotId, :version, 'queued', :prompt, :model, :params, :inputs, :parentId, :createdBy, :now)`,
+      `INSERT INTO boards (id, shot_id, version, role, frame, status, prompt, model, params_json, inputs_json, parent_id, created_by, created_at)
+       VALUES (:id, :shotId, :version, :role, :frame, 'queued', :prompt, :model, :params, :inputs, :parentId, :createdBy, :now)`,
       {
         id,
         shotId: input.shotId,
         version,
+        role: input.role ?? 'key',
+        frame: input.frame ?? null,
         prompt: input.prompt,
         model: input.model,
         params: toJson(input.params ?? {}),
@@ -173,7 +198,7 @@ export function createBoard(db: Db, input: NewVersion, now: number = Date.now())
       entityType: 'board',
       entityId: id,
       projectId: project.id,
-      payload: { shotId: input.shotId, version },
+      payload: { shotId: input.shotId, version, role: input.role ?? 'key' },
     });
     return getBoard(db, id);
   });
@@ -304,7 +329,8 @@ export interface Review {
 }
 
 /**
- * Records a human verdict and applies it: approve demotes any other approved version of the same shot,
+ * Records a human verdict and applies it: approve demotes any other approved version of the same shot (for a
+ * storyboard frame, of the same moment: first, key or last),
  * changes rejects, keep_original switches the shot to keep. Regeneration is queued by the caller.
  */
 export function addReview(
@@ -331,14 +357,16 @@ export function addReview(
       if (input.createdBy.startsWith('codex:'))
         throw new AniError('conflict', 'Approval is a human decision; Codex can recommend but not approve');
       const table = input.targetType === 'board' ? 'boards' : 'takes';
-      const tierClause = input.targetType === 'take' ? 'AND tier = :tier' : '';
+      const sameKind = input.targetType === 'take' ? 'AND tier = :tier' : 'AND role = :role';
       run(
         db,
-        `UPDATE ${table} SET status = 'ready' WHERE shot_id = :shotId AND status = 'approved' AND id != :id ${tierClause}`,
+        `UPDATE ${table} SET status = 'ready' WHERE shot_id = :shotId AND status = 'approved' AND id != :id ${sameKind}`,
         {
           shotId: target.shotId,
           id: target.id,
-          ...(input.targetType === 'take' ? { tier: (target as Take).tier } : {}),
+          ...(input.targetType === 'take'
+            ? { tier: (target as Take).tier }
+            : { role: (target as Board).role }),
         },
       );
       patchVersion(db, table, target.id, { status: 'approved' }, input.createdBy);
@@ -439,14 +467,18 @@ export function shotStage(db: Db, shotId: string, tier: GenerationTier): ShotSta
   if (latestTake?.status === 'ready') return 'take_review';
   if (latestTake?.status === 'failed') return 'failed';
   if (shot.mode === 'replace') {
+    // The video waits for the key frame's storyboard; the first and last frames help when they are approved too.
     const boards = listBoards(db, shotId);
-    if (!boards.some((b) => b.status === 'approved')) {
-      const latest = boards.at(-1);
-      if (!latest) return 'board_pending';
-      if (['queued', 'generating'].includes(latest.status)) return 'board_generating';
-      if (latest.status === 'ready') return 'board_review';
-      if (latest.status === 'failed') return 'failed';
-      if (latest.status === 'stale') return 'stale';
+    if (!boards.some((b) => b.status === 'approved' && b.role === 'key')) {
+      const latest = BOARD_ROLES.map((r) => boards.filter((b) => b.role === r).at(-1)).filter(
+        (b): b is Board => Boolean(b),
+      );
+      if (!latest.length) return 'board_pending';
+      if (latest.some((b) => ['queued', 'generating'].includes(b.status))) return 'board_generating';
+      if (latest.some((b) => b.status === 'ready')) return 'board_review';
+      const key = latest.find((b) => b.role === 'key');
+      if (key?.status === 'failed') return 'failed';
+      if (key?.status === 'stale') return 'stale';
       return 'board_pending';
     }
   }

@@ -37,6 +37,10 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
 2. Review feedback on a **board** (`targetType: board`): write a short, concrete revision and regenerate:
    `anirecast board generate <project> --from <boardId> --extra "<what to change>" --wait`
    Then look at the new board (`anirecast board show <newId>` → `absPath`) and check it against the comment.
+   A shot has three storyboard frames — `role` first, key and last (its first frame, the frame showing the most
+   people to replace, its last frame); `--from` keeps the role, `--role <role>` draws one moment, no flag draws
+   all three (a first/last frame where nobody to replace is seen is skipped). The video waits for the key
+   frame's approval; first and last help when approved.
 3. Review feedback on a **take** (`targetType: take`): same with
    `anirecast take generate <project> --from <takeId> --extra "<what to change>" --wait`.
    You cannot watch video; run `anirecast take sheet <newTakeId>` and view the returned image (original

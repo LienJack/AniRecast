@@ -23,6 +23,8 @@ import {
 import {
   addReview,
   approvedBoard,
+  BOARD_ROLES,
+  type BoardRole,
   createBoard,
   createTake,
   getBoard,
@@ -49,12 +51,14 @@ export function queueBoard(
   ws: Workspace,
   shotId: string,
   actor: string,
-  opts: { extra?: string; fromBoardId?: string; model?: string } = {},
+  opts: { extra?: string; fromBoardId?: string; model?: string; role?: BoardRole } = {},
 ) {
   const { model: chosen, ...planOpts } = opts;
   const plan = planBoard(ws, shotId, planOpts);
   const board = createBoard(ws.db, {
     shotId,
+    role: plan.role,
+    frame: plan.frame,
     prompt: plan.prompt,
     model: chosen ?? projectModels(ws.db, projectOfShot(ws.db, shotId).id).image,
     params: plan.params,
@@ -71,6 +75,30 @@ export function queueBoard(
     maxAttempts: 2,
   });
   return { board, job };
+}
+
+/**
+ * 生成分鏡圖: the shot's three storyboard frames — first, key and last. A first or last frame where nobody to
+ * replace is seen is skipped (and said so); the key frame is required.
+ */
+export function queueBoards(
+  ws: Workspace,
+  shotId: string,
+  actor: string,
+  opts: { extra?: string; model?: string; roles?: readonly BoardRole[] } = {},
+) {
+  const { roles = BOARD_ROLES, ...rest } = opts;
+  const boards: Array<ReturnType<typeof queueBoard>> = [];
+  const skipped: Array<{ role: BoardRole; reason: string }> = [];
+  for (const role of roles) {
+    try {
+      boards.push(queueBoard(ws, shotId, actor, { ...rest, role }));
+    } catch (error) {
+      if (role === 'key' || !(error instanceof AniError) || error.code !== 'conflict') throw error;
+      skipped.push({ role, reason: error.message });
+    }
+  }
+  return { boards, skipped };
 }
 
 export function queueTake(

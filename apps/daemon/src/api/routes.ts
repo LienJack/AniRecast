@@ -12,6 +12,7 @@ import {
   applyHandoff,
   assertQuota,
   assignTracklet,
+  type BoardRole,
   cancelAgentTask,
   closeHandoff,
   createClip,
@@ -66,6 +67,7 @@ import {
   projectOverview,
   projectSummaries,
   queueBoard,
+  queueBoards,
   queueCastAnalysis,
   queueDesign,
   queueOriginalDesign,
@@ -740,15 +742,30 @@ export function registerRoutes(
   );
   app.post('/api/projects/:ref/boards', async (c) =>
     handle(c, async () => {
-      const b = await body<{ shotIds?: string[]; extra?: string; fromBoardId?: string; model?: string }>(c);
+      const b = await body<{
+        shotIds?: string[];
+        extra?: string;
+        fromBoardId?: string;
+        model?: string;
+        role?: BoardRole;
+      }>(c);
       const ids = shotsForMode(ws, c.req.param('ref'), b.shotIds, ['replace']);
       if (b.model) imageModelOrThrow(b.model);
+      const opts = { ...(b.extra ? { extra: b.extra } : {}), ...(b.model ? { model: b.model } : {}) };
+      // One moment (a revision, or a single role) or all three storyboard frames of each shot.
       return queueMany(ids, (id) =>
-        queueBoard(ws, id, USER, {
-          ...(b.extra ? { extra: b.extra } : {}),
-          ...(b.fromBoardId ? { fromBoardId: b.fromBoardId } : {}),
-          ...(b.model ? { model: b.model } : {}),
-        }),
+        b.fromBoardId || b.role
+          ? {
+              boards: [
+                queueBoard(ws, id, USER, {
+                  ...opts,
+                  ...(b.fromBoardId ? { fromBoardId: b.fromBoardId } : {}),
+                  ...(b.role ? { role: b.role } : {}),
+                }),
+              ],
+              skipped: [],
+            }
+          : queueBoards(ws, id, USER, opts),
       );
     }),
   );

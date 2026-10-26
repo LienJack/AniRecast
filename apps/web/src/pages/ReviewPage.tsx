@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { BoardTabs } from '@/components/board-tabs';
 import { CompareSlider, type CompareSliderHandle } from '@/components/CompareSlider';
 import { DiscussInCodex } from '@/components/codex';
 import {
@@ -48,7 +49,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { api, fileUrl } from '@/lib/api';
 import { useAgentLive } from '@/lib/events';
 import { formatAgo, formatTime, formatUsd } from '@/lib/format';
-import { MODE_LABEL, SHOT_MODES, STAGE_TONE, TIER_LABEL, VERDICT_LABEL, VERDICT_TONE } from '@/lib/labels';
+import {
+  BOARD_ROLE_LABEL,
+  MODE_LABEL,
+  SHOT_MODES,
+  STAGE_TONE,
+  TIER_LABEL,
+  VERDICT_LABEL,
+  VERDICT_TONE,
+} from '@/lib/labels';
 import { useAction, useModels, useOverview, useShot } from '@/lib/queries';
 import type {
   AgentTask,
@@ -309,6 +318,7 @@ function VersionRow({
           {v.version}
         </button>
         <VersionBadge status={v.status} />
+        {'role' in v ? <Tag tone="muted">{BOARD_ROLE_LABEL[v.role]}</Tag> : null}
         {'tier' in v ? <Tag tone="muted">{TIER_LABEL[v.tier]}</Tag> : null}
         {'framesOut' in v && v.framesIn !== null ? (
           <Tag tone={v.framesIn === v.framesOut ? 'muted' : 'danger'}>
@@ -390,13 +400,11 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
     }
   }, [latestIds, d]);
 
-  const board = d.boards.find((b) => target?.type === 'board' && b.id === target.id) ?? d.boards.at(-1);
   const take =
     d.takes.find((t) => target?.type === 'take' && t.id === target.id) ??
     d.takes.filter((t) => t.tier === d.project.tier).at(-1) ??
     d.takes.at(-1);
   const busy = (v: { status: string } | undefined) => v?.status === 'queued' || v?.status === 'generating';
-  const boardJob = useActiveJob('boardId', busy(board) ? board?.id : null);
   const takeJob = useActiveJob('takeId', busy(take) ? take?.id : null);
   const current: (WithReviews<Board> | WithReviews<Take>) | undefined =
     target?.type === 'board'
@@ -596,57 +604,22 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
       <div className="grid gap-4 p-5 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="flex min-w-0 flex-col gap-4">
           {hasBoardStage ? (
-            <Card>
-              <CardHeader>
-                <ImageIcon className="size-4" />
-                <CardTitle>分鏡圖</CardTitle>
-                {board ? (
-                  <span className="text-muted-foreground text-xs">
-                    v{board.version} · <VersionBadge status={board.status} />
-                  </span>
-                ) : null}
-              </CardHeader>
-              <CardContent className="grid gap-3 md:grid-cols-2">
-                <div className="flex flex-col gap-1">
-                  <span className="text-muted-foreground text-xs">
-                    原代表幀 f {repKeyframe?.frame ?? shot.repFrame}
-                    {removable.length ? `（紅框：要去掉的字幕 ${removable.length} 處）` : ''}
-                  </span>
-                  <FrameWithOverlays src={fileUrl(repKeyframe?.path)} alt="原代表幀" overlays={d.overlays} />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-muted-foreground text-xs">
-                    {board ? `分鏡圖 v${board.version}` : '還沒有分鏡圖'}
-                  </span>
-                  {board?.path ? (
-                    <Thumb
-                      src={fileUrl(board.path)}
-                      alt={`分鏡圖 v${board.version}`}
-                      fit="contain"
-                      className="aspect-video w-full rounded-md"
-                      zoom
-                      gallery={[
-                        ...(repKeyframe ? [{ src: fileUrl(repKeyframe.path) ?? '', alt: '原代表幀' }] : []),
-                        { src: fileUrl(board.path) ?? '', alt: `分鏡圖 v${board.version}` },
-                      ]}
-                    />
-                  ) : board && board.status !== 'failed' ? (
-                    <Generating
-                      queued={board.status === 'queued'}
-                      since={board.createdAt}
-                      progress={boardJob?.progress}
-                      message={boardJob?.message}
-                      backdrop={fileUrl(repKeyframe?.path)}
-                      className="aspect-video w-full"
-                    />
-                  ) : (
-                    <div className="flex aspect-video items-center justify-center rounded-md bg-muted text-muted-foreground text-xs">
-                      {board ? '生成失敗' : '按右側「生成分鏡圖」開始'}
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+            <BoardTabs
+              d={d}
+              selectedId={target?.type === 'board' ? target.id : undefined}
+              onSelect={(id) => setTarget({ type: 'board', id })}
+              keyFrame={repKeyframe}
+              renderOriginal={(src, alt) => (
+                <>
+                  {removable.length ? (
+                    <span className="text-[11px] text-muted-foreground">
+                      紅框：要去掉的字幕 {removable.length} 處
+                    </span>
+                  ) : null}
+                  <FrameWithOverlays src={src} alt={alt} overlays={d.overlays} />
+                </>
+              )}
+            />
           ) : (
             <Card>
               <CardContent className="flex flex-col gap-2">

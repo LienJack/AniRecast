@@ -265,3 +265,11 @@ export function actorLabel(actor: string | null | undefined): string {
   if (actor === 'daemon' || actor === 'system' || actor === 'dispatcher') return '系統';
   return actor;
 }
+
+/** The three storyboard frames of a shot. */
+export const BOARD_ROLES = ['first', 'key', 'last'] as const;
+export const BOARD_ROLE_LABEL: Record<(typeof BOARD_ROLES)[number], string> = {
+  first: '首幀',
+  key: '關鍵幀',
+  last: '尾幀',
+};

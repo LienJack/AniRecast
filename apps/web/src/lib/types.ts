@@ -29,6 +29,7 @@ export type {
   AssetKind,
   AssignedBy,
   Board,
+  BoardRole,
   CastAnalysis,
   CastMember,
   CastReference,
