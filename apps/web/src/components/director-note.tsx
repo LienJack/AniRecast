@@ -9,6 +9,7 @@ interface DirectorParams {
   costUsd?: number;
   fallback?: boolean;
   error?: string;
+  critique?: { changes: string[]; kept?: string };
 }
 
 const ANALYSIS_LABEL: Record<string, string> = {
@@ -68,6 +69,20 @@ export function DirectorNote({
                 <span className="truncate text-muted-foreground">{refLabel(i)}</span>
               </span>
             ))}
+          </div>
+        ) : null}
+        {d.critique ? (
+          <div className="flex flex-col gap-0.5">
+            <span className="text-muted-foreground">送出前的複核</span>
+            {d.critique.changes.length ? (
+              <ul className="list-disc pl-4">
+                {d.critique.changes.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+            ) : (
+              <span>{d.critique.kept ?? '沒有要改的'}</span>
+            )}
           </div>
         ) : null}
         <pre className="whitespace-pre-wrap rounded bg-muted/50 p-2 font-sans text-[11px] leading-relaxed">
