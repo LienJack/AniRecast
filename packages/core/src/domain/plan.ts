@@ -6,12 +6,21 @@ import type { Workspace } from '../workspace.ts';
 import { getCastMember, type ShotCastEntry, shotCast } from './cast.ts';
 import { getCastAnalysis } from './cast-analysis.ts';
 import { findActiveClip } from './clips.ts';
-import { approvedDesign, type Binding, type DesignKind, designNote, getDesign } from './designs.ts';
+import {
+  approvedDesign,
+  approvedOriginal,
+  type Binding,
+  type Design,
+  type DesignKind,
+  designNote,
+  getDesign,
+} from './designs.ts';
 import { approvedBoard, getBoard, getTake, type InputRef } from './generation.ts';
 import { type Bbox, overlaysToRemove, type TextOverlay } from './overlays.ts';
 import { getPersona, type Persona, type PersonaImage } from './personas.ts';
 import type { GenerationTier } from './projects.ts';
 import { getProject } from './projects.ts';
+import { listReferences } from './references.ts';
 import { getShot, type Keyframe, listKeyframes, listShots, projectOfShot, type Shot } from './shots.ts';
 import { placeTracklet, replacementSignature } from './signature.ts';
 
@@ -440,6 +449,192 @@ const DESIGN_TASK: Record<DesignKind, string> = {
     'Draw an action sheet: the same character in four full-body poses side by side at the same scale — walking toward the viewer, walking away while looking back over the shoulder, running, and a relaxed everyday pose (leaning, or holding a cup).',
 };
 
+/** The ticked expressions or poses of an original character's analysis, each with the crop that shows it. */
+function analysisCells(ws: Workspace, castId: string, kind: DesignKind) {
+  const analysis = getCastAnalysis(ws.db, castId)?.data ?? null;
+  const items =
+    kind === 'expressions' ? (analysis?.expressions ?? []) : kind === 'poses' ? (analysis?.poses ?? []) : [];
+  return items
+    .filter((it) => it.use)
+    .map((it) => {
+      const a = analysis?.appearances[it.appearance];
+      const path = kind === 'expressions' ? (a?.head ?? a?.body) : (a?.body ?? a?.head);
+      return path && existsSync(ws.abs(path)) ? { item: it, path, shotNo: a?.shotNo } : null;
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+}
+
+const KIND_NAME: Record<DesignKind, string> = {
+  turnaround: 'turnaround (front, side and back)',
+  expressions: 'expression sheet',
+  poses: 'action sheet',
+};
+
+/** Instructions carried by every revision of a sheet, so fixes accumulate. */
+const extrasOf = (base: Design | undefined, extra: string | undefined) => [
+  ...((base?.params.extras as string[] | undefined) ?? []),
+  ...(extra?.trim() ? [extra.trim()] : []),
+];
+
+/**
+ * Replacement sheet from the original character's approved sheet: the same sheet redrawn with the library
+ * character in her place, so the two line up cell for cell (layout, poses, expressions, proportions, light).
+ */
+function planFromTemplate(
+  ws: Workspace,
+  projectId: string,
+  o: {
+    persona: Persona;
+    cast: { id: string; label: string; looks: Array<{ lookPolicy: string }> };
+    kind: DesignKind;
+    template: Design;
+    personaRefs: string[];
+    base: Design | undefined;
+    extra: string | undefined;
+  },
+): Plan {
+  const { persona, cast, kind, template } = o;
+  const refs: Array<Omit<InputRef, 'sha256'>> = [
+    ...o.personaRefs.map((path) => ({ role: `persona:${persona.id}`, path })),
+    { role: `template:${template.id}`, path: template.path as string },
+  ];
+  const ids = o.personaRefs.map((_, i) => i + 1);
+  const mine = ids.length === 1 ? `Image ${ids[0]}` : `Images ${ids[0]}–${ids.at(-1)}`;
+  const t = refs.length;
+  const followsSource = (cast.looks[0]?.lookPolicy ?? 'persona') === 'follow_source';
+  const lines = [
+    `${mine} show the library character "${persona.name}"${persona.description ? ` (${persona.description})` : ''}.`,
+    `Image ${t} is the ${KIND_NAME[kind]} of "${cast.label}", the character she replaces in an anime opening, drawn in that anime's style.`,
+    `Redraw Image ${t} with ${persona.name} in place of ${cast.label}: keep the same layout, the same number and order of figures or portraits, the same poses, expressions, head and body angles, framing, proportions, line art, cel shading and lighting. Take ${persona.name}'s face, hairstyle and hair colour, eye colour, accessories and distinctive features${followsSource ? '' : ', outfit design and colours'} from ${mine}${followsSource ? `; keep ${cast.label}'s outfit from Image ${t}` : `; do not keep ${cast.label}'s face, hair or outfit`}.`,
+  ];
+  const note = designNote(ws.db, projectId, persona.id);
+  if (note) lines.push(`Adaptation for this project: ${note}`);
+  const styleNotes = projectStyleNotes(ws, projectId);
+  if (styleNotes) lines.push(`About the animation's style: ${styleNotes}`);
+  lines.push(
+    'Plain light grey background. No text, labels, captions, numbers, logos or watermarks anywhere in the image.',
+  );
+  const extras = extrasOf(o.base, o.extra);
+  for (const e of extras) lines.push(`Additional instructions: ${e}`);
+  return {
+    prompt: lines.join('\n'),
+    inputs: withHashes(ws, refs),
+    params: {
+      aspectRatio: '16:9',
+      imageSize: '2K',
+      castMemberId: cast.id,
+      templateId: template.id,
+      ...(o.base ? { fromDesignId: o.base.id } : {}),
+      ...(extras.length ? { extras } : {}),
+    },
+  };
+}
+
+/**
+ * The original character's own model sheet (官方設定集): official design art the human accepted, plus how the
+ * opening draws her, redrawn as a clean turnaround, expression sheet or action sheet — the expressions and
+ * actions she has in the clip when analysed. It is reviewed, and then serves as her replacement's template.
+ */
+export function planOriginalDesign(
+  ws: Workspace,
+  projectId: string,
+  castId: string,
+  kind: DesignKind,
+  opts: { extra?: string; fromDesignId?: string } = {},
+): Plan {
+  const cast = getCastMember(ws.db, castId);
+  const base = opts.fromDesignId ? getDesign(ws.db, opts.fromDesignId) : undefined;
+  const accepted = listReferences(ws.db, castId).filter(
+    (r) => r.status === 'accepted' && existsSync(ws.abs(r.path)),
+  );
+  const prefer =
+    kind === 'turnaround'
+      ? /turnaround|model|full|全身|三視|設定|立ち/i
+      : kind === 'expressions'
+        ? /face|expression|表情|顔/i
+        : /pose|action|動作|ポーズ|full|全身/i;
+  const official = [...accepted.filter((r) => prefer.test(r.label)), ...accepted]
+    .filter((r, i, all) => all.findIndex((x) => x.id === r.id) === i)
+    .slice(0, 3);
+  const analysis = getCastAnalysis(ws.db, castId)?.data ?? null;
+  const cells = analysisCells(ws, castId, kind);
+  const bodies = castBodyCrops(ws, castId, official.length ? 1 : 2);
+  const frame = bodies[0] ? midFrame(ws, bodies[0].shotId) : styleFrames(ws, projectId, 1)[0];
+  const refs: Array<Omit<InputRef, 'sha256'>> = [
+    ...official.map((r) => ({ role: `official:${r.id}`, path: r.path })),
+    ...(cells.length
+      ? cells.map((c, i) => ({ role: `tile:${i + 1}`, path: c.path }))
+      : [
+          ...bodies.map((b) => ({ role: `original:${castId}`, path: b.path })),
+          ...(frame ? [{ role: 'style', path: frame }] : []),
+        ]),
+  ];
+  if (!refs.length)
+    throw new AniError('conflict', `Nothing to draw "${cast.label}" from yet`, {
+      hint: 'Accept an official reference image or analyse the original character first.',
+    });
+  const sent = refs.filter(
+    (r, i) => !r.role.startsWith('tile:') || refs.findIndex((x) => x.role.startsWith('tile:')) === i,
+  );
+  const n = (role: string) => sent.flatMap((r, i) => (r.role.startsWith(role) ? [i + 1] : []));
+  const span = (idx: number[]) => (idx.length === 1 ? `Image ${idx[0]}` : `Images ${idx[0]}–${idx.at(-1)}`);
+  const lines: string[] = [];
+  if (official.length)
+    lines.push(
+      `${span(n('official:'))} ${official.length === 1 ? 'is' : 'are'} official character design art of "${cast.label}" from this anime${
+        official.some((r) => r.label)
+          ? ` (${official
+              .map((r) => r.label)
+              .filter(Boolean)
+              .join('; ')})`
+          : ''
+      }.`,
+    );
+  if (n('original:').length)
+    lines.push(`${span(n('original:'))} show ${cast.label} as the opening draws her.`);
+  if (n('style').length) lines.push(`${span(n('style'))} is a frame from the opening.`);
+  if (cells.length)
+    lines.push(
+      `${span(n('tile:'))} is a grid of ${cast.label}'s ${kind === 'expressions' ? 'expressions' : 'poses and actions'} in the opening, read left to right, top to bottom: ${cells
+        .map((c, i) => `${i + 1}. ${c.item.label}${c.item.description ? ` (${c.item.description})` : ''}`)
+        .join('; ')}.`,
+    );
+  lines.push(
+    `Draw ${cast.label}'s own model sheet — the same character, not a redesign: her face, eyes, hairstyle and hair colour, outfit and accessories exactly as in the official art${analysis?.outfit ? ` (in the opening she wears: ${analysis.outfit})` : ''}, drawn the way this anime draws her.`,
+  );
+  if (analysis?.style) lines.push(`How the opening draws her: ${analysis.style}`);
+  const styleNotes = projectStyleNotes(ws, projectId);
+  if (styleNotes) lines.push(`About the animation's style: ${styleNotes}`);
+  const columns = sheetColumns(kind, cells.length);
+  if (cells.length && kind === 'expressions')
+    lines.push(
+      `Draw an expression sheet: exactly ${cells.length} head-and-shoulders portraits of her in a grid of ${columns} columns, in the same order as ${span(n('tile:'))}, each with the same expression and head angle as its cell.`,
+    );
+  else if (cells.length)
+    lines.push(
+      `Draw an action sheet: exactly ${cells.length} full-body figures of her${columns < cells.length ? ` in rows of ${columns}` : ' side by side'} at the same scale, in the same order as ${span(n('tile:'))}, each in the same pose and camera angle as its cell.`,
+    );
+  else lines.push(DESIGN_TASK[kind]);
+  lines.push(
+    'Plain light grey background. No text, labels, captions, numbers, logos or watermarks anywhere in the image.',
+  );
+  const extras = extrasOf(base, opts.extra);
+  for (const e of extras) lines.push(`Additional instructions: ${e}`);
+  return {
+    prompt: lines.join('\n'),
+    inputs: withHashes(ws, refs),
+    params: {
+      aspectRatio: '16:9',
+      imageSize: '2K',
+      castMemberId: castId,
+      subject: 'original',
+      ...(cells.length ? { tile: { columns, shots: cells.map((c) => c.shotNo) } } : {}),
+      ...(base ? { fromDesignId: base.id } : {}),
+      ...(extras.length ? { extras } : {}),
+    },
+  };
+}
+
 /** Columns of a sheet (and of the reference grid) for `n` expressions or poses. */
 export const sheetColumns = (kind: DesignKind, n: number): number =>
   kind === 'poses' ? (n <= 4 ? n : 3) : n <= 3 ? n : n === 4 ? 2 : 3;
@@ -467,17 +662,20 @@ export function planDesign(
     throw new AniError('conflict', `Persona "${persona.name}" has no reference image`, {
       hint: 'Add one with `anirecast persona image-add`.',
     });
+  // An approved sheet of the original character is the template: same layout, the library character in her place.
+  const template = approvedOriginal(ws.db, cast.id, kind);
+  if (template?.path && existsSync(ws.abs(template.path)))
+    return planFromTemplate(ws, projectId, {
+      persona,
+      cast,
+      kind,
+      template,
+      personaRefs,
+      base,
+      extra: opts.extra,
+    });
   const analysis = getCastAnalysis(ws.db, cast.id)?.data ?? null;
-  const items =
-    kind === 'expressions' ? (analysis?.expressions ?? []) : kind === 'poses' ? (analysis?.poses ?? []) : [];
-  const cells = items
-    .filter((it) => it.use)
-    .map((it) => {
-      const a = analysis?.appearances[it.appearance];
-      const path = kind === 'expressions' ? (a?.head ?? a?.body) : (a?.body ?? a?.head);
-      return path && existsSync(ws.abs(path)) ? { item: it, path, shotNo: a?.shotNo } : null;
-    })
-    .filter((c): c is NonNullable<typeof c> => c !== null);
+  const cells = analysisCells(ws, cast.id, kind);
   const bodies = castBodyCrops(ws, cast.id, kind === 'turnaround' ? 2 : 1);
   const frame = bodies[0] ? midFrame(ws, bodies[0].shotId) : styleFrames(ws, projectId, 1)[0];
   const refs: Array<Omit<InputRef, 'sha256'>> = [

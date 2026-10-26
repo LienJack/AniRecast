@@ -45,7 +45,9 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
 4. Review feedback on a **character design** sheet (`targetType: design`). A design belongs to a binding: an
    original character of the clip and the library character replacing her. It is drawn from the original's
    analysis (`anirecast design list` → `analysis`: how the animation draws her, her build and outfit, and the
-   expressions / poses she has, each from a shot), so the sheet matches the role. Revise with
+   expressions / poses she has, each from a shot), so the sheet matches the role. A design is either the original
+   character's own sheet (`subject: original`, drawn from official art a human accepted) or her replacement's
+   (`subject: replacement`); an approved original sheet is the template the replacement is redrawn on. Revise with
    `anirecast design generate <project> --from <designId> --extra "<what to change>" --wait` and view the new
    sheet (`anirecast design show <newId>` → `absPath`). A revision keeps the earlier instructions. If the change
    applies to every sheet of the character (e.g. "cover the shoulders"), say so in the done note and suggest
@@ -137,5 +139,7 @@ anirecast cast tidy <project> --wait        # JEV: merge same-person characters 
 anirecast design list <project>             # bindings: original → library character, analysis, note, sheets
 anirecast design analyze <project> <cast>   # 原片分析 of one original (add --generate to redraw the sheets after)
 anirecast design pick <project> <cast> --expressions 1,3 --poses 2   # which analysed items the sheets use
+anirecast design refs <project> <cast> [--search --wait]   # 官方設定集: official art (candidates need a human to accept)
+anirecast design original <project> <cast> --wait          # the original character's own sheets, from accepted art
 anirecast codex show <hof_id>               # a discussion: question, folder, submitted result, what was imported
 ```

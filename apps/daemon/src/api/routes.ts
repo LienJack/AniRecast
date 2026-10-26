@@ -6,6 +6,7 @@ import {
   API_KEYS,
   type AssetKind,
   addPersonaImage,
+  addReference,
   answerAgentTask,
   apiKeySource,
   applyHandoff,
@@ -67,10 +68,13 @@ import {
   queueBoard,
   queueCastAnalysis,
   queueDesign,
+  queueOriginalDesign,
+  queueReferenceSearch,
   queueStillTake,
   queueStyleAnalysis,
   queueTake,
   quotaOverview,
+  type ReferenceStatus,
   readHandoffResultFile,
   readLock,
   recomputeShotModes,
@@ -102,6 +106,7 @@ import {
   updatePersona,
   updatePersonaImage,
   updateProjectSettings,
+  updateReference,
   updateShot,
   type Verdict,
   type Workspace,
@@ -110,6 +115,7 @@ import { parseTimecode, probe } from '@anirecast/media';
 import { AniError, type ErrorCode, IMAGE_MODELS, toEnvelopeError, VIDEO_MODELS } from '@anirecast/shared';
 import type { Context, Hono } from 'hono';
 import type { CodexDiscussions } from '../codex/discussions.ts';
+import { addReferenceFromUrl } from '../handlers/references.ts';
 import { serveWorkspaceFile } from './files.ts';
 
 const USER = 'user';
@@ -621,6 +627,69 @@ export function registerRoutes(
       if (b.model) imageModelOrThrow(b.model);
       return queueCastAnalysis(ws, c.req.param('ref'), b.castId ?? null, USER, {
         ...(b.generate ? { thenKinds: [...DESIGN_KINDS] } : {}),
+        ...(b.model ? { model: b.model } : {}),
+      });
+    }),
+  );
+  // ---- 官方設定集: reference images of an original character and her own sheets ---------------------------
+  app.post('/api/projects/:ref/designs/references/search', async (c) =>
+    handle(c, async () => {
+      const b = await body<{ castId: string }>(c);
+      return queueReferenceSearch(ws, c.req.param('ref'), b.castId, USER);
+    }),
+  );
+  app.post('/api/cast/:id/references', async (c) =>
+    handle(c, async () => {
+      const type = c.req.header('content-type') ?? '';
+      if (type.includes('multipart/form-data')) {
+        const form = await c.req.parseBody();
+        const file = form.file;
+        if (!(file instanceof File)) throw new AniError('usage', 'Upload a file in the "file" field');
+        const tmp = mkdtempSync(path.join(os.tmpdir(), 'anirecast-ref-'));
+        try {
+          const ext = path.extname(file.name).toLowerCase() || '.png';
+          const tmpFile = path.join(tmp, `upload${ext}`);
+          writeFileSync(tmpFile, Buffer.from(await file.arrayBuffer()));
+          return addReference(
+            ws,
+            c.req.param('id'),
+            tmpFile,
+            { status: 'accepted', label: typeof form.label === 'string' ? form.label : '上傳的參考' },
+            USER,
+          );
+        } finally {
+          rmSync(tmp, { recursive: true, force: true });
+        }
+      }
+      const b = await body<{ url: string }>(c);
+      if (!/^https?:\/\//.test(b.url ?? '')) throw new AniError('usage', 'Give an http(s) image URL');
+      return addReferenceFromUrl(ws, c.req.param('id'), b.url, USER);
+    }),
+  );
+  app.patch('/api/references/:id', async (c) =>
+    handle(c, async () =>
+      updateReference(
+        ws.db,
+        c.req.param('id'),
+        await body<{ status?: ReferenceStatus; label?: string }>(c),
+        USER,
+      ),
+    ),
+  );
+  app.post('/api/projects/:ref/designs/original', async (c) =>
+    handle(c, async () => {
+      const b = await body<{
+        castId: string;
+        kind?: DesignKind;
+        extra?: string;
+        fromDesignId?: string;
+        model?: string;
+      }>(c);
+      if (b.model) imageModelOrThrow(b.model);
+      return queueOriginalDesign(ws, c.req.param('ref'), b.castId, USER, {
+        ...(b.kind ? { kind: b.kind } : {}),
+        ...(b.extra ? { extra: b.extra } : {}),
+        ...(b.fromDesignId ? { fromDesignId: b.fromDesignId } : {}),
         ...(b.model ? { model: b.model } : {}),
       });
     }),

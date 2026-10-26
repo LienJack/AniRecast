@@ -31,6 +31,7 @@ export type {
   Board,
   CastAnalysis,
   CastMember,
+  CastReference,
   Clip,
   Design,
   DesignKind,

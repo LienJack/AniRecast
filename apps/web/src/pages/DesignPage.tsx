@@ -2,12 +2,15 @@ import { Link, useParams } from '@tanstack/react-router';
 import {
   ArrowRightIcon,
   CheckIcon,
+  LinkIcon,
   PaletteIcon,
   RefreshCwIcon,
   SaveIcon,
   ScanSearchIcon,
+  SearchIcon,
   SendIcon,
   SparklesIcon,
+  UploadIcon,
   WandIcon,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
@@ -18,8 +21,10 @@ import { ModelSelect } from '@/components/models';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { api, fileUrl } from '@/lib/api';
 import { formatAgo, formatUsd } from '@/lib/format';
@@ -30,6 +35,7 @@ import type {
   AnalysisItem,
   BindingDesigns,
   CastAnalysis,
+  CastReference,
   DesignKind,
   UnboundCast,
 } from '@/lib/types';
@@ -54,6 +60,7 @@ function SheetPanel({
   sheet,
   tasks,
   model,
+  subject = 'replacement',
 }: {
   projectRef: string;
   castId: string;
@@ -62,6 +69,8 @@ function SheetPanel({
   tasks: AgentTask[];
   /** Image model for new sheets (regenerating keeps the version's own model). */
   model: string | undefined;
+  /** The original character's own sheet (官方設定集) or her replacement's. */
+  subject?: 'original' | 'replacement';
 }) {
   const text = KIND_TEXT[sheet.kind];
   const [selectedId, setSelectedId] = useState<string | undefined>(sheet.latest?.id);
@@ -76,7 +85,7 @@ function SheetPanel({
     }
   }, [latestId]);
   const v = sheet.versions.find((x) => x.id === selectedId) ?? sheet.latest ?? undefined;
-  const base = `/api/projects/${encodeURIComponent(projectRef)}/designs`;
+  const base = `/api/projects/${encodeURIComponent(projectRef)}/designs${subject === 'original' ? '/original' : ''}`;
   const generate = useAction(
     (body: { fromDesignId?: string; extra?: string }) =>
       api.post(base, { castId, kind: sheet.kind, ...body, ...(model ? { model } : {}) }),
@@ -519,6 +528,200 @@ function AnalysisPanel({
   );
 }
 
+type RefStatus = 'accepted' | 'candidate' | 'rejected';
+const REF_STATUS: Record<RefStatus, { text: string; tone: 'success' | 'info' | 'muted' }> = {
+  accepted: { text: '採用', tone: 'success' },
+  candidate: { text: '待審', tone: 'info' },
+  rejected: { text: '不用', tone: 'muted' },
+};
+
+/** 官方設定集: reference images of the original character, found by the search agent or added by hand. */
+function ReferencesPanel({ projectRef, entry }: { projectRef: string; entry: BindingDesigns }) {
+  const { cast } = entry;
+  const refs = entry.original.references;
+  const [url, setUrl] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+  const inv = [qk.designs(projectRef)];
+  const search = useAction(
+    () =>
+      api.post(`/api/projects/${encodeURIComponent(projectRef)}/designs/references/search`, {
+        castId: cast.id,
+      }),
+    {
+      success: '已排入：搜尋官方設定集（Gemini 搜尋 → 抓頁面圖片 → 視覺檢查），找到的會列為待審',
+      invalidate: [qk.jobs],
+    },
+  );
+  const addUrl = useAction(
+    () => api.post(`/api/cast/${encodeURIComponent(cast.id)}/references`, { url: url.trim() }),
+    {
+      success: '已加入參考圖',
+      invalidate: inv,
+      onSuccess: () => setUrl(''),
+    },
+  );
+  const upload = useAction(
+    (file: File) => {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('label', file.name.replace(/\.[^.]+$/, ''));
+      return api.upload(`/api/cast/${encodeURIComponent(cast.id)}/references`, form);
+    },
+    {
+      success: '已上傳參考圖',
+      invalidate: inv,
+      onSuccess: () => {
+        if (fileRef.current) fileRef.current.value = '';
+      },
+    },
+  );
+  const setStatus = useAction(
+    (v: { id: string; status: CastReference['status'] }) =>
+      api.patch(`/api/references/${v.id}`, { status: v.status }),
+    { invalidate: inv },
+  );
+  const gallery = refs.map((r) => ({ src: fileUrl(r.path) ?? '', alt: r.label || '參考圖' }));
+  const host = (u: string | null) => {
+    try {
+      return u ? new URL(u).hostname : '';
+    } catch {
+      return '';
+    }
+  };
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="font-medium text-sm">官方參考圖</h3>
+        <span className="text-muted-foreground text-xs">
+          採用 {refs.filter((r) => r.status === 'accepted').length} · 待審{' '}
+          {refs.filter((r) => r.status === 'candidate').length}
+        </span>
+        <span className="ml-auto flex flex-wrap items-center gap-1.5">
+          <Button
+            size="sm"
+            disabled={search.isPending}
+            title="Gemini 搜尋官方網站、設定集等頁面，抓頁面上的圖，再用視覺模型留下「同一角色＋官方設定圖」的（約 USD 0.06）"
+            onClick={() => search.mutate(undefined)}
+          >
+            <SearchIcon />用 Agent 搜尋官方設定集
+          </Button>
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="貼上官方設定圖的圖片網址（https://…png/jpg）"
+          className="h-8 max-w-md text-xs"
+          aria-label="參考圖網址"
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!/^https?:\/\//.test(url.trim()) || addUrl.isPending}
+          onClick={() => addUrl.mutate(undefined)}
+        >
+          <LinkIcon />
+          加入
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) upload.mutate(f);
+          }}
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={upload.isPending}
+          onClick={() => fileRef.current?.click()}
+        >
+          <UploadIcon />
+          上傳圖片
+        </Button>
+      </div>
+      {refs.length ? (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
+          {refs.map((r) => (
+            <div
+              key={r.id}
+              className={cn(
+                'flex flex-col gap-1 rounded-md border p-1.5 text-xs',
+                r.status === 'accepted' ? 'border-emerald-500/50' : r.status === 'rejected' && 'opacity-50',
+              )}
+            >
+              <Thumb
+                src={fileUrl(r.path)}
+                alt={r.label || '參考圖'}
+                fit="contain"
+                className="aspect-square w-full rounded bg-white"
+                zoom
+                gallery={gallery}
+              />
+              <span className="flex items-center gap-1">
+                <Tag tone={REF_STATUS[r.status as RefStatus].tone}>
+                  {REF_STATUS[r.status as RefStatus].text}
+                </Tag>
+                {r.score !== null ? (
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    {Math.round(r.score * 100)}%
+                  </span>
+                ) : null}
+              </span>
+              <span className="line-clamp-2" title={r.label}>
+                {r.label || '（沒有說明）'}
+              </span>
+              {r.pageUrl || r.sourceUrl ? (
+                <a
+                  href={r.pageUrl ?? r.sourceUrl ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="truncate text-[10px] text-primary hover:underline"
+                  title={r.sourceUrl ?? undefined}
+                >
+                  {host(r.pageUrl ?? r.sourceUrl)}
+                </a>
+              ) : null}
+              <span className="flex gap-1">
+                <Button
+                  size="sm"
+                  variant={r.status === 'accepted' ? 'secondary' : 'outline'}
+                  className="h-6 flex-1 px-1 text-[11px]"
+                  disabled={setStatus.isPending}
+                  onClick={() =>
+                    setStatus.mutate({ id: r.id, status: r.status === 'accepted' ? 'candidate' : 'accepted' })
+                  }
+                >
+                  <CheckIcon />
+                  採用
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 flex-1 px-1 text-[11px]"
+                  disabled={setStatus.isPending || r.status === 'rejected'}
+                  onClick={() => setStatus.mutate({ id: r.id, status: 'rejected' })}
+                >
+                  不用
+                </Button>
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <span className="text-muted-foreground text-xs">
+          還沒有參考圖。按「用 Agent 搜尋官方設定集」，或貼網址、上傳你有的設定集（例如 BD
+          特典、設定資料集）。
+        </span>
+      )}
+    </section>
+  );
+}
+
 function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
@@ -545,6 +748,13 @@ function BindingCard({
   const { persona, cast } = entry;
   const ref = persona.images.find((i) => i.isPrimary) ?? persona.images[0];
   const approved = entry.sheets.filter((s) => s.approved).length;
+  const originalApproved = entry.original.sheets.filter((s) => s.approved).length;
+  // Open where the work is: the analysis first, then the official set, then the replacement.
+  const startTab = !entry.analysis?.data
+    ? 'analysis'
+    : originalApproved === 0 && approved === 0
+      ? 'official'
+      : 'replacement';
   // Which image model draws this character's sheets; the project's choice until changed here.
   const projectModel = useOverview(projectRef).data?.models.design;
   const [chosen, setChosen] = useState<string | undefined>(undefined);
@@ -622,28 +832,65 @@ function BindingCard({
           </span>
         </span>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <Step n={1} title="原片分析：她在這支 OP 裡怎麼被畫、有哪些表情和動作">
-          <AnalysisPanel projectRef={projectRef} entry={entry} model={model} />
-        </Step>
-        <Step n={2} title="改編說明（這個項目對物料庫角色的調整，每張設計都會用）">
-          <NoteEditor projectRef={projectRef} personaId={persona.id} note={entry.note} />
-        </Step>
-        <Step n={3} title="重新設計：用原片的畫風、身形、表情和動作重畫物料庫角色">
-          <div className="grid gap-3 lg:grid-cols-3">
-            {entry.sheets.map((sheet) => (
-              <SheetPanel
-                key={sheet.kind}
-                projectRef={projectRef}
-                castId={cast.id}
-                personaName={persona.name}
-                sheet={sheet}
-                tasks={tasks}
-                model={model}
-              />
-            ))}
-          </div>
-        </Step>
+      <CardContent>
+        <Tabs defaultValue={startTab}>
+          <TabsList>
+            <TabsTrigger value="analysis">① 原片分析</TabsTrigger>
+            <TabsTrigger value="official">② 官方設定集（{originalApproved}/3）</TabsTrigger>
+            <TabsTrigger value="replacement">③ 替換人物設定集（{approved}/3）</TabsTrigger>
+          </TabsList>
+          <TabsContent value="analysis" className="pt-3">
+            <AnalysisPanel projectRef={projectRef} entry={entry} model={model} />
+          </TabsContent>
+          <TabsContent value="official" className="flex flex-col gap-4 pt-3">
+            <ReferencesPanel projectRef={projectRef} entry={entry} />
+            <section className="flex flex-col gap-2">
+              <h3 className="font-medium text-sm">原角色設定集：「{cast.label}」自己的三視圖、表情、動作</h3>
+              <span className="text-muted-foreground text-xs">
+                依採用的官方參考圖和原片畫出她本人（不是重新設計），表情和動作照原片分析勾選的項目。通過後，替換人物會照這套的版型重畫。
+              </span>
+              <div className="grid gap-3 lg:grid-cols-3">
+                {entry.original.sheets.map((sheet) => (
+                  <SheetPanel
+                    key={sheet.kind}
+                    projectRef={projectRef}
+                    castId={cast.id}
+                    personaName={`原角色「${cast.label}」`}
+                    sheet={sheet}
+                    tasks={tasks}
+                    model={model}
+                    subject="original"
+                  />
+                ))}
+              </div>
+            </section>
+          </TabsContent>
+          <TabsContent value="replacement" className="flex flex-col gap-4 pt-3">
+            <Step n={1} title="改編說明（這個項目對物料庫角色的調整，每張設計都會用）">
+              <NoteEditor projectRef={projectRef} personaId={persona.id} note={entry.note} />
+            </Step>
+            <Step n={2} title={`把 ${persona.name} 畫進「${cast.label}」的設定集`}>
+              <span className="mb-2 block text-muted-foreground text-xs">
+                {originalApproved
+                  ? '已通過的原角色設定集會當版型：同樣的版面、姿勢、表情和光影，只換成物料庫角色。沒通過的那幾張改用原片裁切當參考。'
+                  : '原角色設定集還沒通過：先用原片的裁切和分析當參考。到 ② 通過原角色設定集後，重畫會更貼近原作的版型。'}
+              </span>
+              <div className="grid gap-3 lg:grid-cols-3">
+                {entry.sheets.map((sheet) => (
+                  <SheetPanel
+                    key={sheet.kind}
+                    projectRef={projectRef}
+                    castId={cast.id}
+                    personaName={persona.name}
+                    sheet={sheet}
+                    tasks={tasks}
+                    model={model}
+                  />
+                ))}
+              </div>
+            </Step>
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </Card>
   );

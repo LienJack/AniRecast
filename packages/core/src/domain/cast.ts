@@ -418,6 +418,10 @@ export function mergeCast(
     run(db, 'UPDATE looks SET cast_member_id = :keepId WHERE cast_member_id = :dropId', { keepId, dropId });
     // Designs follow the character; her analysis no longer matches the merged appearances.
     run(db, 'UPDATE designs SET cast_member_id = :keepId WHERE cast_member_id = :dropId', { keepId, dropId });
+    run(db, 'UPDATE cast_references SET cast_member_id = :keepId WHERE cast_member_id = :dropId', {
+      keepId,
+      dropId,
+    });
     run(db, 'DELETE FROM cast_analyses WHERE cast_member_id = :dropId', { dropId });
     run(db, `UPDATE cast_members SET status = 'merged', updated_at = :now WHERE id = :dropId`, {
       dropId,

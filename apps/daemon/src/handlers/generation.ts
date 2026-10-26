@@ -14,6 +14,7 @@ import {
   getTake,
   listShots,
   listTakes,
+  originalDesignDir,
   projectCacheDir,
   projectDir,
   projectOfShot,
@@ -151,14 +152,19 @@ export const generateDesignHandler: JobHandler = async (ctx) => {
   const { designId } = job.payload as { designId: string };
   const design = getDesign(ws.db, designId);
   const project = getProject(ws.db, design.projectId);
-  const persona = getPersona(ws.db, design.personaId);
+  // An original character's own sheet has no library character.
+  const persona = design.personaId ? getPersona(ws.db, design.personaId) : null;
   try {
     const params = design.params as {
       aspectRatio?: '16:9' | '9:16' | '1:1';
       imageSize?: '1K' | '2K';
       tile?: { columns?: number };
     };
-    const stem = `${designDir(project, persona.slug)}/${design.kind}-v${String(design.version).padStart(3, '0')}`;
+    const dir =
+      persona && design.subject !== 'original'
+        ? designDir(project, persona.slug)
+        : originalDesignDir(project, design.castMemberId ?? 'unknown');
+    const stem = `${dir}/${design.kind}-v${String(design.version).padStart(3, '0')}`;
     // The original's crops for expressions or poses go to the model as one grid (read left to right, top to
     // bottom), so a sheet stays within the few character images the image model handles well.
     const tiles = design.inputs.filter((i) => i.role.startsWith('tile:'));
@@ -194,7 +200,8 @@ export const generateDesignHandler: JobHandler = async (ctx) => {
     await writeProvenance(ws, `${stem}.json`, {
       kind: 'design',
       id: design.id,
-      persona: { id: persona.id, slug: persona.slug, name: persona.name },
+      persona: persona ? { id: persona.id, slug: persona.slug, name: persona.name } : null,
+      subject: design.subject,
       sheet: design.kind,
       version: design.version,
       model: design.model,

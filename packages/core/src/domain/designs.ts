@@ -7,6 +7,7 @@ import type { InputRef, Review, Verdict, VersionStatus } from './generation.ts';
 import { getReview, listReviews } from './generation.ts';
 import { getPersona } from './personas.ts';
 import { getProject, type Project, projectDir } from './projects.ts';
+import { listReferences } from './references.ts';
 
 /**
  * A binding (an original character of the clip → the library character replacing her) redesigned for the
@@ -15,6 +16,11 @@ import { getProject, type Project, projectDir } from './projects.ts';
  * approved sheets replace the library references in boards and takes for that character.
  */
 export type DesignKind = 'turnaround' | 'expressions' | 'poses';
+/**
+ * `original`: the original character's own model sheet (from official art and the clip), the template for
+ * `replacement`: the library character redrawn in her place.
+ */
+export type DesignSubject = 'original' | 'replacement';
 export const DESIGN_KINDS: readonly DesignKind[] = ['turnaround', 'expressions', 'poses'];
 
 export interface Design {
@@ -22,7 +28,9 @@ export interface Design {
   projectId: string;
   /** The original character this design replaces (null for designs made before bindings). */
   castMemberId: string | null;
-  personaId: string;
+  /** The library character drawn (null for the original character's own sheets). */
+  personaId: string | null;
+  subject: DesignSubject;
   kind: DesignKind;
   version: number;
   status: VersionStatus;
@@ -43,7 +51,8 @@ interface Row {
   id: string;
   project_id: string;
   cast_member_id: string | null;
-  persona_id: string;
+  persona_id: string | null;
+  subject: DesignSubject | null;
   kind: DesignKind;
   version: number;
   status: VersionStatus;
@@ -65,6 +74,7 @@ const toDesign = (r: Row): Design => ({
   projectId: r.project_id,
   castMemberId: r.cast_member_id,
   personaId: r.persona_id,
+  subject: r.subject ?? 'replacement',
   kind: r.kind,
   version: r.version,
   status: r.status,
@@ -115,11 +125,26 @@ export function approvedDesign(
   const r = one<Row>(
     db,
     `SELECT * FROM designs WHERE project_id = :projectId AND cast_member_id = :castId AND persona_id = :personaId
-       AND kind = :kind AND status = 'approved' ORDER BY version DESC LIMIT 1`,
+       AND subject = 'replacement' AND kind = :kind AND status = 'approved' ORDER BY version DESC LIMIT 1`,
     { projectId, castId: binding.castMemberId, personaId: binding.personaId, kind },
   );
   return r && toDesign(r);
 }
+
+/** The approved sheet of the original character herself (the template for her replacement's sheet). */
+export function approvedOriginal(db: Db, castId: string, kind: DesignKind): Design | undefined {
+  const r = one<Row>(
+    db,
+    `SELECT * FROM designs WHERE cast_member_id = :castId AND subject = 'original' AND kind = :kind
+       AND status = 'approved' ORDER BY version DESC LIMIT 1`,
+    { castId, kind },
+  );
+  return r && toDesign(r);
+}
+
+/** Where an original character's own sheets live: projects/<slug>/designs/original-<cast>/. */
+export const originalDesignDir = (project: Pick<Project, 'slug'>, castId: string): string =>
+  `${projectDir(project)}/designs/original-${castId}`;
 
 /** Original characters of the project bound to a library character, oldest first. */
 export function projectBindings(db: Db, projectId: string): Binding[] {
@@ -208,7 +233,8 @@ export function createDesign(
   input: {
     projectId: string;
     castMemberId: string | null;
-    personaId: string;
+    personaId: string | null;
+    subject?: DesignSubject;
     kind: DesignKind;
     prompt: string;
     model: string;
@@ -225,19 +251,25 @@ export function createDesign(
     const version =
       (one<{ v: number | null }>(
         db,
-        'SELECT MAX(version) AS v FROM designs WHERE project_id = :p AND persona_id = :q AND kind = :k',
-        { p: input.projectId, q: input.personaId, k: input.kind },
+        // Replacement sheets count per library character (one folder each); originals per original character.
+        input.subject === 'original'
+          ? `SELECT MAX(version) AS v FROM designs WHERE cast_member_id = :c AND subject = 'original' AND kind = :k`
+          : 'SELECT MAX(version) AS v FROM designs WHERE project_id = :p AND persona_id = :q AND kind = :k',
+        input.subject === 'original'
+          ? { c: input.castMemberId, k: input.kind }
+          : { p: input.projectId, q: input.personaId, k: input.kind },
       )?.v ?? 0) + 1;
     const id = newId('dsg', now);
     run(
       db,
-      `INSERT INTO designs (id, project_id, cast_member_id, persona_id, kind, version, status, prompt, model, params_json, inputs_json, parent_id, created_by, created_at)
-       VALUES (:id, :projectId, :castId, :personaId, :kind, :version, 'queued', :prompt, :model, :params, :inputs, :parentId, :createdBy, :now)`,
+      `INSERT INTO designs (id, project_id, cast_member_id, persona_id, subject, kind, version, status, prompt, model, params_json, inputs_json, parent_id, created_by, created_at)
+       VALUES (:id, :projectId, :castId, :personaId, :subject, :kind, :version, 'queued', :prompt, :model, :params, :inputs, :parentId, :createdBy, :now)`,
       {
         id,
         projectId: input.projectId,
         castId: input.castMemberId,
         personaId: input.personaId,
+        subject: input.subject ?? 'replacement',
         kind: input.kind,
         version,
         prompt: input.prompt,
@@ -255,7 +287,13 @@ export function createDesign(
       entityType: 'design',
       entityId: id,
       projectId: input.projectId,
-      payload: { personaId: input.personaId, castMemberId: input.castMemberId, kind: input.kind, version },
+      payload: {
+        personaId: input.personaId,
+        castMemberId: input.castMemberId,
+        subject: input.subject ?? 'replacement',
+        kind: input.kind,
+        version,
+      },
     });
     return getDesign(db, id);
   });
@@ -313,9 +351,9 @@ export function reviewDesign(
         throw new AniError('conflict', 'Approval is a human decision; Codex can recommend but not approve');
       run(
         db,
-        `UPDATE designs SET status = 'ready' WHERE project_id = :p AND persona_id = :q AND kind = :k
-           AND cast_member_id IS :c AND status = 'approved' AND id != :id`,
-        { p: d.projectId, q: d.personaId, k: d.kind, c: d.castMemberId, id: d.id },
+        `UPDATE designs SET status = 'ready' WHERE project_id = :p AND persona_id IS :q AND kind = :k
+           AND cast_member_id IS :c AND subject = :s AND status = 'approved' AND id != :id`,
+        { p: d.projectId, q: d.personaId, k: d.kind, c: d.castMemberId, s: d.subject, id: d.id },
       );
       run(db, `UPDATE designs SET status = 'approved' WHERE id = :id`, { id: d.id });
     } else if (input.verdict === 'changes') {
@@ -370,14 +408,31 @@ export function designOverview(db: Db, projectId: string) {
       const designs = all<Row>(
         db,
         `SELECT * FROM designs WHERE project_id = :projectId AND cast_member_id = :castId AND persona_id = :personaId
-         ORDER BY kind, version`,
+         AND subject = 'replacement' ORDER BY kind, version`,
         { projectId, castId: c.id, personaId: persona.id },
       ).map((r) => ({ ...toDesign(r), reviews: listReviews(db, r.id) }));
+      const originals = all<Row>(
+        db,
+        `SELECT * FROM designs WHERE cast_member_id = :castId AND subject = 'original' ORDER BY kind, version`,
+        { castId: c.id },
+      ).map((r) => ({ ...toDesign(r), reviews: listReviews(db, r.id) }));
+      const sheetsOf = (list: typeof designs) =>
+        DESIGN_KINDS.map((kind) => {
+          const versions = list.filter((d) => d.kind === kind);
+          return {
+            kind,
+            latest: versions.at(-1) ?? null,
+            approved: versions.filter((d) => d.status === 'approved').at(-1) ?? null,
+            versions,
+          };
+        });
       return {
         cast: castInfo(c),
         persona,
         note: designNote(db, projectId, persona.id),
         analysis: getCastAnalysis(db, c.id),
+        /** 官方設定集: reference images and the original character's own sheets. */
+        original: { references: listReferences(db, c.id), sheets: sheetsOf(originals) },
         sheets: DESIGN_KINDS.map((kind) => {
           const versions = designs.filter((d) => d.kind === kind);
           return {

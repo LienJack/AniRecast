@@ -578,6 +578,63 @@ CREATE TABLE cast_analyses (
 );
 `,
   },
+  {
+    version: 9,
+    name: "original characters' own sheets and official reference images",
+    rebuildsTables: true,
+    // A design is now either the original character's own sheet (persona_id NULL, subject 'original', drawn from
+    // official art) or her replacement's (subject 'replacement'). cast_references: official art, with sources.
+    sql: `
+CREATE TABLE designs_v9 (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  persona_id TEXT REFERENCES personas(id),
+  kind TEXT NOT NULL CHECK (kind IN ('turnaround', 'expressions', 'poses')),
+  version INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'generating', 'ready', 'approved', 'rejected', 'failed', 'stale')),
+  path TEXT,
+  prompt TEXT NOT NULL,
+  model TEXT NOT NULL,
+  params_json TEXT NOT NULL DEFAULT '{}',
+  inputs_json TEXT NOT NULL DEFAULT '[]',
+  parent_id TEXT REFERENCES designs(id),
+  remote_json TEXT NOT NULL DEFAULT '{}',
+  error TEXT,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  cast_member_id TEXT REFERENCES cast_members(id),
+  subject TEXT NOT NULL DEFAULT 'replacement' CHECK (subject IN ('original', 'replacement')),
+  UNIQUE (project_id, persona_id, kind, version)
+);
+INSERT INTO designs_v9 (id, project_id, persona_id, kind, version, status, path, prompt, model, params_json,
+  inputs_json, parent_id, remote_json, error, cost_usd, created_by, created_at, cast_member_id, subject)
+  SELECT id, project_id, persona_id, kind, version, status, path, prompt, model, params_json, inputs_json,
+    parent_id, remote_json, error, cost_usd, created_by, created_at, cast_member_id, 'replacement' FROM designs;
+DROP TABLE designs;
+ALTER TABLE designs_v9 RENAME TO designs;
+CREATE INDEX designs_project ON designs(project_id, persona_id, kind);
+CREATE INDEX designs_binding ON designs(project_id, cast_member_id, kind);
+CREATE UNIQUE INDEX designs_original_version ON designs(cast_member_id, kind, version) WHERE subject = 'original';
+
+CREATE TABLE cast_references (
+  id TEXT PRIMARY KEY,
+  cast_member_id TEXT NOT NULL REFERENCES cast_members(id),
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  source_url TEXT,
+  page_url TEXT,
+  label TEXT NOT NULL DEFAULT '',
+  score REAL,
+  note TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK (status IN ('candidate', 'accepted', 'rejected')),
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX cast_references_cast ON cast_references(cast_member_id, status);
+`,
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

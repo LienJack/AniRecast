@@ -206,7 +206,9 @@ function targetLabel(db: Db, type: HandoffTarget, id: string | null): string {
   }
   if (type === 'design') {
     const d = getDesign(db, id);
-    return `${getPersona(db, d.personaId).name} 的${KIND_TEXT[d.kind]} v${d.version}`;
+    return d.personaId
+      ? `${getPersona(db, d.personaId).name} 的${KIND_TEXT[d.kind]} v${d.version}`
+      : `原角色「${d.castMemberId ? getCastMember(db, d.castMemberId).label : '?'}」的${KIND_TEXT[d.kind]} v${d.version}`;
   }
   if (type === 'persona') return `${getPersona(db, id).name} 的角色設計`;
   if (type === 'cast') return `角色「${getCastMember(db, id).label}」`;
@@ -508,7 +510,9 @@ function targetSection(ws: Workspace, project: Project, type: HandoffTarget, id:
     const d = getDesign(ws.db, id);
     return d.castMemberId
       ? bindingSection(ws, project.id, d.castMemberId, id)
-      : personaSection(ws, project.id, d.personaId, id);
+      : d.personaId
+        ? personaSection(ws, project.id, d.personaId, id)
+        : projectSection(ws, project);
   }
   if (type === 'persona' && id) return personaSection(ws, project.id, id, null);
   if (type === 'cast' && id) {
@@ -531,7 +535,9 @@ function targetSection(ws: Workspace, project: Project, type: HandoffTarget, id:
       : ctx.target && 'personaId' in ctx.target
         ? ctx.target.castMemberId
           ? bindingSection(ws, project.id, ctx.target.castMemberId, ctx.target.id)
-          : personaSection(ws, project.id, ctx.target.personaId, ctx.target.id)
+          : ctx.target.personaId
+            ? personaSection(ws, project.id, ctx.target.personaId, ctx.target.id)
+            : null
         : null;
     const payload = t.payload as { comment?: string; contactSheets?: string[] };
     const sheets = (payload.contactSheets ?? []).map((p) => ({ path: ws.abs(p), about: '對照表' }));
@@ -885,7 +891,9 @@ function parseResult(ws: Workspace, h: Handoff, raw: unknown, actor: string, now
         d && {
           kind: 'design' as const,
           shotId: null,
-          label: `${getPersona(db, d.personaId).name} ${KIND_TEXT[d.kind]} v${d.version}`,
+          label: d.personaId
+            ? `${getPersona(db, d.personaId).name} ${KIND_TEXT[d.kind]} v${d.version}`
+            : `原角色 ${KIND_TEXT[d.kind]} v${d.version}`,
         }
       );
     }
@@ -928,7 +936,14 @@ function parseResult(ws: Workspace, h: Handoff, raw: unknown, actor: string, now
       const castRef = text(a.cast);
       const personaRef = text(a.persona);
       let bindings: Binding[] = [];
-      if (d) bindings = [{ castMemberId: d.castMemberId ?? '', personaId: d.personaId }];
+      if (d?.subject === 'original') {
+        const c = d.castMemberId ? getCastMember(db, d.castMemberId) : null;
+        item = {
+          action: { type, from: d.id, ...(kind ? { kind } : {}), ...(extra ? { extra } : {}), ...base },
+          label: `修正原角色「${c?.label ?? '?'}」的${KIND_TEXT[d.kind]}（依 v${d.version}）${extraText(extra)}`,
+          paid: true,
+        };
+      } else if (d?.personaId) bindings = [{ castMemberId: d.castMemberId ?? '', personaId: d.personaId }];
       else if (castRef || personaRef)
         bindings =
           tryGet(`${at}.${castRef ? 'cast' : 'persona'}`, () =>

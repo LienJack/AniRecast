@@ -12,6 +12,7 @@ import {
   stillTakeHandler,
 } from './generation.ts';
 import { noopHandler } from './noop.ts';
+import { searchReferencesHandler } from './references.ts';
 import { downloadSourceHandler, importSourceHandler } from './sources.ts';
 import { styleAnalysisHandler } from './style.ts';
 
@@ -26,6 +27,7 @@ export function createHandlers(): Map<string, JobHandler> {
     ['shots.continuity', shotContinuityHandler],
     ['board.generate', generateBoardHandler],
     ['design.analyze', analyzeCastHandler],
+    ['design.references', searchReferencesHandler],
     ['design.generate', generateDesignHandler],
     ['take.generate', generateTakeHandler],
     ['take.still', stillTakeHandler],

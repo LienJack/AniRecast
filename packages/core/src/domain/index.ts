@@ -16,6 +16,7 @@ export * from './overlays.ts';
 export * from './personas.ts';
 export * from './plan.ts';
 export * from './projects.ts';
+export * from './references.ts';
 export * from './shots.ts';
 export * from './signature.ts';
 export * from './sources.ts';

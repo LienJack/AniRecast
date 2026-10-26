@@ -155,6 +155,7 @@ const JOB_TYPE_LABEL: Record<string, string> = {
   'take.still': '分鏡圖轉靜態視頻',
   'design.generate': '生成角色設計',
   'design.analyze': '原片角色分析',
+  'design.references': '搜尋官方設定集',
   'cast.tidy': '整理角色（JEV）',
   'project.style': '畫風與光影分析',
   'shots.continuity': '切點判斷',

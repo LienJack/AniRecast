@@ -3,7 +3,13 @@ import { type FakeOptions, FakeProvider } from './fake.ts';
 import { FAL_PREFIX, FalProvider } from './fal.ts';
 import { GeminiProvider } from './gemini.ts';
 import { JEV_PREFIX, JevProvider } from './jev.ts';
-import type { ImageGenRequest, Provider, VideoEditRequest, VisionRequest } from './types.ts';
+import type {
+  ImageGenRequest,
+  Provider,
+  VideoEditRequest,
+  VisionRequest,
+  WebSearchRequest,
+} from './types.ts';
 
 export * from './fake.ts';
 export * from './fal.ts';
@@ -53,6 +59,15 @@ export class RoutedProvider implements Provider {
 
   async editVideo(req: VideoEditRequest) {
     return this.#pick(req.model).editVideo(req);
+  }
+
+  async searchWeb(req: WebSearchRequest) {
+    const p = this.#pick(req.model);
+    if (!p.searchWeb)
+      throw new AniError('usage', `${req.model} cannot search the web`, {
+        hint: 'Use a Gemini model for search.',
+      });
+    return p.searchWeb(req);
   }
 
   async analyzeImages<T>(req: VisionRequest) {

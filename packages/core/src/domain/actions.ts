@@ -38,7 +38,7 @@ import { projectModels } from './models.ts';
 import { markShotGenerationStale, recomputeShotModes } from './modes.ts';
 import { listTextOverlays } from './overlays.ts';
 import { getPersona } from './personas.ts';
-import { planBoard, planDesign, planTake, sha256File } from './plan.ts';
+import { planBoard, planDesign, planOriginalDesign, planTake, sha256File } from './plan.ts';
 import { type GenerationTier, getProject, listProjects } from './projects.ts';
 import { getShot, listKeyframes, listShots, projectOfShot } from './shots.ts';
 import { getSource } from './sources.ts';
@@ -125,11 +125,14 @@ export function queueDesign(
 ) {
   const project = getProject(ws.db, projectRef);
   const from = opts.fromDesignId ? getDesign(ws.db, opts.fromDesignId) : undefined;
+  // Revising an original character's own sheet stays on her sheets.
+  if (from?.subject === 'original' && from.castMemberId)
+    return queueOriginalDesign(ws, project.id, from.castMemberId, actor, { ...opts, kind: from.kind });
   const designModel = opts.model ?? projectModels(ws.db, project.id).design;
   const bindings: Binding[] = from
-    ? from.castMemberId
+    ? from.castMemberId && from.personaId
       ? [{ castMemberId: from.castMemberId, personaId: from.personaId }]
-      : resolveBindings(ws.db, project.id, from.personaId).slice(0, 1)
+      : resolveBindings(ws.db, project.id, from.personaId ?? '').slice(0, 1)
     : ref
       ? resolveBindings(ws.db, project.id, ref)
       : projectBindings(ws.db, project.id);
@@ -165,6 +168,68 @@ export function queueDesign(
       return { design, job };
     }),
   );
+}
+
+/**
+ * Queues the original character's own sheets (官方設定集; all three when `kind` is omitted), drawn from the
+ * official art the human accepted and from how the opening draws her. `fromDesignId` revises one.
+ */
+export function queueOriginalDesign(
+  ws: Workspace,
+  projectRef: string,
+  castId: string,
+  actor: string,
+  opts: { kind?: DesignKind; extra?: string; fromDesignId?: string; model?: string } = {},
+) {
+  const project = getProject(ws.db, projectRef);
+  const cast = getCastMember(ws.db, castId);
+  if (cast.projectId !== project.id) throw new AniError('usage', `${castId} belongs to another project`);
+  const from = opts.fromDesignId ? getDesign(ws.db, opts.fromDesignId) : undefined;
+  const kinds = from ? [from.kind] : opts.kind ? [opts.kind] : [...DESIGN_KINDS];
+  const designModel = opts.model ?? projectModels(ws.db, project.id).design;
+  return kinds.map((kind) => {
+    const plan = planOriginalDesign(ws, project.id, cast.id, kind, {
+      ...(opts.extra ? { extra: opts.extra } : {}),
+      ...(from ? { fromDesignId: from.id } : {}),
+    });
+    const design = createDesign(ws.db, {
+      projectId: project.id,
+      castMemberId: cast.id,
+      personaId: null,
+      subject: 'original',
+      kind,
+      prompt: plan.prompt,
+      model: designModel,
+      params: plan.params,
+      inputs: plan.inputs,
+      parentId: from?.id ?? null,
+      createdBy: actor,
+    });
+    const job = enqueueJob(ws.db, {
+      type: 'design.generate',
+      lane: 'generate',
+      projectId: project.id,
+      payload: { designId: design.id },
+      requestedBy: actor,
+      maxAttempts: 2,
+    });
+    return { design, job };
+  });
+}
+
+/** 用 Agent 搜尋官方設定集 for one original character (web search, scrape, vision check; a person accepts). */
+export function queueReferenceSearch(ws: Workspace, projectRef: string, castId: string, actor: string) {
+  const project = getProject(ws.db, projectRef);
+  const cast = getCastMember(ws.db, castId);
+  if (cast.projectId !== project.id) throw new AniError('usage', `${castId} belongs to another project`);
+  return enqueueJob(ws.db, {
+    type: 'design.references',
+    lane: 'generate',
+    projectId: project.id,
+    payload: { castMemberId: cast.id },
+    requestedBy: actor,
+    maxAttempts: 1,
+  });
 }
 
 /**
@@ -263,11 +328,11 @@ function submitDesignReview(
     comment: input.comment ?? null,
     createdBy: input.actor,
   });
-  if (input.verdict === 'approve') {
+  if (input.verdict === 'approve' && design.subject === 'replacement') {
     // A newly approved turnaround changes what boards and takes use: stale the shots that show this character.
     const shots = design.castMemberId
       ? getCastMember(ws.db, design.castMemberId).shotIds
-      : listShotsOfPersona(ws.db, design.projectId, design.personaId);
+      : listShotsOfPersona(ws.db, design.projectId, design.personaId ?? '');
     for (const id of shots) markShotGenerationStale(ws.db, id, 'character design approved', input.actor);
   }
   if (input.verdict === 'changes') {

@@ -73,6 +73,19 @@ export interface VisionResult<T> extends ProviderCallMeta {
   data: T;
 }
 
+export interface WebSearchRequest {
+  model: string;
+  /** What to look for, in words; the model searches and answers with its sources. */
+  query: string;
+  signal?: AbortSignal;
+}
+
+export interface WebSearchResult extends ProviderCallMeta {
+  text: string;
+  /** Pages the answer was grounded on (may be redirect links that resolve to the real page). */
+  sources: Array<{ title: string; url: string }>;
+}
+
 export interface Provider {
   /** `router` dispatches by model prefix to gemini, fal or jev; `fake` runs offline at no cost. */
   readonly name: 'gemini' | 'fake' | 'fal' | 'jev' | 'router';
@@ -81,6 +94,8 @@ export interface Provider {
   generateImage(req: ImageGenRequest): Promise<ImageGenResult>;
   editVideo(req: VideoEditRequest): Promise<VideoEditResult>;
   analyzeImages<T>(req: VisionRequest): Promise<VisionResult<T>>;
+  /** Web search with sources (Gemini + Google Search); not every backend has it. */
+  searchWeb?(req: WebSearchRequest): Promise<WebSearchResult>;
 }
 
 /** Omni has no 480p (the API rejects it, verified 2026-10-25), so draft is 360p in and out. */

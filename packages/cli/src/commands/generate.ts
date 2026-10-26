@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import {
   type AgentTaskStatus,
   actorFromEnv,
+  addReference,
   answerAgentTask,
   approvedTake,
   askUser,
@@ -25,6 +27,7 @@ import {
   getTake,
   listAgentTasks,
   listBoards,
+  listReferences,
   listRenders,
   listReviews,
   listShots,
@@ -36,6 +39,8 @@ import {
   queueBoard,
   queueCastAnalysis,
   queueDesign,
+  queueOriginalDesign,
+  queueReferenceSearch,
   queueStillTake,
   queueTake,
   quotaOverview,
@@ -49,6 +54,7 @@ import {
   TIERS,
   taskContext,
   totalSpend,
+  updateReference,
   type Workspace,
 } from '@anirecast/core';
 import { contactSheet } from '@anirecast/media';
@@ -242,6 +248,99 @@ export function registerGenerate(program: Command): void {
               ws,
               projectRef,
               opts.from ? null : (character ?? null),
+              actorFromEnv(),
+              {
+                ...(opts.kind ? { kind: opts.kind } : {}),
+                ...(opts.extra ? { extra: opts.extra } : {}),
+                ...(opts.from ? { fromDesignId: opts.from } : {}),
+                ...(opts.model ? { model: opts.model } : {}),
+              },
+            );
+            return {
+              designs: queued.map((q) => q.design),
+              ...(await waitAll(
+                ws,
+                queued.map((q) => q.job.id),
+                opts.wait,
+              )),
+            };
+          }),
+      ),
+    );
+  design
+    .command('refs <project> <character>')
+    .description(
+      "官方設定集: an original character's reference images (official design art); --search finds candidates on the web",
+    )
+    .option(
+      '--search',
+      'search the web for official design art (Gemini + Google Search), keep likely candidates',
+    )
+    .option('--add-file <file>', 'add an image you have (accepted)')
+    .option('--accept <ids>', 'accept candidates (comma-separated reference ids)')
+    .option('--reject <ids>', 'reject candidates')
+    .option('--wait', 'wait for the search')
+    .action(
+      command(
+        (
+          projectRef: string,
+          character: string,
+          opts: { search?: boolean; addFile?: string; accept?: string; reject?: string; wait?: boolean },
+        ) =>
+          withWorkspace(globals(), async (ws) => {
+            const [binding] = resolveBindings(ws.db, getProject(ws.db, projectRef).id, character);
+            const castId = (binding as { castMemberId: string }).castMemberId;
+            const ids = (v?: string) =>
+              v
+                ? v
+                    .split(',')
+                    .map((x) => x.trim())
+                    .filter(Boolean)
+                : [];
+            for (const id of ids(opts.accept))
+              updateReference(ws.db, id, { status: 'accepted' }, actorFromEnv());
+            for (const id of ids(opts.reject))
+              updateReference(ws.db, id, { status: 'rejected' }, actorFromEnv());
+            if (opts.addFile)
+              addReference(
+                ws,
+                castId,
+                path.resolve(opts.addFile),
+                { status: 'accepted', label: path.basename(opts.addFile) },
+                actorFromEnv(),
+              );
+            if (opts.search) {
+              const job = queueReferenceSearch(ws, projectRef, castId, actorFromEnv());
+              if (!opts.wait) return { job };
+              await waitForJob(ws, job.id);
+            }
+            return listReferences(ws.db, castId).map((r) => ({ ...r, absPath: ws.abs(r.path) }));
+          }),
+      ),
+    );
+  design
+    .command('original <project> <character>')
+    .description(
+      "The original character's own sheets (turnaround, expressions, poses) from accepted official art and the clip; the template for her replacement",
+    )
+    .option('--kind <kind>', 'only one sheet: turnaround, expressions or poses')
+    .option('--extra <text>', 'extra instructions')
+    .option('--from <designId>', 'revise this sheet')
+    .option('--model <id>', 'image model (default: the project choice)')
+    .option('--wait', 'wait for the sheets')
+    .action(
+      command(
+        (
+          projectRef: string,
+          character: string,
+          opts: { kind?: DesignKind; extra?: string; from?: string; model?: string; wait?: boolean },
+        ) =>
+          withWorkspace(globals(), async (ws) => {
+            const [binding] = resolveBindings(ws.db, getProject(ws.db, projectRef).id, character);
+            const queued = queueOriginalDesign(
+              ws,
+              projectRef,
+              (binding as { castMemberId: string }).castMemberId,
               actorFromEnv(),
               {
                 ...(opts.kind ? { kind: opts.kind } : {}),

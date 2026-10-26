@@ -11,6 +11,8 @@ import type {
   VideoEditResult,
   VisionRequest,
   VisionResult,
+  WebSearchRequest,
+  WebSearchResult,
 } from './types.ts';
 
 const RESOLUTION_HEIGHT: Record<string, number> = {
@@ -33,6 +35,8 @@ async function withTemp<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 export interface FakeOptions {
   /** Canned structured output for analyzeImages, keyed on the request. */
   vision?: (req: VisionRequest) => unknown;
+  /** Canned answer for searchWeb. */
+  webSearch?: (req: WebSearchRequest) => { text: string; sources: Array<{ title: string; url: string }> };
 }
 
 /**
@@ -114,6 +118,19 @@ export class FakeProvider implements Provider {
       costUsd: 0,
       latencyMs: Date.now() - t0,
       remote: { interactionId: `fake-${Date.now()}`, fileUri: `fake://${path.basename(req.video.path)}` },
+    };
+  }
+
+  async searchWeb(req: WebSearchRequest): Promise<WebSearchResult> {
+    const answer = this.options.webSearch?.(req) ?? { text: '', sources: [] };
+    return {
+      ...answer,
+      provider: this.name,
+      model: req.model,
+      usage: { inputTokens: 100, outputTokens: 100 },
+      costUsd: 0,
+      latencyMs: 1,
+      remote: {},
     };
   }
 

@@ -11,8 +11,12 @@ import type {
   VideoEditResult,
   VisionRequest,
   VisionResult,
+  WebSearchRequest,
+  WebSearchResult,
 } from './types.ts';
 
+/** Google Search grounding, USD per request (list price, 2026-10). */
+const GROUNDING_PER_REQUEST = 0.035;
 const BASE = 'https://generativelanguage.googleapis.com';
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'incomplete']);
 
@@ -266,6 +270,54 @@ export class GeminiProvider implements Provider {
       costUsd: tokenCost(req.model, usage),
       latencyMs,
       remote: { ...(json.id ? { interactionId: json.id } : {}), fileUri },
+    };
+  }
+
+  /** generateContent with the Google Search tool: an answer plus the pages it was grounded on. */
+  async searchWeb(req: WebSearchRequest): Promise<WebSearchResult> {
+    const t0 = Date.now();
+    const { json } = await this.request(
+      `${BASE}/v1beta/models/${req.model}:generateContent`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: req.query }] }],
+          tools: [{ google_search: {} }],
+        }),
+        headers: { 'content-type': 'application/json' },
+        ...(req.signal ? { signal: req.signal } : {}),
+      },
+      'Web search',
+    );
+    const r = json as unknown as {
+      candidates?: Array<{
+        content?: { parts?: Array<{ text?: string }> };
+        groundingMetadata?: { groundingChunks?: Array<{ web?: { uri?: string; title?: string } }> };
+      }>;
+      usageMetadata?: {
+        promptTokenCount?: number;
+        candidatesTokenCount?: number;
+        thoughtsTokenCount?: number;
+      };
+    };
+    const c = r.candidates?.[0];
+    const usage: Usage = {
+      inputTokens: r.usageMetadata?.promptTokenCount ?? 0,
+      outputTokens: (r.usageMetadata?.candidatesTokenCount ?? 0) + (r.usageMetadata?.thoughtsTokenCount ?? 0),
+      raw: r.usageMetadata,
+    };
+    return {
+      text: c?.content?.parts?.map((p) => p.text ?? '').join('') ?? '',
+      sources: (c?.groundingMetadata?.groundingChunks ?? [])
+        .map((g) => ({ title: g.web?.title ?? '', url: g.web?.uri ?? '' }))
+        .filter((s) => s.url),
+      provider: this.name,
+      model: req.model,
+      usage,
+      // Grounding with Google Search is billed per request on top of the tokens.
+      costUsd: tokenCost(req.model, usage) + GROUNDING_PER_REQUEST,
+      latencyMs: Date.now() - t0,
+      remote: {},
     };
   }
 

@@ -129,6 +129,7 @@ const TOAST_TYPES = new Set([
   'cast.identify',
   'cast.tidy',
   'design.analyze',
+  'design.references',
   'project.style',
 ]);
 

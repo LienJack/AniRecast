@@ -3,6 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   addPersonaImage,
+  addReference,
   castAppearances,
   createCastMember,
   createClip,
@@ -21,6 +22,7 @@ import {
   planBoard,
   projectSummaries,
   queueDesign,
+  queueOriginalDesign,
   recomputeShotModes,
   replacementSignature,
   replaceShots,
@@ -31,6 +33,7 @@ import {
   setKeyframes,
   submitReview,
   updateDesign,
+  updateReference,
   updateSource,
   type Workspace,
 } from '../src/index.ts';
@@ -206,6 +209,39 @@ describe('character design', () => {
       ['friend', false],
     ]);
     expect(projectSummaries(ws)[0]).toMatchObject({ step: 'design', designed: 1, toDesign: 2 });
+    ws.close();
+  });
+
+  it('draws the original from accepted official art, then her replacement on that sheet', () => {
+    const { ws, projectId, castId } = fixture();
+    const art = path.join(tempDir(), 'official.png');
+    writeFileSync(art, 'official art');
+    const ref = addReference(
+      ws,
+      castId,
+      art,
+      { sourceUrl: 'https://example.com/a.png', pageUrl: 'https://example.com/chara', label: 'turnaround' },
+      'daemon',
+    );
+    expect(() => addReference(ws, castId, art, {}, 'user')).toThrow(/already a reference/);
+    // A candidate is not used until a person accepts it.
+    const [first] = queueOriginalDesign(ws, projectId, castId, 'user', { kind: 'turnaround' });
+    expect(first!.design.inputs.some((i) => i.role.startsWith('official:'))).toBe(false);
+    updateReference(ws.db, ref.id, { status: 'accepted' }, 'user');
+    const [orig] = queueOriginalDesign(ws, projectId, castId, 'user', { kind: 'turnaround' });
+    expect(orig!.design).toMatchObject({ subject: 'original', personaId: null, version: 2 });
+    expect(orig!.design.inputs[0]?.role).toBe(`official:${ref.id}`);
+    expect(orig!.design.prompt).toContain('official character design art of "girl"');
+    finish(ws, orig!.design.id);
+    submitReview(ws, { targetId: orig!.design.id, verdict: 'approve', actor: 'user' });
+    // The replacement turnaround is the original's sheet redrawn with the library character.
+    const [rep] = queueDesign(ws, projectId, castId, 'user', { kind: 'turnaround' });
+    expect(rep!.design.inputs.map((i) => i.role.split(':')[0])).toEqual(['persona', 'template']);
+    expect(rep!.design.prompt).toContain('Redraw Image 2 with Claude in place of girl');
+    const binding = designOverview(ws.db, projectId).bindings[0]!;
+    expect(binding.original.sheets[0]?.approved?.id).toBe(orig!.design.id);
+    expect(binding.original.references.map((r) => r.status)).toEqual(['accepted']);
+    expect(binding.sheets[0]?.versions.map((v) => v.id)).toEqual([rep!.design.id]);
     ws.close();
   });
 
