@@ -41,9 +41,13 @@ export function videoModelTakesImages(model: string): boolean {
 export function falError(status: number, body: unknown, what: string): AniError {
   const detail = (body as { detail?: unknown })?.detail;
   const first = Array.isArray(detail)
-    ? (detail[0] as { msg?: string; type?: string } | undefined)
+    ? (detail[0] as { msg?: string; type?: string; loc?: unknown[] } | undefined)
     : undefined;
-  const message = first?.msg ?? (typeof detail === 'string' ? detail : `HTTP ${status}`);
+  // Which input was refused, when fal says (["body", "video_urls", 0] → video_urls.0).
+  const where = Array.isArray(first?.loc) ? first.loc.filter((l) => l !== 'body').join('.') : '';
+  const message =
+    (first?.msg ? `${first.msg}${where ? ` (${where})` : ''}` : undefined) ??
+    (typeof detail === 'string' ? detail : `HTTP ${status}`);
   if (first?.type === 'content_policy_violation')
     return new AniError('provider_rejected', `${what}: Request blocked by the safety filter (${message})`, {
       hint: 'safety_block: change the prompt, the board or the persona look.',

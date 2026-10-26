@@ -39,6 +39,11 @@ export interface VideoModelSpec {
   /** The model only makes whole seconds (Wan 3.0): uploads are padded to the next whole second. */
   wholeSeconds?: boolean;
   /**
+   * Lowest input frame rate it accepts (Seedance: 24; a 23.976 fps shot is rejected as invalid input). Slower
+   * shots are uploaded with every frame restamped to this rate, 0.1% faster, and conformed back.
+   */
+  minFps?: number;
+  /**
    * `frames`: output frame i is input frame i, conformed by count. `time`: the output has its own frame rate
    * (and maybe a slightly different length); it is scaled to the input length (±20%) and resampled to the shot.
    */
@@ -82,6 +87,7 @@ export const VIDEO_MODELS: readonly VideoModelSpec[] = [
     refStyle: 'any',
     minSeconds: 2,
     maxSeconds: 15,
+    minFps: 24,
     frameStep: 1,
     timing: 'time',
   },

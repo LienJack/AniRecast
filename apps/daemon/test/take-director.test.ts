@@ -10,6 +10,7 @@ import {
   createProject,
   createSource,
   createTracklet,
+  enqueueJob,
   getTake,
   initWorkspace,
   latestShotJob,
@@ -25,8 +26,8 @@ import {
   updateShot,
   updateSource,
 } from '@anirecast/core';
-import { ffmpeg } from '@anirecast/media';
-import { FakeProvider, type VisionRequest } from '@anirecast/providers';
+import { ffmpeg, probe } from '@anirecast/media';
+import { FakeProvider, type VideoEditRequest, type VisionRequest } from '@anirecast/providers';
 import { afterAll, describe, expect, it } from 'vitest';
 import { startDaemon } from '../src/index.ts';
 import { TEST_CONFIG } from './helpers.ts';
@@ -37,11 +38,16 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 const picture = (file: string, size: string) =>
   ffmpeg(['-f', 'lavfi', '-i', `testsrc=size=${size}`, '-frames:v', '1', file]);
 
-async function setup(name: string) {
+async function setup(name: string, fps = { num: 24, den: 1 }) {
   const root = path.join(tmp, name);
   const ws = initWorkspace(root);
   const src = createSource(ws.db, { title: 'Lycoris Recoil OP' }, 'user');
-  updateSource(ws.db, src.id, { status: 'ready', fpsNum: 24, fpsDen: 1, durationMs: 1_000 }, 'daemon');
+  updateSource(
+    ws.db,
+    src.id,
+    { status: 'ready', fpsNum: fps.num, fpsDen: fps.den, durationMs: 1_100 },
+    'daemon',
+  );
   const project = createProject(ws.db, { name: 'OP', sourceId: src.id }, 'user');
   const clip = createClip(ws.db, { projectRef: project.id, inFrame: 0, outFrame: 24 }, 'user');
   const [shot] = replaceShots(ws.db, clip.id, [{ start: 0, end: 23 }], 'daemon');
@@ -50,7 +56,7 @@ async function setup(name: string) {
     '-f',
     'lavfi',
     '-i',
-    'testsrc=size=320x180:rate=24',
+    `testsrc=size=320x180:rate=${fps.num}/${fps.den}`,
     '-frames:v',
     '24',
     '-pix_fmt',
@@ -175,6 +181,59 @@ describe('the video director', () => {
         expect(asked[1]!.images.map((i) => i.mimeType)).toEqual(['video/mp4', 'image/jpeg']);
       },
     );
+  }, 90_000);
+
+  it('sends Seedance a 23.976 fps shot at 24 fps, and a retry after the paid request does not pay again', async () => {
+    const { root, shotId } = await setup('fps', { num: 24_000, den: 1001 });
+    const sent: Array<{ fps: string; frames: number; inputSeconds: number }> = [];
+    class Counting extends FakeProvider {
+      override async editVideo(req: VideoEditRequest) {
+        const p = await probe(req.video.path, { countFrames: true });
+        sent.push({ fps: `${p.fpsNum}/${p.fpsDen}`, frames: p.frameCount, inputSeconds: req.inputSeconds });
+        return super.editVideo(req);
+      }
+    }
+    const daemon = await startDaemon({
+      root,
+      port: 0,
+      config: { ...TEST_CONFIG, provider: 'fake' },
+      provider: new Counting({ vision: () => ANSWER }),
+      dispatch: false,
+      log: () => {},
+    });
+    try {
+      const cli = openWorkspace(root, { role: 'cli' });
+      const { take, job } = queueTake(cli, shotId, 'final', 'user');
+      expect(take.model).toContain('seedance');
+      expect(await waitJob(root, job.id)).toBe('succeeded');
+      // 24 frames held to Seedance's 2 s minimum, restamped to 24 fps without dropping one.
+      expect(sent).toEqual([{ fps: '24/1', frames: 48, inputSeconds: 2 }]);
+      const done = getTake(cli.db, take.id);
+      // Conformed back onto the shot: its 24 frames at 23.976.
+      expect(await probe(path.join(root, done.path!), { countFrames: true })).toMatchObject({
+        fpsNum: 24_000,
+        fpsDen: 1001,
+        frameCount: 24,
+      });
+      // The job runs again after the video was made (as when the download or the conform failed).
+      run(cli.db, `UPDATE takes SET status = 'queued' WHERE id = :id`, { id: take.id });
+      const again = enqueueJob(cli.db, {
+        type: 'take.generate',
+        lane: 'generate',
+        payload: { takeId: take.id },
+        requestedBy: 'user',
+      });
+      expect(await waitJob(root, again.id)).toBe('succeeded');
+      expect(sent).toHaveLength(1);
+      expect(getTake(cli.db, take.id)).toMatchObject({
+        status: 'ready',
+        path: done.path,
+        costUsd: done.costUsd,
+      });
+      cli.close();
+    } finally {
+      await daemon.stop();
+    }
   }, 90_000);
 
   it('previews the plan without making a video, and falls back when the images do not add up', async () => {

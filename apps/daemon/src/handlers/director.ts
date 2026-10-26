@@ -389,7 +389,7 @@ async function critiqueTake(
   ];
   const prompt = [
     `You review a video-edit instruction before it is sent to ${input.spec.label} — an expensive request that cannot be undone.`,
-    'The media: ' + media.map((m) => m.label).join('; ') + '.',
+    `The media: ${media.map((m) => m.label).join('; ')}.`,
     'Facts the instruction must respect:',
     ...input.brief.facts.map((f) => `- ${f}`),
     ...(input.brief.extra ? [`- Mandatory requirement from the human: ${input.brief.extra}`] : []),

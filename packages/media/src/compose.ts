@@ -14,25 +14,31 @@ export async function scaleForUpload(
   input: string,
   output: string,
   height: number,
-  opts: FfmpegRunOptions & { frameStep?: number; minFrames?: number } = {},
+  opts: FfmpegRunOptions & {
+    frameStep?: number;
+    minFrames?: number;
+    /** Restamp every frame to this rate (no frame dropped or repeated), for models with a minimum rate. */
+    fps?: number;
+  } = {},
 ): Promise<{ frames: number; padded: number }> {
   ensureDir(output);
-  const { frameStep, minFrames, ...run } = opts;
+  const { frameStep, minFrames, fps, ...run } = opts;
   const frames = (await probe(input, { countFrames: true, ...(run.signal ? { signal: run.signal } : {}) }))
     .frameCount;
   // Hold the last frame to reach a model's minimum length, then to its frame step.
   const long = Math.max(frames, minFrames ?? 0);
   const padded = long - frames + (frameStep ? (frameStep - (long % frameStep)) % frameStep : 0);
   const pad = padded > 0 ? `,tpad=stop_mode=clone:stop=${padded}` : '';
+  const restamp = fps ? `,setpts=N/(${fps}*TB)` : '';
   await ffmpeg(
     [
       '-i',
       input,
       '-an',
       '-vf',
-      `scale=-2:${height}:flags=lanczos,format=yuv420p${pad}`,
-      '-fps_mode',
-      'passthrough',
+      `scale=-2:${height}:flags=lanczos,format=yuv420p${pad}${restamp}`,
+      // Restamped frames already sit on the new rate, so cfr neither drops nor repeats any.
+      ...(fps ? ['-fps_mode', 'cfr', '-r', String(fps)] : ['-fps_mode', 'passthrough']),
       '-c:v',
       'libx264',
       '-preset',

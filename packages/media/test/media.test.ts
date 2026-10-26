@@ -87,6 +87,13 @@ describe('media', () => {
     const up = path.join(dir, 'up.mp4');
     expect(await scaleForUpload(seg, up, 180, { frameStep: 4 })).toEqual({ frames: 30, padded: 2 });
     expect((await probe(up, { countFrames: true })).frameCount).toBe(32);
+    // A model with a minimum rate: every frame restamped to 24 fps, held to the minimum length.
+    const up24 = path.join(dir, 'up24.mp4');
+    expect(await scaleForUpload(seg, up24, 180, { frameStep: 1, minFrames: 48, fps: 24 })).toEqual({
+      frames: 30,
+      padded: 18,
+    });
+    expect(await probe(up24, { countFrames: true })).toMatchObject({ fpsNum: 24, fpsDen: 1, frameCount: 48 });
 
     const spec = { frames: 30, fpsNum: FPS_NUM, fpsDen: FPS_DEN, width: 320, height: 180, endTolerance: 3 };
     const trimmed = await conformTake(up, path.join(dir, 'trim.mp4'), spec);

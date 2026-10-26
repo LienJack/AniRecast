@@ -1,4 +1,5 @@
-import { copyFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { copyFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   assertWithinBudget,
@@ -51,6 +52,7 @@ import {
   TIER_RESOLUTION,
   TIER_SIZE,
   TIER_UPLOAD_HEIGHT,
+  type VideoEditResult,
 } from '@anirecast/providers';
 import { AniError, toEnvelopeError, uploadSeconds, videoModelSpec } from '@anirecast/shared';
 import type { JobContext, JobHandler } from '../runner.ts';
@@ -312,6 +314,12 @@ export const generateDesignHandler: JobHandler = async (ctx) => {
   }
 };
 
+/** The paid output of a take's video request, kept so a retry does not pay for it again. */
+interface PaidVideo {
+  rawPath: string;
+  meta: ProviderCallMeta;
+}
+
 function reusableUpload(ws: Workspace, take: Take, uploadSha: string): string | undefined {
   const now = Date.now();
   for (const t of listTakes(ws.db, take.shotId).reverse()) {
@@ -390,7 +398,10 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
       }
     }
     // Short shots are padded (last frame held) to the model's minimum, whole seconds and frame step, then cut back.
-    const minFrames = Math.ceil((uploadSeconds(spec, seconds) * clip.fpsNum) / clip.fpsDen - 1e-6);
+    // A model with a minimum frame rate gets the frames restamped to it (23.976 → 24 fps).
+    const uploadFps = spec.minFps && clip.fpsNum / clip.fpsDen < spec.minFps ? spec.minFps : null;
+    const uploadRate = uploadFps ?? clip.fpsNum / clip.fpsDen;
+    const minFrames = Math.ceil(uploadSeconds(spec, seconds) * uploadRate - 1e-6);
     const video = take.inputs.find((i) => i.role === 'video');
     if (!video) throw new AniError('internal', 'Take has no video input');
     const refs = take.inputs.filter((i) => i.role !== 'video');
@@ -403,38 +414,54 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
     updateTake(ws.db, takeId, { status: 'generating', framesIn: shot.frameCount }, 'daemon');
 
     const cache = projectCacheDir(project);
-    const uploadRel = `${cache}/uploads/${shot.id}-${uploadHeight}p-step${spec.frameStep}-min${minFrames}.mp4`;
+    const fpsTag = uploadFps ? `-fps${uploadFps}` : '';
+    const uploadRel = `${cache}/uploads/${shot.id}-${uploadHeight}p-step${spec.frameStep}-min${minFrames}${fpsTag}.mp4`;
     progress(0.05, 'preparing upload');
     const upload = await scaleForUpload(ws.abs(video.path), outPath(ws, uploadRel), uploadHeight, {
       signal,
       frameStep: spec.frameStep,
       minFrames,
+      ...(uploadFps ? { fps: uploadFps } : {}),
     });
-    const uploadedSeconds = ((upload.frames + upload.padded) * clip.fpsDen) / clip.fpsNum;
-    const uploadSha = `${video.sha256 ?? ''}:${uploadHeight}:step${spec.frameStep}:min${minFrames}`;
+    const uploadedSeconds = (upload.frames + upload.padded) / uploadRate;
+    const uploadSha = `${video.sha256 ?? ''}:${uploadHeight}:step${spec.frameStep}:min${minFrames}${fpsTag}`;
     const cachedFileUri = reusableUpload(ws, take, uploadSha);
 
-    const result = await metered(ctx, { model: take.model, kind: 'video_edit', shotId: shot.id }, () =>
-      services.provider.editVideo({
-        model: take.model,
-        prompt: take.prompt,
-        video: { path: ws.abs(uploadRel), mimeType: 'video/mp4' },
-        inputFrames: upload.frames + upload.padded,
-        inputSeconds: uploadedSeconds,
-        images: refs.map((r) => ({ path: ws.abs(r.path), mimeType: mimeFor(r.path) })),
-        resolution,
-        aspectRatio: '16:9',
-        ...(cachedFileUri ? { cachedFileUri } : {}),
-        signal,
-        onStatus: (m) => progress(0.15, m),
-      }),
-    );
-    ledger(ctx, result, project.id, take.tier);
-    const remote = { ...result.remote, uploadSha, uploadedAt: cachedFileUri ? undefined : Date.now() };
-
+    // A retry after the paid request went through (download, conform …) reuses what the model made: one video,
+    // paid once.
+    const made = (take.remote as { made?: PaidVideo }).made;
+    const earlier = made && existsSync(ws.abs(made.rawPath)) ? made : null;
+    const result: VideoEditResult = earlier
+      ? { ...earlier.meta, data: await readFile(ws.abs(earlier.rawPath)), mimeType: 'video/mp4' }
+      : await metered(ctx, { model: take.model, kind: 'video_edit', shotId: shot.id }, () =>
+          services.provider.editVideo({
+            model: take.model,
+            prompt: take.prompt,
+            video: { path: ws.abs(uploadRel), mimeType: 'video/mp4' },
+            inputFrames: upload.frames + upload.padded,
+            inputSeconds: uploadedSeconds,
+            images: refs.map((r) => ({ path: ws.abs(r.path), mimeType: mimeFor(r.path) })),
+            resolution,
+            aspectRatio: '16:9',
+            ...(cachedFileUri ? { cachedFileUri } : {}),
+            signal,
+            onStatus: (m) => progress(0.15, m),
+          }),
+        );
+    if (!earlier) ledger(ctx, result, project.id, take.tier);
     const stem = takeFileStem(take.version);
-    const rawRel = `${cache}/takes/${shot.id}-${stem}.raw.mp4`;
-    await writeFile(outPath(ws, rawRel), result.data);
+    const rawRel = earlier?.rawPath ?? `${cache}/takes/${shot.id}-${take.id}.raw.mp4`;
+    const { data: _data, mimeType: _mime, ...meta } = result;
+    const remote = {
+      ...result.remote,
+      uploadSha,
+      uploadedAt: cachedFileUri ? undefined : Date.now(),
+      made: { rawPath: rawRel, meta } satisfies PaidVideo,
+    };
+    if (!earlier) {
+      await writeFile(outPath(ws, rawRel), result.data);
+      updateTake(ws.db, takeId, { remote, costUsd: result.costUsd + directorUsd }, 'daemon');
+    }
     progress(0.8, 'conforming');
     const size = TIER_SIZE[take.tier];
     const outRel = `${shotDir(project, shot.id)}/takes/${stem}.mp4`;
