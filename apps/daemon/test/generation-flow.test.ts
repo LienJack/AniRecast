@@ -68,6 +68,8 @@ describe('board → take → render with the fake provider', () => {
       ]);
       // New projects make 1080p videos; this one is set to the 360p draft tier like an older project.
       await cliData(t, ['project', 'tier', project.slug, 'draft']);
+      // This test follows Omni's frame-exact path (4-frame steps); new projects default to Seedance 2.5.
+      await cliData(t, ['project', 'models', project.slug, '--video', 'gemini-omni-1.1-flash']);
       await cliData(t, ['clip', 'set', project.slug, '--in', 'f:0', '--out', 'f:155', '--wait']);
       await waitIdle(root);
       const persona = await cliData<{ id: string; slug: string }>(t, [

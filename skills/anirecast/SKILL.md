@@ -7,7 +7,8 @@ description: Operate an AniRecast workspace (replacing characters in anime openi
 # AniRecast
 
 AniRecast turns an anime opening into a version where chosen characters are replaced by personas from the
-user's library. Work is per shot: storyboard frame (Nano Banana) → shot video (Gemini Omni edit) → render.
+user's library. Work is per shot: storyboard frames (GPT Image 2.5 Sunburst by default) → shot video (Seedance 2.5
+by default) → render. A project may choose other models (`anirecast project models`).
 The AniRecast daemon makes every model call; you plan, adjust prompts, queue jobs and check results.
 
 ## Ground rules
@@ -21,7 +22,7 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
 - Never approve a version. Approval is the human's call; say what you recommend instead.
 - `budget_exceeded`: stop and ask. `provider_rejected` (often a content filter): rephrase at most twice, then
   `anirecast tasks ask`. If its hint says `daily_quota`, do not retry at all; ask right away.
-- Omni has a daily request quota (see `anirecast quota`); blocked requests count too. Before regenerating, check
+- Omni, when a project uses it, has a daily request quota (see `anirecast quota`); blocked requests count too. Before regenerating, check
   that requests are left. A `conflict` whose hint says `safety_blocked` means the shot was refused repeatedly:
   do not pass `--retry-blocked` yourself; describe what you would change and `anirecast tasks ask`. Holding the
   board instead (`anirecast take still`) or keeping the original is the human's choice, not yours.

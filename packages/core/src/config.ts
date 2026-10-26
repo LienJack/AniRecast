@@ -64,12 +64,13 @@ export const DEFAULT_CONFIG: LocalConfig = {
   daemon: { host: '127.0.0.1', port: 7878 },
   provider: 'gemini',
   models: {
-    image: 'gemini-nano-banana-2.1',
-    video: 'gemini-omni-1.1-flash',
+    // Storyboard frames and design sheets: GPT Image 2.5 Sunburst (fal); shot videos: Seedance 2.5 (fal).
+    image: 'fal:openai/gpt-image-2.5/sunburst/edit',
+    video: 'fal:bytedance/seedance-2.5/us/reference-to-video',
     vision: 'gemini-3.8-flash',
     continuity: 'jev:google/gemini-3.8-flash',
-    // Character design sheets; `fal:openai/gpt-image-2.5/sunburst/edit` (GPT Image 2.5 Sunburst) also works.
-    design: 'gemini-nano-banana-2.1',
+    // Character design sheets; `gemini-nano-banana-2.1` (Nano Banana 2.1) also works.
+    design: 'fal:openai/gpt-image-2.5/sunburst/edit',
     search: 'gemini-3.8-flash',
     director: 'gemini-3.8-flash',
   },
