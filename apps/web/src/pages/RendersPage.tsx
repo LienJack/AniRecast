@@ -111,23 +111,28 @@ export function RendersPage() {
                   <Tag tone={RENDER_STATUS_TONE[selected.status] ?? 'neutral'}>
                     {RENDER_STATUS_LABEL[selected.status] ?? selected.status}
                   </Tag>
-                  <div className="ml-auto flex gap-2">
-                    {selected.path && selected.status === 'ready' ? (
+                  <div className="ml-auto flex items-center gap-2">
+                    {selected.kind === 'draft' && selected.status === 'ready' ? (
+                      <span className="text-muted-foreground text-xs">
+                        草稿只能在這裡看；全部分鏡通過後做「正式合成」才能下載
+                      </span>
+                    ) : null}
+                    {selected.kind === 'final' && selected.path && selected.status === 'ready' ? (
                       <Button asChild size="sm" variant="outline">
                         <a
                           href={fileUrl(selected.path)}
-                          download={`r${String(selected.version).padStart(3, '0')}${selected.kind === 'draft' ? '-草稿' : ''}.mp4`}
+                          download={`r${String(selected.version).padStart(3, '0')}.mp4`}
                         >
                           <DownloadIcon />
                           下載成片
                         </a>
                       </Button>
                     ) : null}
-                    {selected.comparePath && selected.status === 'ready' ? (
+                    {selected.kind === 'final' && selected.comparePath && selected.status === 'ready' ? (
                       <Button asChild size="sm" variant="outline">
                         <a
                           href={fileUrl(selected.comparePath)}
-                          download={`r${String(selected.version).padStart(3, '0')}${selected.kind === 'draft' ? '-草稿' : ''}-對比.mp4`}
+                          download={`r${String(selected.version).padStart(3, '0')}-對比.mp4`}
                         >
                           <DownloadIcon />
                           下載左右對比影片
