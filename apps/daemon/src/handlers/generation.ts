@@ -747,7 +747,9 @@ export const composeRenderHandler: JobHandler = async (ctx) => {
       segments,
       ws.abs(clip.audioPath),
       outPath(ws, `${stem}.mp4`),
-      { fpsNum: clip.fpsNum, fpsDen: clip.fpsDen, ...size, draftMark: render.kind === 'draft' },
+      // No mark burned into drafts: every approval makes one, and the red box read as a defect. The page and
+      // the download name say which renders are drafts.
+      { fpsNum: clip.fpsNum, fpsDen: clip.fpsDen, ...size },
       { signal, onProgress: span(progress, 0, 0.7, 'rendering') },
     );
     if (total !== clip.frameCount)

@@ -114,7 +114,10 @@ export function RendersPage() {
                   <div className="ml-auto flex gap-2">
                     {selected.path && selected.status === 'ready' ? (
                       <Button asChild size="sm" variant="outline">
-                        <a href={fileUrl(selected.path)} download>
+                        <a
+                          href={fileUrl(selected.path)}
+                          download={`r${String(selected.version).padStart(3, '0')}${selected.kind === 'draft' ? '-草稿' : ''}.mp4`}
+                        >
                           <DownloadIcon />
                           下載成片
                         </a>
@@ -122,7 +125,10 @@ export function RendersPage() {
                     ) : null}
                     {selected.comparePath && selected.status === 'ready' ? (
                       <Button asChild size="sm" variant="outline">
-                        <a href={fileUrl(selected.comparePath)} download>
+                        <a
+                          href={fileUrl(selected.comparePath)}
+                          download={`r${String(selected.version).padStart(3, '0')}${selected.kind === 'draft' ? '-草稿' : ''}-對比.mp4`}
+                        >
                           <DownloadIcon />
                           下載左右對比影片
                         </a>
