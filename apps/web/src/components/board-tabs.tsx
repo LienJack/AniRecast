@@ -19,11 +19,16 @@ type Keyframe = ShotDetail['keyframes'][number];
 
 const busy = (b: Board | undefined) => b?.status === 'queued' || b?.status === 'generating';
 
-/** The board shown for a moment: the one picked in the version history, else the approved one, else the latest. */
+/**
+ * The board shown for a moment: the one picked in the version history, else the newest — so a version redrawn after
+ * approval comes up for review (the approved one stays in use until the new one is approved).
+ */
 const shownBoard = (boards: Board[], role: BoardRole, selectedId: string | undefined) => {
   const own = boards.filter((b) => b.role === role);
-  return own.find((b) => b.id === selectedId) ?? own.find((b) => b.status === 'approved') ?? own.at(-1);
+  return own.find((b) => b.id === selectedId) ?? own.at(-1);
 };
+const approvedOf = (boards: Board[], role: BoardRole) =>
+  boards.find((b) => b.role === role && b.status === 'approved');
 
 /** The original frame a moment redraws: the board's own frame, else the shot's first / last keyframe or the key. */
 function originalFrame(d: ShotDetail, role: BoardRole, board: Board | undefined, key: Keyframe | undefined) {
@@ -41,7 +46,9 @@ function BoardPane({
   board,
   keyFrame,
   renderOriginal,
+  onSelect,
 }: {
+  onSelect: (boardId: string) => void;
   projectRef: string;
   d: ShotDetail;
   role: BoardRole;
@@ -50,6 +57,7 @@ function BoardPane({
   renderOriginal: (src: string | undefined, alt: string) => React.ReactNode;
 }) {
   const original = originalFrame(d, role, board, keyFrame);
+  const approved = approvedOf(d.boards, role);
   // What JEV decided about this moment when the latest key frame was drawn in a batch.
   const latestKey = d.boards.filter((b) => b.role === 'key').at(-1);
   const decision =
@@ -76,6 +84,16 @@ function BoardPane({
             {board ? (
               <>
                 {label}分鏡圖 v{board.version} <VersionBadge status={board.status} />
+                {approved && approved.id !== board.id ? (
+                  <button
+                    type="button"
+                    className="text-emerald-300 hover:underline"
+                    title="這一張還沒通過前，生成分鏡視頻用的是已通過的那一版"
+                    onClick={() => onSelect(approved.id)}
+                  >
+                    目前通過的是 v{approved.version}
+                  </button>
+                ) : null}
               </>
             ) : (
               `還沒有${label}分鏡圖`
@@ -221,7 +239,7 @@ export function BoardTabs({
               const b = shown[r];
               return (
                 <TabsTrigger key={r} value={r} className="gap-1.5">
-                  {b?.status === 'approved' ? <CheckIcon className="size-3.5 text-emerald-400" /> : null}
+                  {approvedOf(d.boards, r) ? <CheckIcon className="size-3.5 text-emerald-400" /> : null}
                   {busy(b) ? <ShimmerText>{BOARD_ROLE_LABEL[r]}</ShimmerText> : BOARD_ROLE_LABEL[r]}
                   {b?.status === 'ready' ? <span className="size-1.5 rounded-full bg-sky-400" /> : null}
                   {r === 'key' ? <span className={cn('text-[10px] text-muted-foreground')}>必要</span> : null}
@@ -232,6 +250,7 @@ export function BoardTabs({
           {BOARD_ROLES.map((r) => (
             <TabsContent key={r} value={r} className="pt-3">
               <BoardPane
+                onSelect={onSelect}
                 projectRef={projectRef}
                 d={d}
                 role={r}

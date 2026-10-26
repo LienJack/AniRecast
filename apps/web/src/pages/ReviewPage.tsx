@@ -383,6 +383,7 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
     d.takes.find((t) => target?.type === 'take' && t.id === target.id) ??
     d.takes.filter((t) => t.tier === d.project.tier).at(-1) ??
     d.takes.at(-1);
+  const approvedTake = d.takes.filter((t) => t.status === 'approved').at(-1);
   const busy = (v: { status: string } | undefined) => v?.status === 'queued' || v?.status === 'generating';
   const takeJob = useActiveJob('takeId', busy(take) ? take?.id : null);
   const current: (WithReviews<Board> | WithReviews<Take>) | undefined =
@@ -564,6 +565,16 @@ function ReviewBody({ d, shots, projectRef }: { d: ShotDetail; shots: OverviewSh
                 {take ? (
                   <span className="flex items-center gap-1.5 text-muted-foreground text-xs">
                     v{take.version} · {TIER_LABEL[take.tier]} · <VersionBadge status={take.status} />
+                    {approvedTake && approvedTake.id !== take.id ? (
+                      <button
+                        type="button"
+                        className="text-emerald-300 hover:underline"
+                        title="新版本還沒通過前，合成用的是已通過的那一版"
+                        onClick={() => setTarget({ type: 'take', id: approvedTake.id })}
+                      >
+                        目前通過的是 v{approvedTake.version}
+                      </button>
+                    ) : null}
                   </span>
                 ) : null}
               </CardHeader>
