@@ -213,9 +213,8 @@ export async function conformByTime(
 }
 
 /**
- * A still image as a clip of exactly `frames` frames at the clip rate and the given size, with a slow push-in
- * (4% by default) so it does not read as a frozen frame. For shots that keep the approved board instead of a
- * generated video.
+ * A still image held for exactly `frames` frames at the clip rate and the given size. Camera motion is off
+ * by default; a caller may explicitly request a push-in with `zoom`.
  */
 export async function stillClip(
   image: string,
@@ -226,7 +225,7 @@ export async function stillClip(
   ensureDir(output);
   const rate = `${spec.fpsNum}/${spec.fpsDen}`;
   const { width: w, height: h, frames } = spec;
-  const zoom = spec.zoom ?? 0.04;
+  const zoom = spec.zoom ?? 0;
   await ffmpeg(
     [
       '-i',

@@ -7,6 +7,7 @@ import {
   conformByTime,
   conformTake,
   decodedFrames,
+  exec,
   extractAudioSegment,
   extractFrame,
   extractVideoSegment,
@@ -154,7 +155,7 @@ describe('media', () => {
     await expect(conformByTime(slow, path.join(dir, 'x2.mp4'), spec)).rejects.toThrow(/the upload was/);
   }, 60_000);
 
-  it('holds a still image for an exact frame count', async () => {
+  it('holds a still image for an exact frame count without camera motion', async () => {
     const still = path.join(dir, 'still.jpg');
     await extractFrame(source, still, 40, FPS_NUM, FPS_DEN);
     const out = path.join(dir, 'still.mp4');
@@ -166,6 +167,22 @@ describe('media', () => {
       fpsNum: FPS_NUM,
       fpsDen: FPS_DEN,
     });
+    const { stderr } = await exec('ffmpeg', [
+      '-hide_banner',
+      '-nostdin',
+      '-i',
+      out,
+      '-filter_complex',
+      '[0:v]split[a][b];[a]trim=end_frame=1,setpts=PTS-STARTPTS[first];' +
+        '[b]trim=start_frame=30,setpts=PTS-STARTPTS[last];[first][last]psnr',
+      '-f',
+      'null',
+      '-',
+    ]);
+    const psnr = /PSNR y:(inf|[\d.]+)/.exec(stderr)?.[1];
+    expect(psnr).toBeDefined();
+    // Permit H.264 compression noise, but reject any push-in on the detailed still.
+    expect(psnr === 'inf' ? Number.POSITIVE_INFINITY : Number(psnr)).toBeGreaterThan(50);
   }, 60_000);
 
   it('detects the known cuts with the Python sidecar', async () => {

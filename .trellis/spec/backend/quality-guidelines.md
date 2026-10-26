@@ -30,6 +30,16 @@ Questions to answer:
 
 ## Required Patterns
 
+### Still clips have no implicit camera motion
+
+`packages/media/src/compose.ts` exports `stillClip(image, output, spec, opts)`. Omitting
+`spec.zoom` means zero push-in; only an explicit nonzero value may animate the camera.
+`anirecast take still` holds the approved board at the source FPS and exact shot frame count.
+Do not assume that a still input guarantees still output: FFmpeg's `zoompan` can animate it.
+The media regression test compares the detailed first and last decoded frames with luma
+PSNR above 50 dB (allowing H.264 noise), in addition to checking frame count, size and FPS.
+Frame-count checks or sparse contact sheets alone do not catch unintended zoom.
+
 <!-- Patterns that must always be used -->
 
 (To be filled by the team)

@@ -510,7 +510,7 @@ export function TakeActions({
           variant="ghost"
           className="self-start"
           disabled={still.isPending}
-          title="影片模型一直擋這個分鏡時使用：把已通過的關鍵幀分鏡圖做成同長度的鏡頭，帶一點推近"
+          title="影片模型一直擋這個分鏡時使用：把已通過的關鍵幀分鏡圖固定顯示原鏡頭的幀數，不加入推近或動畫"
           onClick={() => still.mutate(undefined)}
         >
           <ImageIcon />
