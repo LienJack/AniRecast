@@ -224,6 +224,8 @@ export function failJob(
 const PRODUCES: Record<string, { table: string; key: string; pending: string[]; column?: string }> = {
   'board.generate': { table: 'boards', key: 'boardId', pending: ['queued', 'generating'] },
   'take.generate': { table: 'takes', key: 'takeId', pending: ['queued', 'generating'] },
+  'take.frames': { table: 'takes', key: 'takeId', pending: ['queued', 'generating'] },
+  'take.merge': { table: 'takes', key: 'takeId', pending: ['queued', 'generating'] },
   'render.compose': { table: 'renders', key: 'renderId', pending: ['queued', 'rendering'] },
   'design.generate': { table: 'designs', key: 'designId', pending: ['queued', 'generating'] },
   'design.analyze': {
