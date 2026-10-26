@@ -267,21 +267,36 @@ export interface Plan {
 export function planBoard(
   ws: Workspace,
   shotId: string,
-  opts: { extra?: string; fromBoardId?: string; role?: BoardRole } = {},
+  opts: {
+    extra?: string;
+    fromBoardId?: string;
+    role?: BoardRole;
+    /**
+     * Draw a first or last frame even where detection saw nobody to replace (a person only partly in view, an arm
+     * behind a door): everyone of the shot is planned and the director judges the frame.
+     */
+    force?: boolean;
+  } = {},
 ): Plan & { role: BoardRole; frame: number } {
   const shot = getShot(ws.db, shotId);
   if (shot.mode !== 'replace')
     throw new AniError('conflict', `Shot ${shotId} is ${shot.mode}; boards are for replace shots`);
   const base = opts.fromBoardId ? getBoard(ws.db, opts.fromBoardId) : undefined;
   const role = opts.role ?? base?.role ?? 'key';
-  const { uses, keyframe } = castInShot(ws, shot, 2, role);
+  let { uses, keyframe } = castInShot(ws, shot, 2, role);
+  if (uses.length === 0 && role !== 'key' && opts.force) uses = castInShot(ws, shot, 2, 'key').uses;
   if (uses.length === 0)
     throw new AniError(
       'conflict',
       role === 'key'
         ? 'No persona is mapped to anyone in this shot'
         : `Nobody to replace is seen in the ${role} frame of this shot`,
-      { details: { role } },
+      {
+        details: { role },
+        ...(role === 'key'
+          ? {}
+          : { hint: 'Pass force (CLI --force) to draw it anyway when someone is only partly in view.' }),
+      },
     );
   const refs: Array<Omit<InputRef, 'sha256'>> = [{ role: 'frame', path: keyframe.path }];
   const lines = ['Image 1 is a frame from an anime opening.'];

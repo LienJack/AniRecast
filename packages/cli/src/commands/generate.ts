@@ -151,6 +151,10 @@ export function registerGenerate(program: Command): void {
     .option('--from <boardId>', 'revise this board (adds --extra on top of its prompt inputs)')
     .option('--role <role>', 'only one storyboard frame: first, key or last (default: all three)')
     .option(
+      '--force',
+      'with --role first|last: draw it even where detection saw nobody to replace (someone only partly in view)',
+    )
+    .option(
       '--model <id>',
       'image model for this request (default: the project choice; see `project models`)',
     )
@@ -166,6 +170,7 @@ export function registerGenerate(program: Command): void {
             promptFile?: string;
             from?: string;
             role?: string;
+            force?: boolean;
             model?: string;
             attach?: string[];
             wait?: boolean;
@@ -189,6 +194,7 @@ export function registerGenerate(program: Command): void {
                     ...base,
                     ...(opts.from ? { fromBoardId: opts.from } : {}),
                     ...(opts.role ? { role: boardRole(opts.role) } : {}),
+                    ...(opts.force ? { force: true } : {}),
                   }),
                 ];
               const r = queueBoards(ws, id, actorFromEnv(), base);

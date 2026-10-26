@@ -62,6 +62,8 @@ export function queueBoard(
     consistentWith?: string;
     /** Extra bookkeeping kept on the board (a 生成全部分鏡圖 batch and its follow-ups). */
     params?: Record<string, unknown>;
+    /** Draw a first or last frame even where detection saw nobody to replace. */
+    force?: boolean;
   } = {},
 ) {
   const { model: chosen, attachments, consistentWith, params: extraParams, ...planOpts } = opts;

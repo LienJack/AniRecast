@@ -75,7 +75,8 @@ export function BoardActions({
     (fromBoardId: string | undefined) =>
       api.post<Queue>(`/api/projects/${encodeURIComponent(projectRef)}/boards`, {
         shotIds: [shotId],
-        ...(fromBoardId ? { fromBoardId } : { role }),
+        // Asked for by a person: drawn even where detection saw nobody (someone only partly in view).
+        ...(fromBoardId ? { fromBoardId } : { role, force: true }),
         ...(model ? { model } : {}),
         ...promptFields(say),
       }),

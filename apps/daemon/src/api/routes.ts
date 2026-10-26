@@ -797,6 +797,7 @@ export function registerRoutes(
         model?: string;
         role?: BoardRole;
         attachments?: string[];
+        force?: boolean;
       }>(c);
       const ids = shotsForMode(ws, c.req.param('ref'), b.shotIds, ['replace']);
       if (b.model) imageModelOrThrow(b.model);
@@ -814,6 +815,7 @@ export function registerRoutes(
                   ...opts,
                   ...(b.fromBoardId ? { fromBoardId: b.fromBoardId } : {}),
                   ...(b.role ? { role: b.role } : {}),
+                  ...(b.force ? { force: true } : {}),
                 }),
               ],
               skipped: [],

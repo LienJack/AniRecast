@@ -83,6 +83,15 @@ describe('three storyboard frames', () => {
     ws.close();
   });
 
+  it('draws a moment nobody was detected in when asked to (someone only partly in view)', () => {
+    const { ws, shotId } = fixture();
+    expect(() => queueBoard(ws, shotId, 'user', { role: 'last' })).toThrow(/Nobody to replace/);
+    const forced = queueBoard(ws, shotId, 'user', { role: 'last', force: true }).board;
+    expect([forced.role, forced.frame]).toEqual(['last', 23]);
+    expect(forced.inputs[0]?.path).toBe('projects/op/last.jpg');
+    ws.close();
+  });
+
   it('approves each moment on its own, and the video waits for the key frame', () => {
     const { ws, shotId } = fixture();
     const [key, first] = queueBoards(ws, shotId, 'user').boards.map((q) => q.board);
