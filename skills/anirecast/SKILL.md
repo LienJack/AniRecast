@@ -119,7 +119,11 @@ are untouched. Notes:
 - One shot at a time; the kept take must be a finished take of the same tier.
 - Wan bills whole seconds of the part (at least 2 s), so a 12-frame redo costs as much as 2 s; group nearby fixes.
 - Chain them: keep the newest good take each time (v4 kept v3's 74–164, v5 kept v4's 12–164).
-- Video jobs run up to three at a time; parts of different shots can run side by side.
+- Video jobs run up to three at a time. Several parts of one shot can be made side by side from the same base
+  (each `--range … --keep <base>`, with `--seams none` where the neighbouring frames are being redone too, so the
+  director is not shown frames that are about to change), then joined with no model call:
+  `anirecast take merge <base> <partTake…> --wait` (the parts may not overlap).
+- A part that starts or ends at a cut gets no kept frame on that side; the director is told it is its own set-up.
 
 ## Handing a task to Claude
 
@@ -225,6 +229,7 @@ anirecast shots find-cast <shot> --wait     # 找出這一鏡的角色: who each
 anirecast take plan <shot> [--model <id>] [--range a-b --keep <take>] --wait   # 預覽提示詞: the director's instruction and images, no video made
 anirecast take generate <project> <shot> --range a-b --keep <take>   # redo only frames a–b, keep the rest of <take>
 anirecast shots cuts <shot>                 # hard cuts and fast motion inside a shot; `parts` are ranges for --range
+anirecast take merge <base> <parts...>      # join partial takes made side by side from <base> (no model, no cost)
 anirecast shots prepare <shot...>           # cut a damaged source segment again from the clip
 anirecast tasks handoff <task> --to claude --reason "…"   # hand a task that needs code to Claude Code
 anirecast design list <project>             # bindings: original → library character, analysis, note, sheets

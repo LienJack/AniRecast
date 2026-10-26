@@ -21,6 +21,7 @@ import {
   openWorkspace,
   projectOfShot,
   queueTake,
+  queueTakeMerge,
   queueTakePlan,
   recomputeShotModes,
   replaceShots,
@@ -364,6 +365,37 @@ describe('the video director', () => {
         // Once handed over and answered, it goes on with Codex.
         expect(routeTask(db, task.id, { cuts: 2 }).to).toBe('codex');
         db.close();
+
+        // Two more parts made from the same base side by side, then joined: no model call.
+        const cli2 = openWorkspace(root, { role: 'cli' });
+        const a = queueTake(cli2, shotId, 'final', 'user', {
+          range: { start: 4, end: 7 },
+          keepFrom: kept.id,
+          seams: 'none',
+        });
+        const b = queueTake(cli2, shotId, 'final', 'user', {
+          range: { start: 16, end: 19 },
+          keepFrom: kept.id,
+        });
+        expect(a.take.params.seams).toBe('none');
+        cli2.close();
+        expect(await waitJob(root, a.job.id)).toBe('succeeded');
+        expect(await waitJob(root, b.job.id)).toBe('succeeded');
+        const cli3 = openWorkspace(root, { role: 'cli' });
+        expect(() => queueTakeMerge(cli3, kept.id, [a.take.id, done.id], 'user')).toThrow(/overlap/);
+        const sent = asked.length;
+        const joined = queueTakeMerge(cli3, kept.id, [b.take.id, a.take.id], 'user');
+        expect(await waitJob(root, joined.job.id)).toBe('succeeded');
+        expect(asked.length).toBe(sent);
+        const j = getTake(cli3.db, joined.take.id);
+        cli3.close();
+        const out = path.join(root, j.path!);
+        expect(await probe(out, { countFrames: true })).toMatchObject({ frameCount: 24 });
+        const partA = path.join(root, getTake(openWorkspace(root, { role: 'cli' }).db, a.take.id).path!);
+        expect(await rangePsnr(partA, out, { from: 4, count: 4 })).toBeGreaterThan(40);
+        expect(await rangePsnr(path.join(root, kept.path!), out, { from: 8, count: 8 })).toBeGreaterThan(40);
+        expect(j).toMatchObject({ status: 'ready', costUsd: 0, conform: { base: kept.id } });
+        expect((j.conform as { psnrDb: number[] }).psnrDb).toHaveLength(5);
       },
     );
   }, 120_000);

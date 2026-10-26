@@ -532,7 +532,16 @@ export async function spliceRange(
     frames,
     fpsNum,
     fpsDen,
-  }: { start: number; end: number; frames: number; fpsNum: number; fpsDen: number },
+    partStart = 0,
+  }: {
+    start: number;
+    end: number;
+    frames: number;
+    fpsNum: number;
+    fpsDen: number;
+    /** Where the part's frames begin in `part`: 0 for a clip of just the part, `start` for a full-length take. */
+    partStart?: number;
+  },
   opts: FfmpegRunOptions = {},
 ): Promise<void> {
   ensureDir(output);
@@ -543,7 +552,9 @@ export async function spliceRange(
     graph.push(`[0:v]trim=start_frame=0:end_frame=${start},setpts=PTS-STARTPTS[a]`);
     pieces.push('[a]');
   }
-  graph.push(`[1:v]trim=start_frame=0:end_frame=${end - start + 1},setpts=PTS-STARTPTS[b]`);
+  graph.push(
+    `[1:v]trim=start_frame=${partStart}:end_frame=${partStart + end - start + 1},setpts=PTS-STARTPTS[b]`,
+  );
   pieces.push('[b]');
   if (end < frames - 1) {
     graph.push(`[0:v]trim=start_frame=${end + 1},setpts=PTS-STARTPTS[c]`);

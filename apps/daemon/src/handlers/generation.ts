@@ -20,6 +20,7 @@ import {
   listShots,
   listTakes,
   originalDesignDir,
+  type PartSeams,
   projectCacheDir,
   projectDir,
   projectModels,
@@ -386,6 +387,7 @@ export const generateTakeHandler: JobHandler = async (ctx) => {
             keepPath: keep.path,
             dir: `${projectCacheDir(project)}/takes`,
             stem: take.id,
+            seams: (take.params.seams as PartSeams | undefined) ?? 'both',
           })
         : undefined;
     // The director watches the shot and writes the instruction and the references (composites where needed);
@@ -820,6 +822,7 @@ export const planTakeHandler: JobHandler = async (ctx) => {
     attachments,
     range,
     keepFrom,
+    seams,
   } = job.payload as {
     shotId: string;
     model?: string;
@@ -827,6 +830,7 @@ export const planTakeHandler: JobHandler = async (ctx) => {
     attachments?: string[];
     range?: FrameRange;
     keepFrom?: string;
+    seams?: PartSeams;
   };
   const project = projectOfShot(ws.db, shotId);
   const model = chosen ?? projectModels(ws.db, project.id).video;
@@ -836,7 +840,15 @@ export const planTakeHandler: JobHandler = async (ctx) => {
   const keep = keepFrom ? getTake(ws.db, keepFrom) : undefined;
   const part =
     range && keep?.path && clip
-      ? await cutPart(ctx, { shot, clip, range, keepPath: keep.path, dir: outDir, stem: 'plan' })
+      ? await cutPart(ctx, {
+          shot,
+          clip,
+          range,
+          keepPath: keep.path,
+          dir: outDir,
+          stem: 'plan',
+          seams: seams ?? 'both',
+        })
       : undefined;
   const d = await directTake(ctx, {
     shotId,

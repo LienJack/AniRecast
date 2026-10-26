@@ -38,6 +38,8 @@ import {
   listShots,
   listTakes,
   loadConfig,
+  PART_SEAMS,
+  type PartSeams,
   projectCacheDir,
   projectModels,
   projectOfShot,
@@ -50,6 +52,7 @@ import {
   queueReferenceSearch,
   queueStillTake,
   queueTake,
+  queueTakeMerge,
   queueTakePlan,
   quotaOverview,
   resolveBindings,
@@ -131,6 +134,13 @@ function rangeOpt(
 
 /** The AniRecast checkout this CLI runs from (Claude works on the code there). */
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
+
+const seamsOpt = (seams: string | undefined): { seams?: PartSeams } => {
+  if (!seams) return {};
+  if (!PART_SEAMS.includes(seams as PartSeams))
+    throw new AniError('usage', `--seams is one of ${PART_SEAMS.join(', ')}`);
+  return { seams: seams as PartSeams };
+};
 
 const boardRole = (role: string): BoardRole => {
   if (!BOARD_ROLES.includes(role as BoardRole))
@@ -522,6 +532,10 @@ export function registerGenerate(program: Command): void {
       "redo only these frames of the shot (0 = its first, e.g. 0-73); the others are kept from --keep's take",
     )
     .option('--keep <takeId>', 'with --range: the take whose other frames stay as they are')
+    .option(
+      '--seams <which>',
+      'with --range: kept frames beside the part the director sees — both (default), before, after or none (when the neighbours are being redone too)',
+    )
     .option('--wait', 'wait for generation')
     .action(
       command(
@@ -540,11 +554,12 @@ export function registerGenerate(program: Command): void {
             attach?: string[];
             range?: string;
             keep?: string;
+            seams?: string;
             wait?: boolean;
           },
         ) =>
           withWorkspace(globals(), async (ws) => {
-            const part = rangeOpt(opts.range, opts.keep);
+            const part = { ...rangeOpt(opts.range, opts.keep), ...seamsOpt(opts.seams) };
             if (part.range && (opts.all || shotIds.length !== 1))
               throw new AniError('usage', '--range is for one shot at a time');
             const project = getProject(ws.db, projectRef);
@@ -609,6 +624,7 @@ export function registerGenerate(program: Command): void {
     )
     .option('--range <first-last>', 'plan only these frames of the shot (with --keep, as `take generate`)')
     .option('--keep <takeId>', 'with --range: the take whose other frames stay as they are')
+    .option('--seams <which>', 'with --range: both, before, after or none (as `take generate`)')
     .option('--wait')
     .action(
       command(
@@ -620,6 +636,7 @@ export function registerGenerate(program: Command): void {
             attach?: string[];
             range?: string;
             keep?: string;
+            seams?: string;
             wait?: boolean;
           },
         ) =>
@@ -629,11 +646,26 @@ export function registerGenerate(program: Command): void {
               ...(opts.model ? { model: opts.model } : {}),
               ...(opts.extra ? { extra: opts.extra } : {}),
               ...rangeOpt(opts.range, opts.keep),
+              ...seamsOpt(opts.seams),
             });
             if (!opts.wait) return { job };
             await waitAll(ws, [job.id], true);
             return { plan: latestShotJob(ws, shotId, 'take.plan') };
           }),
+      ),
+    );
+  take
+    .command('merge <base> <parts...>')
+    .description(
+      "Join partial takes made from <base> side by side (e.g. each cut of a shot redone in parallel with --range --keep <base>): each part's frames from its take, the rest from the base. No model, no cost",
+    )
+    .option('--wait')
+    .action(
+      command((base: string, parts: string[], opts: { wait?: boolean }) =>
+        withWorkspace(globals(), async (ws) => {
+          const { take, job } = queueTakeMerge(ws, base, parts, actorFromEnv());
+          return { take, ...(await waitAll(ws, [job.id], opts.wait)) };
+        }),
       ),
     );
   take

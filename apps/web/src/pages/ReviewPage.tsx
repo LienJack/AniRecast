@@ -99,6 +99,17 @@ export function ReviewIndexPage() {
 /** A partial take says which frames it redid and which version the other frames come from. */
 function PartOf({ take, takes }: { take: Take; takes: Take[] }) {
   const range = take.params.range as { start: number; end: number } | undefined;
+  const merged = take.params.merged as
+    | Array<{ from: string; range: { start: number; end: number } }>
+    | undefined;
+  const v = (id: unknown) => takes.find((t) => t.id === id)?.version;
+  if (merged)
+    return (
+      <span className="text-sky-300">
+        合併：v{v(take.params.keepFrom)}＋
+        {merged.map((m) => `第 ${m.range.start}–${m.range.end} 幀（v${v(m.from)}）`).join('、')}
+      </span>
+    );
   if (!range) return null;
   const kept = takes.find((t) => t.id === take.params.keepFrom);
   return (

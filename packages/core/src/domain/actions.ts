@@ -194,12 +194,19 @@ export function queueTake(
     /** Redo only these frames of the shot (0 = its first); the others are kept from `keepFrom`. */
     range?: FrameRange;
     keepFrom?: string;
+    /** Which kept frames beside the part the director sees (`none` when the neighbours are being redone too). */
+    seams?: PartSeams;
   } = {},
 ) {
   const config = loadConfig();
   const projectId = projectOfShot(ws.db, shotId).id;
   const model = opts.model ?? projectModels(ws.db, projectId).video;
-  const part = opts.range ? partialTake(ws, shotId, tier, opts.range, opts.keepFrom) : undefined;
+  const part = opts.range
+    ? {
+        ...partialTake(ws, shotId, tier, opts.range, opts.keepFrom),
+        ...(opts.seams && opts.seams !== 'both' ? { seams: opts.seams } : {}),
+      }
+    : undefined;
   const attached = checkAttachments(ws, projectId, opts.attachments);
   assertNotBlockedOut(ws.db, config, shotId, opts.retryBlocked);
   if (config.provider !== 'fake' && process.env.ANIRECAST_PROVIDER !== 'fake')
@@ -235,6 +242,69 @@ export function queueTake(
     payload: { takeId: take.id },
     requestedBy: actor,
     maxAttempts: 2,
+  });
+  return { take, job };
+}
+
+/** Kept frames beside a part that the director is shown. */
+export type PartSeams = 'both' | 'before' | 'after' | 'none';
+export const PART_SEAMS: readonly PartSeams[] = ['both', 'before', 'after', 'none'];
+
+/**
+ * One take from a base and partial takes made from it side by side: each part's frames from its take, every other
+ * frame from the base. No model, no cost — parts of a shot can be generated in parallel and joined here.
+ */
+export function queueTakeMerge(ws: Workspace, baseTakeId: string, partTakeIds: string[], actor: string) {
+  const base = getTake(ws.db, baseTakeId);
+  if (!base.path || !['ready', 'approved', 'rejected', 'stale'].includes(base.status))
+    throw new AniError('conflict', `Take v${base.version} has no finished video to join onto`);
+  if (!partTakeIds.length) throw new AniError('usage', 'Name the partial takes to join');
+  const parts = partTakeIds
+    .map((id) => getTake(ws.db, id))
+    .map((t) => {
+      const range = t.params.range as FrameRange | undefined;
+      if (t.shotId !== base.shotId) throw new AniError('usage', `Take ${t.id} is not a take of this shot`);
+      if (!range) throw new AniError('usage', `Take v${t.version} is not a partial take (no --range)`);
+      if (!t.path || !['ready', 'approved', 'rejected'].includes(t.status))
+        throw new AniError('conflict', `Take v${t.version} has no finished video`);
+      if (t.tier !== base.tier)
+        throw new AniError('usage', `Take v${t.version} is ${t.tier}, the base is ${base.tier}`);
+      return { from: t.id, version: t.version, range };
+    })
+    .sort((a, b) => a.range.start - b.range.start);
+  for (const [i, p] of parts.entries()) {
+    const next = parts[i + 1];
+    if (next && next.range.start <= p.range.end)
+      throw new AniError(
+        'usage',
+        `Parts v${p.version} (${p.range.start}–${p.range.end}) and v${next.version} (${next.range.start}–${next.range.end}) overlap`,
+      );
+  }
+  const take = createTake(
+    ws.db,
+    {
+      shotId: base.shotId,
+      tier: base.tier,
+      boardId: base.boardId,
+      prompt: `Joined: v${base.version} with ${parts.map((p) => `frames ${p.range.start}–${p.range.end} of v${p.version}`).join(', ')}.`,
+      model: base.model,
+      params: {
+        tier: base.tier,
+        keepFrom: base.id,
+        merged: parts.map(({ from, range }) => ({ from, range })),
+      },
+      inputs: [],
+      parentId: base.id,
+      createdBy: actor,
+    },
+    { force: true },
+  );
+  const job = enqueueJob(ws.db, {
+    type: 'take.merge',
+    lane: 'media',
+    projectId: projectOfShot(ws.db, base.shotId).id,
+    payload: { takeId: take.id },
+    requestedBy: actor,
   });
   return { take, job };
 }
@@ -455,6 +525,7 @@ export function queueTakePlan(
     attachments?: string[];
     range?: FrameRange;
     keepFrom?: string;
+    seams?: PartSeams;
   } = {},
 ) {
   const shot = getShot(ws.db, shotId);
@@ -480,6 +551,7 @@ export function queueTakePlan(
       ...(opts.extra ? { extra: opts.extra } : {}),
       ...(attachments.length ? { attachments } : {}),
       ...(part ?? {}),
+      ...(part && opts.seams && opts.seams !== 'both' ? { seams: opts.seams } : {}),
     },
     requestedBy: actor,
     maxAttempts: 1,

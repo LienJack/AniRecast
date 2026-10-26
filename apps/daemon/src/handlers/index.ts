@@ -17,6 +17,7 @@ import { searchReferencesHandler } from './references.ts';
 import { shotCastHandler } from './shot-cast.ts';
 import { downloadSourceHandler, importSourceHandler } from './sources.ts';
 import { styleAnalysisHandler } from './style.ts';
+import { mergeTakeHandler } from './take-part.ts';
 
 export function createHandlers(): Map<string, JobHandler> {
   return new Map<string, JobHandler>([
@@ -40,5 +41,6 @@ export function createHandlers(): Map<string, JobHandler> {
     ['cast.tidy', tidyCastHandler],
     ['shot.cast', shotCastHandler],
     ['take.plan', planTakeHandler],
+    ['take.merge', mergeTakeHandler],
   ]);
 }

@@ -1,4 +1,18 @@
-import type { Clip, FrameRange, Shot } from '@anirecast/core';
+import { rmSync } from 'node:fs';
+import {
+  type Clip,
+  type FrameRange,
+  findActiveClip,
+  getShot,
+  getTake,
+  type PartSeams,
+  projectCacheDir,
+  projectOfShot,
+  type Shot,
+  shotDir,
+  takeFileStem,
+  updateTake,
+} from '@anirecast/core';
 import {
   decodedFrames,
   extractFrame,
@@ -6,9 +20,11 @@ import {
   rangePsnr,
   sceneChanges,
   spliceRange,
+  stackCompare,
 } from '@anirecast/media';
-import { AniError } from '@anirecast/shared';
-import type { JobContext } from '../runner.ts';
+import { TIER_SIZE } from '@anirecast/providers';
+import { AniError, toEnvelopeError } from '@anirecast/shared';
+import type { JobContext, JobHandler } from '../runner.ts';
 import { outPath } from './util.ts';
 
 /** Kept frames re-encoded with the new part score well above this; a shifted or wrong frame far below. */
@@ -27,7 +43,17 @@ export async function cutPart(
     keepPath,
     dir,
     stem,
-  }: { shot: Shot; clip: Clip; range: FrameRange; keepPath: string; dir: string; stem: string },
+    seams: wanted = 'both',
+  }: {
+    shot: Shot;
+    clip: Clip;
+    range: FrameRange;
+    keepPath: string;
+    dir: string;
+    stem: string;
+    /** `none` when the frames beside the part are being redone too (they would show the wrong thing). */
+    seams?: PartSeams;
+  },
 ): Promise<{
   range: FrameRange;
   video: string;
@@ -69,9 +95,9 @@ export async function cutPart(
   const near = Math.max(3, Math.round(frames * 0.15));
   const earlyCut = cuts.some((f) => f - range.start <= near);
   const lateCut = cuts.some((f) => range.end - f < near);
-  if (range.start > 0 && !startsAtCut && !earlyCut)
+  if (range.start > 0 && !startsAtCut && !earlyCut && (wanted === 'both' || wanted === 'before'))
     await kept(range.start - 1, 'right before this part — it must start out of this frame');
-  if (range.end < shot.frameCount - 1 && !endsAtCut && !lateCut)
+  if (range.end < shot.frameCount - 1 && !endsAtCut && !lateCut && (wanted === 'both' || wanted === 'after'))
     await kept(range.end + 1, 'right after this part — it must flow into this frame');
   return { range, video, seams, cuts, startsAtCut, endsAtCut };
 }
@@ -120,3 +146,104 @@ export async function splicePart(
   }
   return scores;
 }
+
+/**
+ * `take.merge`: one take from a base and partial takes made from it side by side — each part's frames from its
+ * take, the rest from the base — checked frame for frame against where each stretch came from.
+ */
+export const mergeTakeHandler: JobHandler = async (ctx) => {
+  const { workspace: ws, signal, job, progress } = ctx;
+  const { takeId } = job.payload as { takeId: string };
+  const take = getTake(ws.db, takeId);
+  const shot = getShot(ws.db, take.shotId);
+  const project = projectOfShot(ws.db, shot.id);
+  const clip = findActiveClip(ws.db, project.id);
+  try {
+    if (!clip || !shot.sourcePath) throw new AniError('conflict', 'Shot or clip is not ready');
+    const base = getTake(ws.db, take.params.keepFrom as string);
+    const merged = take.params.merged as Array<{ from: string; range: FrameRange }>;
+    if (!base.path) throw new AniError('conflict', 'The base take has no video');
+    updateTake(ws.db, takeId, { status: 'generating', framesIn: shot.frameCount }, 'daemon');
+    const cache = projectCacheDir(project);
+    const stem = takeFileStem(take.version);
+    const outRel = `${shotDir(project, shot.id)}/takes/${stem}.mp4`;
+    const fps = { fpsNum: clip.fpsNum, fpsDen: clip.fpsDen };
+    let current = ws.abs(base.path);
+    for (const [i, m] of merged.entries()) {
+      progress(0.1 + (0.6 * i) / merged.length, `joining frames ${m.range.start}–${m.range.end}`);
+      const part = getTake(ws.db, m.from);
+      if (!part.path) throw new AniError('conflict', `Take v${part.version} has no video`);
+      const out =
+        i === merged.length - 1 ? outPath(ws, outRel) : outPath(ws, `${cache}/takes/${take.id}-join${i}.mp4`);
+      await spliceRange(
+        current,
+        ws.abs(part.path),
+        out,
+        { ...m.range, frames: shot.frameCount, ...fps, partStart: m.range.start },
+        { signal },
+      );
+      current = out;
+    }
+    const out = ws.abs(outRel);
+    const decoded = await decodedFrames(out, { signal });
+    if (decoded !== shot.frameCount)
+      throw new AniError(
+        'internal',
+        `The joined take has ${decoded} frames, the shot has ${shot.frameCount}`,
+      );
+    // Every stretch must still be its source's own frames.
+    progress(0.75, 'checking every stretch');
+    const stretches: Array<{ path: string; from: number; count: number }> = [];
+    let at = 0;
+    for (const m of merged) {
+      if (m.range.start > at) stretches.push({ path: base.path, from: at, count: m.range.start - at });
+      stretches.push({
+        path: getTake(ws.db, m.from).path!,
+        from: m.range.start,
+        count: m.range.end - m.range.start + 1,
+      });
+      at = m.range.end + 1;
+    }
+    if (at < shot.frameCount) stretches.push({ path: base.path, from: at, count: shot.frameCount - at });
+    const psnrDb: number[] = [];
+    for (const s of stretches) {
+      const db = await rangePsnr(ws.abs(s.path), out, s, { signal });
+      if (db < KEPT_MIN_PSNR_DB)
+        throw new AniError(
+          'internal',
+          `Frames ${s.from}–${s.from + s.count - 1} changed when joined (${db.toFixed(1)} dB)`,
+        );
+      psnrDb.push(Number.isFinite(db) ? Number(db.toFixed(1)) : 99);
+    }
+    progress(0.85, 'building review compare');
+    const compareRel = `${cache}/takes/${shot.id}-${stem}.compare.mp4`;
+    await stackCompare(
+      ws.abs(shot.sourcePath),
+      out,
+      outPath(ws, compareRel),
+      { layout: 'v', height: TIER_SIZE[take.tier].height, crf: 16 },
+      { signal },
+    );
+    for (const [i] of merged.entries())
+      if (i < merged.length - 1) rmSync(ws.abs(`${cache}/takes/${take.id}-join${i}.mp4`), { force: true });
+    const updated = updateTake(
+      ws.db,
+      takeId,
+      {
+        status: 'ready',
+        path: outRel,
+        costUsd: 0,
+        remote: { comparePath: compareRel },
+        framesOut: shot.frameCount,
+        conform: { merged, base: base.id, psnrDb },
+        error: null,
+      },
+      'daemon',
+    );
+    return { result: { take: updated }, costUsd: 0 };
+  } catch (error) {
+    if (!signal.aborted)
+      updateTake(ws.db, takeId, { status: 'failed', error: toEnvelopeError(error).message }, 'daemon');
+    throw error;
+  }
+};
