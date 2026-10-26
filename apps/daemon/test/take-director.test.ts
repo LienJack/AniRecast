@@ -24,6 +24,7 @@ import {
   queueTakePlan,
   recomputeShotModes,
   replaceShots,
+  routeTask,
   run,
   setKeyframes,
   type TakePlanResult,
@@ -344,6 +345,24 @@ describe('the video director', () => {
           status: 'needs_user',
           payload: { handoff: { to: 'claude', by: 'codex' } },
         });
+        // Routing: a simple shot goes to Codex; cuts inside it, or the human's pick, send it to Claude.
+        const feedback = (agent?: 'codex' | 'claude') =>
+          createAgentTask(db.db, {
+            kind: 'review_feedback',
+            projectId: projectOfShot(db.db, shotId).id,
+            shotId,
+            payload: { targetType: 'take', targetId: done.id, ...(agent ? { agent } : {}) },
+            createdBy: 'user',
+          }).id;
+        expect(routeTask(db, feedback())).toEqual({ to: 'codex', reasons: [] });
+        expect(routeTask(db, feedback(), { cuts: 2 })).toEqual({
+          to: 'claude',
+          reasons: ['鏡頭裡有 2 個切鏡'],
+        });
+        expect(routeTask(db, feedback('claude')).to).toBe('claude');
+        expect(routeTask(db, feedback('codex'), { cuts: 2 }).to).toBe('codex');
+        // Once handed over and answered, it goes on with Codex.
+        expect(routeTask(db, task.id, { cuts: 2 }).to).toBe('codex');
         db.close();
       },
     );

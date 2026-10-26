@@ -11,15 +11,18 @@ import {
   getProject,
   getShot,
   getTake,
+  handOffToClaude,
   type LocalConfig,
   listAgentTasks,
   listKeyframes,
   recordCodexUsage,
   releaseAgentTask,
+  routeTask,
   saveCodexThread,
   type ThreadScope,
   type Workspace,
 } from '@anirecast/core';
+import { sceneChanges } from '@anirecast/media';
 import { AniError, toEnvelopeError } from '@anirecast/shared';
 import { type CodexCommand, codexTurnModel, resolveCodexCommand } from './binary.ts';
 import { AppServerClient, type Notification } from './client.ts';
@@ -148,6 +151,21 @@ export class AgentDispatcher {
     this.busy = true;
     let task: AgentTask | undefined;
     try {
+      // 半自動: a hard shot video goes to Claude (a brief and a command for the human) instead of Codex.
+      const route = await this.route(next);
+      if (route.to === 'claude') {
+        handOffToClaude(
+          this.opts.workspace,
+          next.id,
+          {
+            reason: `複雜鏡頭（${route.reasons.join('、')}），交給 Claude 接手`,
+            repoRoot: REPO_ROOT.replace(/\/$/, ''),
+          },
+          'anirecast',
+        );
+        this.event('agent.handoff', next, { to: 'claude', reasons: route.reasons });
+        return;
+      }
       task = claimAgentTask(db, next.id, ACTOR);
       this.status.busyTaskId = task.id;
       await this.runTask(task);
@@ -164,6 +182,21 @@ export class AgentDispatcher {
       this.busy = false;
       this.status.busyTaskId = null;
     }
+  }
+
+  /** Codex or Claude for a task; cuts inside the shot count toward a hard shot. */
+  private async route(task: AgentTask): Promise<{ to: 'codex' | 'claude'; reasons: string[] }> {
+    const ws = this.opts.workspace;
+    const p = task.payload as { targetType?: string; agent?: string; handoff?: unknown };
+    let cuts = 0;
+    if (task.kind === 'review_feedback' && p.targetType === 'take' && !p.agent && !p.handoff && task.shotId) {
+      const shot = getShot(ws.db, task.shotId);
+      if (shot.sourcePath)
+        cuts = (await sceneChanges(ws.abs(shot.sourcePath)).catch(() => [])).filter(
+          (c) => c.kind === 'cut',
+        ).length;
+    }
+    return routeTask(ws, task.id, { cuts });
   }
 
   private async ensureClient(): Promise<AppServerClient> {

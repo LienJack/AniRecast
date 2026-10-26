@@ -136,6 +136,11 @@ It writes a brief for Claude Code under `projects/<project>/claude/<task>.md` (t
 with model, range and cost, the last instruction and references, your notes) and asks the human to start Claude on
 it with one command (also a button on the review page). Then end your turn.
 
+Routing: feedback on a shot video goes to Claude instead of you when the shot is hard — three or more people to
+replace, cuts inside the shot, or its videos were sent back twice already — or when the human picked Claude. The
+tasks you get are the ones judged simple (or ones the human gave you explicitly); if one turns out hard after all,
+hand it over the same way rather than spending on attempts.
+
 ## Same-person identification (`cast_review` tasks)
 
 The task payload lists uncertain cases with contact sheets (head and body crops per appearance, shot numbers).

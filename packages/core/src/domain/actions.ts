@@ -8,6 +8,7 @@ import { createAgentTask, getAgentTask, listAgentTasks } from './agent-tasks.ts'
 import { attachToPlan, checkAttachments } from './attachments.ts';
 import { getCastMember, listCast, shotCast } from './cast.ts';
 import { markCastAnalysisQueued } from './cast-analysis.ts';
+import type { TaskAgent } from './claude.ts';
 import { findActiveClip, getClip } from './clips.ts';
 import { findCodexThread } from './codex.ts';
 import {
@@ -736,6 +737,8 @@ export function submitReview(
     annotations?: unknown[];
     model?: string | null;
     attachments?: string[];
+    /** Who handles a change request (`auto`: Codex, or Claude for a hard shot). */
+    agent?: TaskAgent;
     actor: string;
   },
 ) {
@@ -783,6 +786,7 @@ export function submitReview(
         targetId: input.targetId,
         comment: input.comment,
         annotations: input.annotations ?? [],
+        ...(input.agent && input.agent !== 'auto' ? { agent: input.agent } : {}),
       },
       createdBy: input.actor,
     });

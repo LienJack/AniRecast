@@ -109,6 +109,7 @@ import {
   splitShot,
   submitHandoff,
   submitReview,
+  type TaskAgent,
   TIERS,
   taskContext,
   totalSpend,
@@ -916,16 +917,27 @@ export function registerRoutes(
         annotations?: unknown[];
         model?: string;
         attachments?: string[];
+        agent?: TaskAgent;
       }>(c);
-      return submitReview(ws, {
+      const done = submitReview(ws, {
         targetId: b.targetId,
         verdict: b.verdict,
         comment: b.comment ?? null,
         annotations: b.annotations ?? [],
         model: b.model ?? null,
         ...(b.attachments?.length ? { attachments: b.attachments } : {}),
+        ...(b.agent ? { agent: b.agent } : {}),
         actor: USER,
       });
+      // Asked for Claude: the brief and the command right away (auto routing happens when the task is picked up).
+      if (b.agent === 'claude' && 'task' in done && done.task)
+        handOffToClaude(
+          ws,
+          done.task.id,
+          { reason: '人類指定交給 Claude', repoRoot: REPO_ROOT.replace(/\/$/, '') },
+          USER,
+        );
+      return done;
     }),
   );
 

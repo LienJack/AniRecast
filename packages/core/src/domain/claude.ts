@@ -168,3 +168,41 @@ export function handOffToClaude(
   askUser(ws.db, task.id, question, actor, now);
   return { brief: abs, command, question };
 }
+
+/** Who handles a review: chosen by the human, or by the difficulty of the shot. */
+export type TaskAgent = 'auto' | 'codex' | 'claude';
+
+/**
+ * 半自動 routing: simple feedback goes to Codex; a shot video that is hard — three or more people to replace, cuts
+ * inside the shot, or rejected twice already — is handed to Claude (a brief and a command for the human). The human
+ * can pick either. A task already handed over and answered goes on with Codex.
+ */
+export function routeTask(
+  ws: Workspace,
+  taskId: string,
+  { cuts = 0 }: { cuts?: number } = {},
+): { to: 'codex' | 'claude'; reasons: string[] } {
+  const task = getAgentTask(ws.db, taskId);
+  const p = task.payload as { agent?: TaskAgent; targetType?: string; handoff?: unknown };
+  if (task.kind !== 'review_feedback' || p.handoff) return { to: 'codex', reasons: [] };
+  if (p.agent === 'codex') return { to: 'codex', reasons: ['人類指定 Codex'] };
+  if (p.agent === 'claude') return { to: 'claude', reasons: ['人類指定 Claude'] };
+  if (p.targetType !== 'take' || !task.shotId) return { to: 'codex', reasons: [] };
+  const reasons: string[] = [];
+  const people = all<{ n: number }>(
+    ws.db,
+    `SELECT COUNT(DISTINCT c.id) AS n FROM tracklets t JOIN cast_members c ON c.id = t.cast_member_id
+      WHERE t.shot_id = :shot AND c.persona_id IS NOT NULL`,
+    { shot: task.shotId },
+  )[0]!.n;
+  if (people >= 3) reasons.push(`要換 ${people} 個人`);
+  if (cuts > 0) reasons.push(`鏡頭裡有 ${cuts} 個切鏡`);
+  const rounds = all<{ n: number }>(
+    ws.db,
+    `SELECT COUNT(*) AS n FROM reviews r JOIN takes t ON t.id = r.target_id
+      WHERE t.shot_id = :shot AND r.verdict = 'changes'`,
+    { shot: task.shotId },
+  )[0]!.n;
+  if (rounds >= 2) reasons.push(`這一鏡的影片已經退回 ${rounds} 次`);
+  return { to: reasons.length ? 'claude' : 'codex', reasons };
+}

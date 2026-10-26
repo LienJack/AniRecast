@@ -18,6 +18,7 @@ import { EMPTY_PROMPT, PromptBox, type PromptValue, promptFields } from '@/compo
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { api } from '@/lib/api';
 import { BOARD_ROLE_LABEL, TIER_LABEL } from '@/lib/labels';
 import { useAction, useModels, useOverview } from '@/lib/queries';
@@ -40,6 +41,32 @@ function useModelPick(kind: 'image' | 'video', version: { model: string } | unde
   const own =
     kind === 'image' && version && list?.some((m) => m.id === version.model) ? version.model : undefined;
   return [picked ?? own ?? (kind === 'image' ? project?.image : project?.video), setPicked] as const;
+}
+
+/** Who handles a change request: by the shot's difficulty (auto), Codex, or Claude (a brief to start it on). */
+type Agent = 'auto' | 'codex' | 'claude';
+const AGENT_LABEL: Record<Agent, string> = { auto: '自動分派', codex: 'Codex', claude: 'Claude' };
+
+function AgentPick({ value, onChange }: { value: Agent; onChange: (v: Agent) => void }) {
+  return (
+    <Select value={value} onValueChange={(v) => onChange(v as Agent)}>
+      <SelectTrigger
+        size="sm"
+        className="h-8 w-[7.5rem] text-xs"
+        aria-label="要求修改交給誰"
+        title="自動：簡單的交給 Codex；要換三個人以上、鏡頭裡有切鏡、或這一鏡已經退回兩次的影片，整理好交給 Claude 接手"
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {(Object.keys(AGENT_LABEL) as Agent[]).map((a) => (
+          <SelectItem key={a} value={a} className="text-xs">
+            交給：{AGENT_LABEL[a]}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 }
 
 const copy = (text: string, done: string) =>
@@ -122,6 +149,7 @@ export function BoardActions({
   const label = BOARD_ROLE_LABEL[role];
   const [model, setModel] = useModelPick('image', board, projectRef);
   const [say, setSay] = useState<PromptValue>(EMPTY_PROMPT);
+  const [agent, setAgent] = useState<Agent>('auto');
   const finished = board && FINISHED.includes(board.status);
   const generate = useAction(
     (fromBoardId: string | undefined) =>
@@ -146,13 +174,19 @@ export function BoardActions({
       api.post('/api/reviews', {
         targetId: board?.id,
         verdict,
-        ...(verdict === 'changes' ? promptFields(say, 'comment') : {}),
+        ...(verdict === 'changes' ? { ...promptFields(say, 'comment'), agent } : {}),
         ...(verdict === 'regenerate' && model ? { model } : {}),
       }),
     {
       invalidate,
       success: (_r, v) =>
-        v === 'approve' ? `${label}已通過` : v === 'regenerate' ? '已排入重新生成' : '意見已交給 Codex',
+        v === 'approve'
+          ? `${label}已通過`
+          : v === 'regenerate'
+            ? '已排入重新生成'
+            : agent === 'claude'
+              ? '意見已整理好交給 Claude：複製接手指令'
+              : '意見已送出',
       onSuccess: (_r, v) => {
         if (v === 'changes') setSay(EMPTY_PROMPT);
       },
@@ -236,14 +270,15 @@ export function BoardActions({
             <WandIcon />
             照這段話重畫
           </Button>
+          <AgentPick value={agent} onChange={setAgent} />
           <Button
             size="sm"
             disabled={!say.text.trim() || review.isPending}
-            title="交給 Codex：它會看圖和你的附圖、改提示詞、重畫並檢查"
+            title="交給 Codex（或 Claude）：看圖和你的附圖、改提示詞、重畫並檢查"
             onClick={() => review.mutate('changes')}
           >
             <SendIcon />
-            要求修改（Codex）
+            要求修改
           </Button>
         </div>
       ) : null}
@@ -272,6 +307,7 @@ export function TakeActions({
   const shot = d.shot;
   const [model, setModel] = useModelPick('video', take, projectRef);
   const [say, setSay] = useState<PromptValue>(EMPTY_PROMPT);
+  const [agent, setAgent] = useState<Agent>('auto');
   const [force, setForce] = useState(false);
   const finished = take && FINISHED.includes(take.status);
   const keyApproved = d.boards.some((b) => b.role === 'key' && b.status === 'approved');
@@ -302,13 +338,19 @@ export function TakeActions({
       api.post('/api/reviews', {
         targetId: take?.id,
         verdict,
-        ...(verdict === 'changes' ? promptFields(say, 'comment') : {}),
+        ...(verdict === 'changes' ? { ...promptFields(say, 'comment'), agent } : {}),
         ...(verdict === 'regenerate' && model ? { model } : {}),
       }),
     {
       invalidate,
       success: (_r, v) =>
-        v === 'approve' ? '分鏡視頻已通過' : v === 'regenerate' ? '已排入重新生成' : '意見已交給 Codex',
+        v === 'approve'
+          ? '分鏡視頻已通過'
+          : v === 'regenerate'
+            ? '已排入重新生成'
+            : agent === 'claude'
+              ? '意見已整理好交給 Claude：複製接手指令'
+              : '意見已送出',
       onSuccess: (_r, v) => {
         if (v === 'changes') setSay(EMPTY_PROMPT);
       },
@@ -417,14 +459,15 @@ export function TakeActions({
             <WandIcon />
             照這段話重做
           </Button>
+          <AgentPick value={agent} onChange={setAgent} />
           <Button
             size="sm"
             disabled={!say.text.trim() || review.isPending}
-            title="交給 Codex：它會看片段、你的附圖，改提示詞、重做並檢查"
+            title="自動：簡單的交給 Codex 修；複雜的鏡頭整理成交接資料，交給 Claude 接手"
             onClick={() => review.mutate('changes')}
           >
             <SendIcon />
-            要求修改（Codex）
+            要求修改
           </Button>
         </div>
       ) : null}
