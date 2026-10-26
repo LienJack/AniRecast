@@ -177,7 +177,11 @@ export async function startDaemon(options: StartOptions): Promise<DaemonHandle> 
     discussions.stop();
     await runner.stop();
     hub.stop();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    // Live-update (SSE) connections never end on their own: without dropping them, close() waits forever,
+    // launchd kills the process and requests fail until it does. Stop listening, drop every connection.
+    const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+    (server as { closeAllConnections?: () => void }).closeAllConnections?.();
+    await Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, 3_000).unref())]);
     appendEvent(workspace.db, {
       actor: 'daemon',
       kind: 'daemon.stopped',

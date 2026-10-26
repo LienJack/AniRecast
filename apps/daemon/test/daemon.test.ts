@@ -35,6 +35,24 @@ describe('daemon + CLI', () => {
     expect(text).toMatch(/job\.queued[\s\S]*job\.started[\s\S]*job\.succeeded/);
   });
 
+  it('stops promptly while a browser holds a live-update connection', async () => {
+    const { root, daemon } = await setup();
+    const res = await fetch(`${daemon.url}/api/events`);
+    const reader = res.body!.getReader();
+    await reader.read();
+    const t0 = Date.now();
+    await daemon.stop();
+    expect(Date.now() - t0).toBeLessThan(2_500);
+    // The shutdown finished its bookkeeping (it used to hang until launchd killed it).
+    const ws = openWorkspace(root, { role: 'cli' });
+    const stopped = ws.db.prepare(`SELECT COUNT(*) AS n FROM events WHERE kind = 'daemon.stopped'`).get() as {
+      n: number;
+    };
+    ws.close();
+    expect(stopped.n).toBe(1);
+    await reader.cancel().catch(() => {});
+  });
+
   it('cancels a running job', async () => {
     const { root } = await setup();
     const ws = openWorkspace(root, { role: 'cli' });

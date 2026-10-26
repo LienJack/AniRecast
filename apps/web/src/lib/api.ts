@@ -25,7 +25,21 @@ export class ApiError extends Error {
 
 type Envelope<T> = { ok: true; data: T } | { ok: false; error: ApiErrorBody };
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+/** Waits until the daemon answers again (it restarts in a few seconds after an update). */
+async function daemonBack(timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if ((await fetch('/api/health')).ok) return true;
+    } catch {
+      // still down
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return false;
+}
+
+async function request<T>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
   const init: RequestInit = { method, headers: {} };
   if (body instanceof FormData) init.body = body;
   else if (body !== undefined) {
@@ -36,10 +50,16 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   try {
     res = await fetch(path, init);
   } catch (error) {
+    // Reads are safe to repeat: wait for the service to come back (a restart takes seconds) and try once more.
+    if (method === 'GET' && !retried && (await daemonBack(15_000)))
+      return request<T>(method, path, body, true);
     throw new ApiError(0, {
       code: 'daemon_not_running',
-      message: `連不到 AniRecast 服務（${error instanceof Error ? error.message : String(error)}）`,
-      hint: '確認 daemon 是否在執行。',
+      message: `連不到 AniRecast 服務，可能正在重新啟動（${error instanceof Error ? error.message : String(error)}）`,
+      hint:
+        method === 'GET'
+          ? '等十幾秒後重新整理頁面；一直如此請確認 daemon 是否在執行。'
+          : '這個操作可能沒有送出：等幾秒，確認畫面上的狀態後再按一次。',
     });
   }
   let json: Envelope<T>;
