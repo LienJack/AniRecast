@@ -136,7 +136,7 @@ export function registerMedia(program: Command): void {
   project
     .command('style <project>')
     .description(
-      "Show the project's art-style notes (used in every design, board and take prompt); --analyze reads them and each shot's lighting from the clip",
+      "Show the project's style bible and notes (used in every design, board and take prompt); --analyze (畫面風格分析) reads them, the style reference frames and each shot's light and compositing from the clip",
     )
     .option(
       '--analyze',
@@ -167,6 +167,8 @@ export function registerMedia(program: Command): void {
             const clip = findActiveClip(ws.db, project.id);
             return {
               styleNotes: project.settings.styleNotes ?? '',
+              styleBible: project.settings.styleBible ?? null,
+              styleRefs: project.settings.styleRefs ?? [],
               lighting: clip
                 ? listShots(ws.db, clip.id)
                     .filter((s) => s.lighting)
