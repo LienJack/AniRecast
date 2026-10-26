@@ -255,6 +255,9 @@ export function createTake(
 
 export interface VersionPatch {
   status?: VersionStatus;
+  /** The director's prompt, references and notes replace the planned ones before generation. */
+  prompt?: string;
+  params?: Record<string, unknown>;
   path?: string | null;
   inputs?: InputRef[];
   remote?: Record<string, unknown>;
@@ -281,6 +284,8 @@ function patchVersion(
   if (patch.status !== undefined) set('status', 'status', patch.status);
   if (patch.path !== undefined) set('path', 'path', patch.path);
   if (patch.inputs !== undefined) set('inputs_json', 'inputs', toJson(patch.inputs));
+  if (patch.prompt !== undefined) set('prompt', 'prompt', patch.prompt);
+  if (patch.params !== undefined) set('params_json', 'params', toJson(patch.params));
   if (patch.remote !== undefined) set('remote_json', 'remote', toJson(patch.remote));
   if (patch.error !== undefined) set('error', 'error', patch.error);
   if (patch.costUsd !== undefined) set('cost_usd', 'cost', patch.costUsd);

@@ -21,6 +21,11 @@ export interface LocalConfig {
     design: string;
     /** Web search with sources (official character art); a Gemini model, it uses Google Search. */
     search: string;
+    /**
+     * The director: reads the original frame or shot, the references and the style, then writes each storyboard
+     * and video prompt and picks its references. A vision model.
+     */
+    director: string;
   };
   providers: { jev: { baseUrl: string } };
   /** After detection, judge each cut and merge the ones inside one continuous moment. */
@@ -66,6 +71,7 @@ export const DEFAULT_CONFIG: LocalConfig = {
     // Character design sheets; `fal:openai/gpt-image-2.5/sunburst/edit` (GPT Image 2.5 Sunburst) also works.
     design: 'gemini-nano-banana-2.1',
     search: 'gemini-3.8-flash',
+    director: 'gemini-3.8-flash',
   },
   providers: { jev: { baseUrl: 'https://router.shengsuanyun.com/api/v1' } },
   continuity: { enabled: true, autoMerge: 0.85, review: 0.5, maxShotSeconds: 10 },

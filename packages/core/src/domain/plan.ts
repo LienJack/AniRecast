@@ -307,6 +307,7 @@ export function planBoard(
       frame: keyframe.frame,
       signature: replacementSignature(ws.db, shotId),
       ...(base ? { fromBoardId: base.id } : {}),
+      ...(opts.extra?.trim() ? { extra: opts.extra.trim() } : {}),
     },
     role,
     frame: keyframe.frame,
@@ -793,4 +794,136 @@ export function planDesign(
       ...(extras.length ? { extras } : {}),
     },
   };
+}
+
+/** One image the director may look at: the frame being redrawn, context it only reads, or a reference it may pass on. */
+export interface BriefImage {
+  /** F (the frame), C1… (context), R1… (references). */
+  id: string;
+  label: string;
+  path: string;
+  use: 'frame' | 'context' | 'reference';
+}
+
+/** What the director is told about one storyboard frame: the facts to respect and the images it may use. */
+export interface DirectorBrief {
+  facts: string[];
+  images: BriefImage[];
+  /** What the person asked for (must be honoured). */
+  extra: string | null;
+  /** How many reference images the generator takes besides the frame. */
+  maxRefs: number;
+}
+
+const ROLE_WORDS: Record<BoardRole, string> = {
+  first: 'the first frame',
+  key: 'the key frame (the one showing the most people to replace)',
+  last: 'the last frame',
+};
+
+const DESIGN_WORDS: Record<DesignKind, string> = {
+  turnaround: 'turnaround (front, side, back)',
+  expressions: 'expression sheet',
+  poses: 'pose sheet',
+};
+
+/**
+ * The director's brief for a storyboard frame: who to replace and how (position, looks, outfit policy), the text
+ * to remove, the anime's style and the shot's light, the human's requirements, and numbered images — the frame,
+ * context (the shot's other moments, the original people), and references it may pass to the image model (the
+ * replacement's approved design sheets, library pictures, the shot's other approved frames, the version revised).
+ */
+export function boardBrief(ws: Workspace, boardId: string, maxRefs: number): DirectorBrief {
+  const board = getBoard(ws.db, boardId);
+  const shot = getShot(ws.db, board.shotId);
+  const project = projectOfShot(ws.db, shot.id);
+  const { uses, keyframe } = castInShot(ws, shot, 6, board.role);
+  const frame =
+    (board.frame != null && listKeyframes(ws.db, shot.id).find((k) => k.frame === board.frame)) || keyframe;
+  const images: BriefImage[] = [
+    {
+      id: 'F',
+      label: `the original ${board.role} frame (frame ${frame.frame}) to redraw`,
+      path: frame.path,
+      use: 'frame',
+    },
+  ];
+  let c = 0;
+  let r = 0;
+  const context = (label: string, path: string) =>
+    images.push({ id: `C${++c}`, label, path, use: 'context' });
+  const reference = (label: string, path: string) => {
+    if (!images.some((i) => i.path === path)) images.push({ id: `R${++r}`, label, path, use: 'reference' });
+  };
+  for (const k of listKeyframes(ws.db, shot.id)) {
+    if (k.frame === frame.frame || !['first', 'mid', 'last'].includes(k.role)) continue;
+    context(
+      `the shot's ${k.role === 'mid' ? 'middle' : k.role} frame (frame ${k.frame}), for the action`,
+      k.path,
+    );
+  }
+  const facts: string[] = [];
+  const clip = findActiveClip(ws.db, project.id);
+  const seconds = clip ? ((shot.frameCount * clip.fpsDen) / clip.fpsNum).toFixed(1) : '?';
+  facts.push(
+    `This is shot ${shot.orderIndex + 1} of an anime opening (${seconds} s). The storyboard frame redraws ${ROLE_WORDS[board.role]} of the shot.`,
+  );
+  if (shot.description?.trim()) facts.push(`What happens in the shot: ${shot.description.trim()}`);
+  for (const use of uses) {
+    const castId = use.entries.find((e) => e.cast)?.cast?.id;
+    const castLabel = use.entries.find((e) => e.cast)?.cast?.label;
+    const who = describeWho(ws, frame.frame, use);
+    const followSource = use.entries.some((e) => e.look?.lookPolicy === 'follow_source');
+    facts.push(
+      `Replace ${who}${castLabel ? ` (the original character 「${castLabel}」)` : ''} with the library character "${use.persona.name}"${use.persona.description ? ` — ${use.persona.description}` : ''}. ${
+        followSource
+          ? 'Keep the outfit and hairstyle the original wears in this frame; change face, hair colour, eyes and distinguishing features to the new character.'
+          : "Give them the new character's own outfit, hairstyle and colours, as on her design sheets."
+      }`,
+    );
+    for (const e of use.entries) {
+      const d = all<{ head_crop_path: string | null; body_crop_path: string | null }>(
+        ws.db,
+        'SELECT head_crop_path, body_crop_path FROM detections WHERE tracklet_id = :id ORDER BY abs(frame - :f) LIMIT 1',
+        { id: e.tracklet.id, f: frame.frame },
+      )[0];
+      const crop = d?.body_crop_path ?? d?.head_crop_path;
+      if (crop && existsSync(ws.abs(crop)))
+        context(`the original person to replace (${castLabel ?? 'unnamed'}), cropped`, crop);
+    }
+    const binding = castId ? { castMemberId: castId, personaId: use.persona.id } : undefined;
+    for (const kind of ['turnaround', 'expressions', 'poses'] as const) {
+      const sheet = binding ? approvedDesign(ws.db, project.id, binding, kind) : undefined;
+      if (sheet?.path)
+        reference(
+          `"${use.persona.name}" approved ${DESIGN_WORDS[kind]}, drawn in this anime's style`,
+          sheet.path,
+        );
+    }
+    for (const img of [...use.persona.images]
+      .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
+      .slice(0, 3))
+      reference(`"${use.persona.name}" library picture (${img.view})`, img.path);
+  }
+  for (const role of ['first', 'key', 'last'] as const) {
+    if (role === board.role) continue;
+    const other = approvedBoard(ws.db, shot.id, role);
+    if (other?.path)
+      reference(
+        `this shot's approved ${role} storyboard frame (keep the new characters consistent with it)`,
+        other.path,
+      );
+  }
+  const parent = board.parentId ? getBoard(ws.db, board.parentId) : undefined;
+  if (parent?.path) {
+    reference(`the previous version (v${parent.version}) being revised`, parent.path);
+    facts.push(`This revises v${parent.version}; its instruction was:\n${parent.prompt}`);
+  }
+  const overlay = overlayInstruction(overlaysToRemove(ws.db, shot.id, shot.removeOtherOverlays));
+  if (overlay) facts.push(overlay);
+  const notes = projectStyleNotes(ws, project.id);
+  if (notes) facts.push(`This anime's drawing style: ${notes}`);
+  if (shot.lighting?.trim()) facts.push(`Light and colour of the shot: ${shot.lighting.trim()}`);
+  const extra = typeof board.params.extra === 'string' ? board.params.extra : null;
+  return { facts, images: images.filter((i) => existsSync(ws.abs(i.path))), extra, maxRefs };
 }

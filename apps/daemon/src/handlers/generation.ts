@@ -50,6 +50,7 @@ import {
 } from '@anirecast/providers';
 import { AniError, toEnvelopeError, uploadSeconds, videoModelSpec } from '@anirecast/shared';
 import type { JobContext, JobHandler } from '../runner.ts';
+import { directBoard } from './director.ts';
 import { metered } from './metered.ts';
 import { outPath, span } from './util.ts';
 
@@ -88,9 +89,38 @@ const budgetCheck = (ctx: JobContext, estimate: number) => {
 export const generateBoardHandler: JobHandler = async (ctx) => {
   const { workspace: ws, services, signal, job } = ctx;
   const { boardId } = job.payload as { boardId: string };
-  const board = getBoard(ws.db, boardId);
+  let board = getBoard(ws.db, boardId);
   const project = projectOfShot(ws.db, board.shotId);
   try {
+    // The director writes the instruction and picks the references from what it sees; the planned (template)
+    // prompt stays when it fails. A retry reuses what it already decided.
+    let directorUsd = 0;
+    if (!board.params.director) {
+      ctx.progress(0.03, 'directing: reading the frame and the references');
+      try {
+        const d = await directBoard(ctx, board);
+        directorUsd = d.record.costUsd;
+        board = updateBoard(
+          ws.db,
+          boardId,
+          { prompt: d.prompt, inputs: d.inputs, params: { ...board.params, director: d.record } },
+          'daemon',
+        );
+      } catch (error) {
+        if (signal.aborted) throw error;
+        board = updateBoard(
+          ws.db,
+          boardId,
+          {
+            params: {
+              ...board.params,
+              director: { error: toEnvelopeError(error).message, fallback: true },
+            },
+          },
+          'daemon',
+        );
+      }
+    }
     const images = board.inputs.map((i) => ({ path: ws.abs(i.path), mimeType: mimeFor(i.path) }));
     budgetCheck(ctx, estimateImageCost(board.model, '1K', images.length));
     updateBoard(ws.db, boardId, { status: 'generating' }, 'daemon');
@@ -132,13 +162,13 @@ export const generateBoardHandler: JobHandler = async (ctx) => {
       {
         status: 'ready',
         path: `${stem}.${ext}`,
-        costUsd: result.costUsd,
+        costUsd: result.costUsd + directorUsd,
         remote: result.remote,
         error: null,
       },
       'daemon',
     );
-    return { result: { board: updated }, costUsd: result.costUsd };
+    return { result: { board: updated }, costUsd: result.costUsd + directorUsd };
   } catch (error) {
     if (!signal.aborted)
       updateBoard(ws.db, boardId, { status: 'failed', error: toEnvelopeError(error).message }, 'daemon');
