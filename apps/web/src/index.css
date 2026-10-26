@@ -189,3 +189,20 @@
     animation: none;
   }
 }
+
+/* A horizontal strip whose scrollbar stays visible (macOS hides overlay scrollbars until you scroll). */
+.scrollbar-visible::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+.scrollbar-visible::-webkit-scrollbar-track {
+  background: oklch(1 0 0 / 4%);
+  border-radius: 999px;
+}
+.scrollbar-visible::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 22%);
+  border-radius: 999px;
+}
+.scrollbar-visible::-webkit-scrollbar-thumb:hover {
+  background: oklch(1 0 0 / 35%);
+}

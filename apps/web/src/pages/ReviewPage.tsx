@@ -12,7 +12,7 @@ import {
   UndoIcon,
   VideoIcon,
 } from 'lucide-react';
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { CompareSlider, type CompareSliderHandle } from '@/components/CompareSlider';
 import { DiscussInCodex } from '@/components/codex';
@@ -133,43 +133,97 @@ function ShotStrip({
   projectRef: string;
 }) {
   const activeRef = useRef<HTMLAnchorElement>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+  const measure = useCallback(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    setEdges({ left: el.scrollLeft > 4, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4 });
+  }, []);
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'center' });
-  }, []);
+    measure();
+  }, [measure]);
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    // A mouse wheel scrolls vertically: turn it sideways here (trackpads already scroll sideways).
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || el.scrollWidth <= el.clientWidth) return;
+      e.preventDefault();
+      el.scrollBy({ left: e.deltaY });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('resize', measure);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      window.removeEventListener('resize', measure);
+    };
+  }, [measure]);
+  const page = (dir: 1 | -1) => {
+    const el = stripRef.current;
+    el?.scrollBy({ left: dir * el.clientWidth * 0.8, behavior: 'smooth' });
+  };
   return (
-    <div className="flex gap-1.5 overflow-x-auto border-b px-5 py-2">
-      {shots.map((s) => (
-        <Link
-          key={s.id}
-          ref={s.id === current ? activeRef : undefined}
-          to="/projects/$ref/review/$shotId"
-          params={{ ref: projectRef, shotId: s.id }}
-          className={cn(
-            'relative w-24 shrink-0 overflow-hidden rounded border-2',
-            s.id === current ? 'border-primary' : 'border-transparent opacity-70 hover:opacity-100',
-          )}
-          title={`#${s.orderIndex + 1}`}
+    <div className="relative border-b">
+      {edges.left ? (
+        <button
+          type="button"
+          aria-label="往前看分鏡"
+          onClick={() => page(-1)}
+          className="absolute inset-y-0 left-0 z-10 flex w-10 items-center justify-start bg-linear-to-r from-background to-transparent pl-1 text-muted-foreground hover:text-foreground"
         >
-          <Thumb src={fileUrl(s.thumb)} alt={`分鏡 ${s.orderIndex + 1}`} className="aspect-video w-full" />
-          <span className="absolute top-0.5 left-0.5 rounded bg-black/70 px-1 font-mono text-[10px]">
-            {s.orderIndex + 1}
-          </span>
-          <span
+          <ChevronLeftIcon className="size-5" />
+        </button>
+      ) : null}
+      {edges.right ? (
+        <button
+          type="button"
+          aria-label="往後看分鏡"
+          onClick={() => page(1)}
+          className="absolute inset-y-0 right-0 z-10 flex w-10 items-center justify-end bg-linear-to-l from-background to-transparent pr-1 text-muted-foreground hover:text-foreground"
+        >
+          <ChevronRightIcon className="size-5" />
+        </button>
+      ) : null}
+      <div
+        ref={stripRef}
+        onScroll={measure}
+        className="scrollbar-visible flex gap-1.5 overflow-x-auto px-5 pt-2 pb-1.5"
+      >
+        {shots.map((s) => (
+          <Link
+            key={s.id}
+            ref={s.id === current ? activeRef : undefined}
+            to="/projects/$ref/review/$shotId"
+            params={{ ref: projectRef, shotId: s.id }}
             className={cn(
-              'absolute inset-x-0 bottom-0 h-1',
-              {
-                success: 'bg-emerald-400',
-                warning: 'bg-amber-400',
-                info: 'bg-sky-400',
-                danger: 'bg-red-500',
-                neutral: 'bg-zinc-500',
-                muted: 'bg-zinc-700',
-                accent: 'bg-violet-400',
-              }[STAGE_TONE[s.stage]],
+              'relative w-24 shrink-0 overflow-hidden rounded border-2',
+              s.id === current ? 'border-primary' : 'border-transparent opacity-70 hover:opacity-100',
             )}
-          />
-        </Link>
-      ))}
+            title={`#${s.orderIndex + 1}`}
+          >
+            <Thumb src={fileUrl(s.thumb)} alt={`分鏡 ${s.orderIndex + 1}`} className="aspect-video w-full" />
+            <span className="absolute top-0.5 left-0.5 rounded bg-black/70 px-1 font-mono text-[10px]">
+              {s.orderIndex + 1}
+            </span>
+            <span
+              className={cn(
+                'absolute inset-x-0 bottom-0 h-1',
+                {
+                  success: 'bg-emerald-400',
+                  warning: 'bg-amber-400',
+                  info: 'bg-sky-400',
+                  danger: 'bg-red-500',
+                  neutral: 'bg-zinc-500',
+                  muted: 'bg-zinc-700',
+                  accent: 'bg-violet-400',
+                }[STAGE_TONE[s.stage]],
+              )}
+            />
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }
