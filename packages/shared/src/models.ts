@@ -110,7 +110,7 @@ export const VIDEO_MODELS: readonly VideoModelSpec[] = [
   {
     id: 'fal:alibaba/wan-3.0/reference-to-video',
     label: 'Wan 3.0（reference-to-video）',
-    note: 'fal；以原片為參考影片重新生成（不是逐幀編輯）；分鏡圖＋角色圖；長度補到整秒再剪回；輸入秒數也計費，480p 約 USD 0.10／秒',
+    note: 'fal；預設；以原片為參考影片重新生成（不是逐幀編輯）；分鏡圖＋角色圖；長度補到整秒再剪回；輸入秒數也計費，1080p 約 USD 0.40／秒',
     minRefs: 0,
     maxRefs: 9,
     refStyle: 'any',

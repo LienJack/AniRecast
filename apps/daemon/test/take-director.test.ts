@@ -208,8 +208,9 @@ describe('the video director', () => {
     });
     try {
       const cli = openWorkspace(root, { role: 'cli' });
-      const { take, job } = queueTake(cli, shotId, 'final', 'user');
-      expect(take.model).toContain('seedance');
+      const { take, job } = queueTake(cli, shotId, 'final', 'user', {
+        model: 'fal:bytedance/seedance-2.5/us/reference-to-video',
+      });
       expect(await waitJob(root, job.id)).toBe('succeeded');
       // 24 frames held to Seedance's 4 s editing minimum, restamped to 24 fps without dropping one, at the take's
       // 1080p.

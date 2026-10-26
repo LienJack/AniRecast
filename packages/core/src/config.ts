@@ -65,9 +65,10 @@ export const DEFAULT_CONFIG: LocalConfig = {
   daemon: { host: '127.0.0.1', port: 7878 },
   provider: 'gemini',
   models: {
-    // Storyboard frames and design sheets: GPT Image 2.5 Sunburst (fal); shot videos: Seedance 2.5 (fal).
+    // Storyboard frames and design sheets: GPT Image 2.5 Sunburst (fal). Shot videos: Wan 3.0 (fal) — on the
+    // Lycoris OP its 1080p takes were crisper than Seedance 2.5's and about a sixth of the price.
     image: 'fal:openai/gpt-image-2.5/sunburst/edit',
-    video: 'fal:bytedance/seedance-2.5/us/reference-to-video',
+    video: 'fal:alibaba/wan-3.0/reference-to-video',
     vision: 'gemini-3.8-flash',
     continuity: 'jev:google/gemini-3.8-flash',
     // Character design sheets; `gemini-nano-banana-2.1` (Nano Banana 2.1) also works.
