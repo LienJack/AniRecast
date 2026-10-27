@@ -22,6 +22,7 @@ const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
   delete process.env.MOCK_SKIP_DONE;
+  delete process.env.MOCK_HANDOFF;
 });
 
 async function setup() {
@@ -153,6 +154,34 @@ describe('codex dispatcher (mock app-server)', () => {
         return x.status === 'needs_user' ? x : undefined;
       });
       expect(t.question).toMatch(/沒有標記完成/);
+    } finally {
+      ws.close();
+    }
+  }, 40_000);
+
+  it('leaves a task Codex handed over to Claude alone once Claude has taken it', async () => {
+    process.env.MOCK_HANDOFF = '1';
+    const { root, projectId } = await setup();
+    const ws = openWorkspace(root, { role: 'cli' });
+    try {
+      const task = createAgentTask(ws.db, {
+        kind: 'review_feedback',
+        projectId,
+        payload: { comment: '要改程式才做得到', agent: 'codex' },
+        createdBy: 'user',
+      });
+      const kinds = () =>
+        all<{ kind: string }>(ws.db, 'SELECT kind FROM events WHERE entity_id = :id', { id: task.id }).map(
+          (e) => e.kind,
+        );
+      await waitFor(() => (kinds().includes('agent.finished') ? true : undefined));
+      // The end of Codex's turn neither puts Claude's claim to the human nor gives it back to the queue.
+      expect(getAgentTask(ws.db, task.id)).toMatchObject({
+        status: 'claimed',
+        claimedBy: 'claude',
+        payload: { routedTo: 'claude', handoff: { to: 'claude' } },
+      });
+      expect(kinds()).not.toContain('agent_task.needs_user');
     } finally {
       ws.close();
     }

@@ -64,7 +64,20 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         });
         log({ submit: JSON.parse(r.stdout || 'null'), status: r.status });
       }
-      if (taskId && process.env.MOCK_SKIP_DONE !== '1') {
+      if (taskId && process.env.MOCK_HANDOFF === '1') {
+        // Codex hands the task to Claude, and Claude Code takes it before this turn ends.
+        const steps = [
+          [
+            ['tasks', 'handoff', taskId, '--reason', '需要改程式'],
+            { ...process.env, CODEX_THREAD_ID: params.threadId, CODEX_SANDBOX: 'seatbelt' },
+          ],
+          [['tasks', 'next', '--for', 'claude'], { ...process.env, CLAUDECODE: '1' }],
+        ];
+        for (const [args, env] of steps) {
+          const r = spawnSync(process.execPath, [CLI, ...args], { cwd: params.cwd, env, encoding: 'utf8' });
+          log({ cli: JSON.parse(r.stdout || 'null'), status: r.status });
+        }
+      } else if (taskId && process.env.MOCK_SKIP_DONE !== '1') {
         const r = spawnSync(process.execPath, [CLI, 'tasks', 'done', taskId, '--note', 'mock note'], {
           cwd: params.cwd,
           env: { ...process.env, CODEX_THREAD_ID: params.threadId, CODEX_SANDBOX: 'seatbelt' },

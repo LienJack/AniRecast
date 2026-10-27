@@ -291,11 +291,14 @@ describe('character design', () => {
       targetId: turnaround!.design.id,
       verdict: 'changes',
       comment: 'cover the shoulders',
+      // The human's pick (`review request-changes --agent codex`) wins over the default (Claude).
+      agent: 'codex',
       actor: 'user',
     });
     expect('task' in r && r.task?.payload).toMatchObject({
       targetType: 'design',
       targetId: turnaround!.design.id,
+      routedTo: 'codex',
     });
     expect(getDesign(ws.db, turnaround!.design.id).status).toBe('rejected');
     expect(listAgentTasks(ws.db, { status: 'open' })).toHaveLength(1);

@@ -203,7 +203,9 @@ export class AgentDispatcher {
       const e = toEnvelopeError(error);
       this.status.lastError = `${e.code}: ${e.message}`;
       this.opts.log(`dispatch failed: ${this.status.lastError}`);
-      if (getAgentTask(db, task.id).status === 'claimed') releaseAgentTask(db, task.id, ACTOR);
+      // Only our own claim: a task handed to Claude meanwhile may be Claude's now.
+      const current = getAgentTask(db, task.id);
+      if (current.status === 'claimed' && current.claimedBy === ACTOR) releaseAgentTask(db, task.id, ACTOR);
       this.event('agent.error', task, { error: e });
       this.backoffUntil = Date.now() + (e.code === 'dependency_missing' ? 5 * 60_000 : 60_000);
       if (this.client?.exited) this.client = undefined;
@@ -473,7 +475,8 @@ export class AgentDispatcher {
     if (usage) recordCodexUsage(ws.db, { taskId: task.id, threadId, tokens: usage });
     this.event('agent.finished', task, { threadId, turnStatus: outcome.status });
     const after = getAgentTask(ws.db, task.id);
-    if (after.status === 'claimed') {
+    // Still ours: handed to Claude during the turn (by Codex or on the web), it may be Claude's claim by now.
+    if (after.status === 'claimed' && after.claimedBy === ACTOR) {
       askUser(
         ws.db,
         task.id,

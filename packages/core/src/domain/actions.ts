@@ -790,6 +790,7 @@ function submitDesignReview(
     comment?: string | null;
     model?: string | null;
     annotations?: unknown[];
+    agent?: TaskAgent;
     actor: string;
   },
 ) {
@@ -817,6 +818,7 @@ function submitDesignReview(
         targetId: design.id,
         comment: input.comment,
         annotations: input.annotations ?? [],
+        ...(input.agent && input.agent !== 'auto' ? { agent: input.agent } : {}),
       },
       createdBy: input.actor,
     });
@@ -868,7 +870,7 @@ export function submitReview(
     annotations?: unknown[];
     model?: string | null;
     attachments?: string[];
-    /** Who handles a change request (`auto`: Codex, or Claude for a hard shot). */
+    /** Who handles a change request (`auto`: the configured `agents.default`). */
     agent?: TaskAgent;
     actor: string;
   },
