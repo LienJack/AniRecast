@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend code standards and forbidden patterns"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "SQLite access patterns for agent_tasks payload_json filtering"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Web component standards"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Core/daemon/CLI/web contract for routedTo and actor identity"}
+{"file": ".trellis/tasks/10-26-claude-takeover/handoff.md", "reason": "Per-file current state and required changes"}

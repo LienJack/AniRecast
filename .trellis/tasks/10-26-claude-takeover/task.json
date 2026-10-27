@@ -3,7 +3,7 @@
   "name": "claude-takeover",
   "title": "Claude 全局接管：評審意見預設交給 Claude、在 Claude TUI 操作全部功能",
   "description": "預設 agent=claude（Codex 只接人類手動指定的任務）；等 Claude 的任務維持 open 並以 routedTo 區分；actor 識別 CLAUDECODE；Claude Code skill 與 workspace CLAUDE.md；網頁顯示等 Claude 的任務。交接內容見 handoff.md。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
