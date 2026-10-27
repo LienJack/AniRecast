@@ -38,6 +38,8 @@ const PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', `${AGENT_LABEL}
 const LOG_DIR = path.join(os.homedir(), 'Library', 'Logs', 'AniRecast');
 const CLI_LINK = path.join(os.homedir(), '.local', 'bin', 'anirecast');
 const SKILL_LINK = path.join(os.homedir(), '.codex', 'skills', 'anirecast');
+// Claude Code loads the same skill (it is the main operator of agent tasks).
+const CLAUDE_SKILL_LINK = path.join(os.homedir(), '.claude', 'skills', 'anirecast');
 const uid = () => (process.getuid ? process.getuid() : 0);
 
 interface Step {
@@ -193,7 +195,7 @@ export function registerSetup(program: Command): void {
   program
     .command('setup')
     .description(
-      'Install AniRecast on this Mac: Python env, CLI link, Codex skill, launchd agent, workspace, Codex project',
+      'Install AniRecast on this Mac: Python env, CLI link, Codex and Claude Code skill, launchd agent, workspace, Codex project',
     )
     .option('--no-codex-project', 'do not add the workspace as a Codex desktop project')
     .option('--no-agent', 'do not install the launchd agent')
@@ -220,7 +222,7 @@ export function registerSetup(program: Command): void {
               rmSync(PLIST, { force: true });
             }
             steps.push({ step: 'launchd agent', status: dry ? 'planned' : 'removed', detail: PLIST });
-            for (const link of [CLI_LINK, SKILL_LINK]) {
+            for (const link of [CLI_LINK, SKILL_LINK, CLAUDE_SKILL_LINK]) {
               if (isSymlink(link) && readlinkSync(link).startsWith(REPO_ROOT)) {
                 if (!dry) rmSync(link);
                 steps.push({ step: `link ${link}`, status: dry ? 'planned' : 'removed' });
@@ -245,6 +247,7 @@ export function registerSetup(program: Command): void {
           });
           steps.push(ensureLink(CLI_LINK, path.join(REPO_ROOT, 'bin', 'anirecast'), dry));
           steps.push(ensureLink(SKILL_LINK, path.join(REPO_ROOT, 'skills', 'anirecast'), dry));
+          steps.push(ensureLink(CLAUDE_SKILL_LINK, path.join(REPO_ROOT, 'skills', 'anirecast'), dry));
           const dist = path.join(REPO_ROOT, 'apps', 'web', 'dist', 'index.html');
           if (opts.buildWeb || !existsSync(dist)) {
             note('building the web UI…');

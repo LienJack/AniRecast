@@ -174,7 +174,7 @@ export const LANE_LABEL: Record<string, string> = {
 
 export const TASK_STATUS_LABEL: Record<AgentTaskStatus, string> = {
   open: '排隊中',
-  claimed: 'Codex 處理中',
+  claimed: '處理中',
   done: '完成',
   needs_user: '需要你回覆',
   cancelled: '已取消',
@@ -209,7 +209,7 @@ export const OVERLAY_LABEL: Record<OverlayCategory, string> = {
 
 export const ASSIGNED_BY_LABEL: Record<AssignedBy, string> = {
   auto: '程式',
-  codex: 'AI（Codex／JEV）',
+  codex: 'AI（Codex／Claude／JEV）',
   user: '你（鎖定）',
 };
 
@@ -258,11 +258,12 @@ export const RENDER_STATUS_TONE: Record<string, Tone> = {
   failed: 'danger',
 };
 
-/** `user`, `system`, `daemon`, `dispatcher`, `codex:<thread>` → readable. */
+/** `user`, `system`, `daemon`, `dispatcher`, `codex:<thread>`, `claude` → readable. */
 export function actorLabel(actor: string | null | undefined): string {
   if (!actor) return '—';
   if (actor === 'user') return '你';
   if (actor.startsWith('codex')) return 'Codex';
+  if (actor === 'claude') return 'Claude';
   if (actor === 'daemon' || actor === 'system' || actor === 'dispatcher') return '系統';
   return actor;
 }

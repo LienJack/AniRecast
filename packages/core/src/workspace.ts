@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { AniError, ulid } from '@anirecast/shared';
-import { workspaceAgentsMd } from './agents-md.ts';
+import { workspaceAgentsMd, workspaceClaudeMd } from './agents-md.ts';
 import { type Db, openDb, run } from './db.ts';
 import { appendEvent } from './events.ts';
 import { assertCurrentSchema, LATEST_SCHEMA_VERSION, migrate, schemaVersion } from './migrations.ts';
@@ -10,6 +10,7 @@ import { resolveIn, toRelative } from './paths.ts';
 export const MANIFEST_FILE = 'anirecast.workspace.json';
 export const DB_FILE = 'anirecast.db';
 export const AGENTS_FILE = 'AGENTS.md';
+export const CLAUDE_FILE = 'CLAUDE.md';
 export const WORKSPACE_FORMAT = 'anirecast-workspace';
 export const WORKSPACE_FORMAT_VERSION = 1;
 export const APP_VERSION = '0.1.0';
@@ -145,6 +146,7 @@ export function initWorkspace(dir: string, options: { name?: string } = {}): Wor
   for (const d of WORKSPACE_DIRS) mkdirSync(path.join(root, ...d.split('/')), { recursive: true });
   writeFileSync(path.join(root, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`);
   writeFileSync(path.join(root, AGENTS_FILE), workspaceAgentsMd(manifest.name));
+  writeFileSync(path.join(root, CLAUDE_FILE), workspaceClaudeMd(manifest.name));
   const db = openDb(path.join(root, DB_FILE));
   migrate(db);
   run(db, 'INSERT INTO workspace_meta (key, value) VALUES (:key, :value)', {
@@ -178,11 +180,15 @@ export function openWorkspace(dir: string, options: OpenOptions): Workspace {
     db.close();
     throw error;
   }
-  // The generated guide follows the app: rewritten when it is still ours (starts with our heading) and outdated.
-  const agentsFile = path.join(root, AGENTS_FILE);
-  const guide = workspaceAgentsMd(manifest.name);
-  const current = existsSync(agentsFile) ? readFileSync(agentsFile, 'utf8') : null;
-  if (current === null || (current !== guide && current.startsWith('# AniRecast Workspace')))
-    writeFileSync(agentsFile, guide);
+  // The generated guides follow the app: written when missing (workspaces made before a guide existed), rewritten
+  // when still ours (starts with our heading) and outdated; a guide the human wrote is left alone.
+  refreshGuide(path.join(root, AGENTS_FILE), workspaceAgentsMd(manifest.name));
+  refreshGuide(path.join(root, CLAUDE_FILE), workspaceClaudeMd(manifest.name));
   return new Workspace(root, manifest, db);
+}
+
+function refreshGuide(file: string, guide: string): void {
+  const current = existsSync(file) ? readFileSync(file, 'utf8') : null;
+  if (current === null || (current !== guide && current.startsWith('# AniRecast Workspace')))
+    writeFileSync(file, guide);
 }

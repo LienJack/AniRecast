@@ -1,7 +1,7 @@
 ---
 
 name: anirecast
-description: Operate an AniRecast workspace (replacing characters in anime openings shot by shot) through the `anirecast` CLI, process AniRecast agent tasks — review feedback on storyboard frames, shot videos or character designs, same-person and shot-boundary checks — and hold Codex discussions (`hof_…`) with the human. Use inside an AniRecast workspace, or when asked to handle AniRecast feedback, shots, cast, personas, boards, takes or renders.
+description: Operate an AniRecast workspace (replacing characters in anime openings shot by shot) through the `anirecast` CLI, process AniRecast agent tasks — review feedback on storyboard frames, shot videos or character designs, same-person and shot-boundary checks — and hold Codex discussions (`hof_…`) with the human. Use inside an AniRecast workspace, or when asked to handle AniRecast feedback, shots, cast, personas, boards, takes or renders — including in Chinese, e.g. 處理任務、分析鏡頭、分析人物、生成設計圖、生成分鏡圖、生成分鏡視頻、合成.
 ---
 
 # AniRecast
@@ -32,6 +32,51 @@ The AniRecast daemon makes every model call; you plan, adjust prompts, queue job
 - Shot videos are made at 1080p (`final`, the project tier); the human chose that for every video. Older
   `draft` (360p) / `preview` (720p) takes may exist; `take promote` redoes an approved one at 1080p. Do not
   switch a project to a lower tier on your own.
+
+## 從 Claude Code 操作
+
+In Claude Code you are the main operator: every agent task waits for Claude unless the human picked Codex on the
+web. Work from the workspace root (it has a `CLAUDE.md`); the human talks to you in Chinese. Common requests:
+
+| 人類說       | 指令                                                                                                       |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| 處理任務     | the loop below                                                                                             |
+| 分析鏡頭     | `anirecast shots analyze <project> --wait` (分鏡分析: on-screen text, people, descriptions)                |
+| 重新偵測分鏡 | `anirecast shots detect <project> --wait`                                                                  |
+| 分析人物     | `anirecast cast analyze <project> --wait` (同一人識別; `--redetect` for every shot)                        |
+| 整理角色     | `anirecast cast tidy <project> --wait` (JEV merges the same person and the same outfit)                    |
+| 原片角色分析 | `anirecast design analyze <project> [character] --wait`                                                    |
+| 這一鏡的角色 | `anirecast shots find-cast <shot> --wait`                                                                  |
+| 官方設定集   | `anirecast design refs <project> <character> --search --wait`                                              |
+| 收下設定集   | `anirecast design refs <project> <character> --accept <ids>` (`--reject <ids>`, `--add-file <file>`)       |
+| 生成設計圖   | `anirecast design generate <project> [character] [--kind <kind>] --wait`                                   |
+| 原角色設定圖 | `anirecast design original <project> <character> --wait`                                                   |
+| 生成分鏡圖   | `anirecast board generate <project> <shot> [--role <role>] --wait` (role: first, key or last)              |
+| 全部分鏡圖   | `anirecast board all <project>`                                                                            |
+| 生成分鏡視頻 | `anirecast take generate <project> <shot> --wait`, then `anirecast take sheet <take>`                      |
+| 畫風         | `anirecast project style <project> --analyze --wait`, or `--set "<notes>"`                                 |
+| 合成         | `anirecast render create <project> --draft --wait` (草稿) or without `--draft` (正式)                      |
+| 背景工作     | `anirecast jobs list --status running`; `jobs pause`, `jobs resume`; `jobs cancel <id>`, `jobs retry <id>` |
+| 花費、額度   | `anirecast cost <project>`, `anirecast quota`                                                              |
+
+正式 renders need every replace and clean shot approved.
+
+處理任務 (the loop): `anirecast tasks next --for claude` claims the oldest task waiting for Claude
+(`anirecast tasks list --for claude` shows them) → `anirecast tasks show <task>` and do it as in "Handling an
+agent task" → `anirecast tasks done <task> --note "<what you changed>" [--result <newVersionId>]` → the next one,
+until none is left. When the request is unclear: `anirecast tasks ask <task> --question "…"`. Do not run
+`anirecast tasks handoff`: that is how Codex passes a task to you.
+
+- Look at images with Read (the `absPath` a command returns, a board, a design sheet, an attached image). You
+  cannot watch video: use `anirecast take sheet <take>`, or extract frames with ffmpeg into
+  `~/.cache/ranolabs/sessions/<YYYY-MM-DD>-<task>/` (never into the workspace; delete them when done).
+- Before anything that costs money (design, board or take generation, `style --analyze`, `cast tidy`,
+  `refs --search`), list what you will queue with a rough cost (`anirecast cost`, `anirecast quota`) and wait for the
+  human's OK. Free commands (`take still`, `take merge`, `tasks`, `shots cuts`) need no OK.
+- Never approve (通過) a board, take or design, and do not change a cast pick the human locked; recommend instead.
+- You may change AniRecast's code (the repo named in `CLAUDE.md`) when the CLI cannot do the job: run
+  `set -o pipefail; pnpm -s check`, look at `git status` and the diff before committing, and add only your files.
+  The daemon runs the new code only after a restart; ask the human first.
 
 ## Handling an agent task
 
@@ -145,13 +190,14 @@ anirecast tasks handoff <task> --to claude --reason "<why you cannot finish it>"
 ```
 
 It writes a brief for Claude Code under `projects/<project>/claude/<task>.md` (the request, the shot, every version
-with model, range and cost, the last instruction and references, your notes) and asks the human to start Claude on
-it with one command (also a button on the review page). Then end your turn.
+with model, range and cost, the last instruction and references, your notes) and puts the task back in the queue
+for Claude, who picks it up when the human says 處理任務 in Claude Code. Then end your turn.
 
-Routing: feedback on a shot video goes to Claude instead of you when the shot is hard — three or more people to
-replace, cuts inside the shot, or its videos were sent back twice already — or when the human picked Claude. The
-tasks you get are the ones judged simple (or ones the human gave you explicitly); if one turns out hard after all,
-hand it over the same way rather than spending on attempts.
+Routing: every task waits for Claude unless the human picked Codex on the web (the setting `agents.default` is
+`claude`). With `agents.default: auto`, feedback on a shot video goes to Claude when the shot is hard — three or
+more people to replace, cuts inside the shot, or its videos were sent back twice already — and the rest to you.
+The tasks you get are the ones routed to Codex; if one turns out hard after all, hand it over the same way rather
+than spending on attempts.
 
 ## Same-person identification (`cast_review` tasks)
 

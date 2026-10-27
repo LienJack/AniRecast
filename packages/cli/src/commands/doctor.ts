@@ -172,6 +172,11 @@ export function runDoctor(globals: GlobalOptions): { healthy: boolean; checks: C
       path.join(os.homedir(), '.codex', 'skills', 'anirecast'),
       path.join(REPO_ROOT, 'skills', 'anirecast'),
     ],
+    [
+      'claude-skill',
+      path.join(os.homedir(), '.claude', 'skills', 'anirecast'),
+      path.join(REPO_ROOT, 'skills', 'anirecast'),
+    ],
   ] as const) {
     let ok = false;
     try {

@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { ExternalLinkIcon, LockIcon, SendIcon, XIcon } from 'lucide-react';
 import { useState } from 'react';
+import { agentName, CopyClaudeCommand, waitingForClaude } from '@/components/claude';
 import { DiscussInCodex } from '@/components/codex';
 import { Tag, Thumb } from '@/components/common';
 import { ShimmerText } from '@/components/generating';
@@ -156,10 +157,18 @@ export function TaskCard({
   });
   const payload = task.payload as { comment?: string; targetType?: string; targetId?: string };
   const active = task.status !== 'done' && task.status !== 'cancelled';
+  const agent = agentName(task);
+  const waiting = waitingForClaude(task) && task.status === 'open';
   return (
     <div className="flex flex-col gap-1.5 rounded-md border bg-background/40 p-2.5">
       <div className="flex flex-wrap items-center gap-1.5">
-        <Tag tone={TASK_STATUS_TONE[task.status]}>{TASK_STATUS_LABEL[task.status]}</Tag>
+        <Tag tone={waiting ? 'info' : TASK_STATUS_TONE[task.status]}>
+          {waiting
+            ? '等 Claude 處理'
+            : task.status === 'claimed'
+              ? `${agent} 處理中`
+              : TASK_STATUS_LABEL[task.status]}
+        </Tag>
         <span className="font-medium text-xs">{TASK_KIND_LABEL[task.kind] ?? task.kind}</span>
         {payload.targetType ? (
           <span className="text-muted-foreground text-xs">
@@ -190,16 +199,28 @@ export function TaskCard({
         ) : null}
       </div>
       {payload.comment ? <div className="text-xs">意見：{payload.comment}</div> : null}
-      {task.resultNote ? <div className="text-sky-200 text-xs">Codex：{task.resultNote}</div> : null}
+      {waiting ? (
+        <div className="flex flex-wrap items-center gap-1.5 text-sky-200 text-xs">
+          在 Claude Code 說「處理任務」就會處理
+          <CopyClaudeCommand />
+        </div>
+      ) : null}
+      {task.resultNote ? (
+        <div className="text-sky-200 text-xs">
+          {agent}：{task.resultNote}
+        </div>
+      ) : null}
       {task.status === 'needs_user' && task.question ? (
         <div className="flex flex-col gap-1.5 rounded border border-amber-500/30 bg-amber-500/10 p-2">
-          <div className="whitespace-pre-wrap text-amber-100 text-xs">Codex 問：{task.question}</div>
+          <div className="whitespace-pre-wrap text-amber-100 text-xs">
+            {agent} 問：{task.question}
+          </div>
           <PromptBox
             projectRef={task.projectId ?? ''}
             value={answer}
             onChange={setAnswer}
-            placeholder="回覆 Codex…（可以附圖）"
-            label="回覆 Codex"
+            placeholder={`回覆 ${agent}…（可以附圖）`}
+            label={`回覆 ${agent}`}
           />
           <div className="flex flex-wrap justify-end gap-1.5">
             <DiscussInCodex

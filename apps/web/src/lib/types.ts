@@ -58,6 +58,7 @@ export type {
   ProjectStep,
   Render,
   Review,
+  RoutedTo,
   Shot,
   ShotMode,
   ShotStage,
@@ -159,6 +160,11 @@ export interface SettingsInfo {
   continuity: LocalConfig['continuity'];
   budget: LocalConfig['budget'];
   codex: { autoDispatch: boolean; model: string | null; effort: string | null };
+  /**
+   * Who gets the tasks nobody picked an agent for, and the command that starts Claude Code on its tasks
+   * (`cd <workspace> && claude "處理 AniRecast 待辦任務"`). Missing from a daemon older than the web build.
+   */
+  agents?: LocalConfig['agents'] & { claudeCommand: string };
   quota: QuotaStatus[];
 }
 

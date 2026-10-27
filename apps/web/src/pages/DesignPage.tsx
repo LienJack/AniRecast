@@ -14,6 +14,7 @@ import {
   WandIcon,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { sentTo, useDefaultAgent } from '@/components/claude';
 import { DiscussInCodex } from '@/components/codex';
 import { EmptyState, ErrorState, Loading, PageHeader, Tag, Thumb } from '@/components/common';
 import { ActorLink, VersionBadge } from '@/components/domain';
@@ -48,6 +49,7 @@ import type {
   CastReference,
   DesignKind,
   Job,
+  ReviewResult,
   UnboundCast,
 } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -126,20 +128,18 @@ function SheetPanel({
       api.post(base, { castId, kind: sheet.kind, ...body, ...(drawWith ? { model: drawWith } : {}) }),
     { success: `已排入生成：${personaName}・${text.title}`, invalidate: [qk.designs(projectRef)] },
   );
+  // A design's feedback goes to Claude by default; `auto` gives it to Codex (only shot videos are judged hard).
+  const agent = useDefaultAgent() === 'claude' ? 'Claude' : 'Codex';
   const review = useAction(
     (r: { verdict: 'approve' | 'changes' | 'regenerate'; comment?: string; attachments?: string[] }) =>
-      api.post('/api/reviews', {
+      api.post<ReviewResult>('/api/reviews', {
         targetId: v?.id,
         ...r,
         ...(r.verdict === 'regenerate' && drawWith ? { model: drawWith } : {}),
       }),
     {
-      success: (_d, r) =>
-        r.verdict === 'changes'
-          ? '意見已交給 Codex'
-          : r.verdict === 'regenerate'
-            ? '已排入重新生成'
-            : '已通過',
+      success: (d, r) =>
+        r.verdict === 'changes' ? sentTo(d) : r.verdict === 'regenerate' ? '已排入重新生成' : '已通過',
       invalidate: [qk.designs(projectRef), ['project']],
       onSuccess: (_d, r) => {
         if (r.verdict === 'changes') setSay(EMPTY_PROMPT);
@@ -289,7 +289,7 @@ function SheetPanel({
               size="sm"
               variant="outline"
               disabled={(!say.text.trim() && !say.images.length) || generate.isPending}
-              title="不經過 Codex，把這段話和附圖直接交給模型重畫"
+              title="不經過 Agent，把這段話和附圖直接交給模型重畫"
               onClick={() => {
                 generate.mutate({ fromDesignId: v.id, ...promptFields(say) });
                 setSay(EMPTY_PROMPT);
@@ -301,11 +301,11 @@ function SheetPanel({
             <Button
               size="sm"
               disabled={!say.text.trim() || review.isPending}
-              title="交給 Codex：它會看圖和你的附圖、改提示詞、重畫並檢查"
+              title={`交給 ${agent}：看圖和你的附圖、改提示詞、重畫並檢查`}
               onClick={() => review.mutate({ verdict: 'changes', ...promptFields(say, 'comment') })}
             >
               <SendIcon />
-              要求修改（Codex）
+              要求修改
             </Button>
           </div>
         </div>

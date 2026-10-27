@@ -12,6 +12,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner';
 import { BoardTabs } from '@/components/board-tabs';
 import { CompareSlider, type CompareSliderHandle } from '@/components/CompareSlider';
+import { agentName, waitingForClaude } from '@/components/claude';
 import { DiscussInCodex } from '@/components/codex';
 import {
   ConfirmDialog,
@@ -141,7 +142,7 @@ function defaultTarget(d: ShotDetail): Target | null {
   return null;
 }
 
-/** Codex's one-line notes that produced a version (task result) or are working on feedback about it. */
+/** The agent's one-line notes that produced a version (task result) or are working on feedback about it. */
 function notesFor(tasks: AgentTask[], versionId: string) {
   return {
     produced: tasks.filter((t) => t.resultTargetId === versionId && t.resultNote),
@@ -357,7 +358,7 @@ function VersionRow({
       {v.error ? <div className="text-red-300 text-xs">失敗原因：{v.error}</div> : null}
       {notes.produced.map((t) => (
         <div key={t.id} className="text-sky-200 text-xs">
-          Codex：{t.resultNote}
+          {agentName(t)}：{t.resultNote}
         </div>
       ))}
       <ReviewsList reviews={v.reviews} />
@@ -365,8 +366,15 @@ function VersionRow({
         .filter((t) => t.status !== 'done')
         .map((t) => (
           <div key={t.id} className="text-[11px] text-muted-foreground">
-            意見已交給 Codex（
-            {t.status === 'needs_user' ? '需要你回覆' : t.status === 'claimed' ? '處理中' : t.status}）
+            意見已交給 {agentName(t)}（
+            {t.status === 'needs_user'
+              ? '需要你回覆'
+              : t.status === 'claimed'
+                ? '處理中'
+                : waitingForClaude(t)
+                  ? '在 Claude Code 說「處理任務」'
+                  : t.status}
+            ）
           </div>
         ))}
       {extra}

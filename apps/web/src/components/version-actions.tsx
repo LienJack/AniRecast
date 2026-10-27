@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { CopyClaudeCommand, copyText, routeOf, sentTo, useDefaultAgent } from '@/components/claude';
 import { DiscussInCodex } from '@/components/codex';
 import { DirectorNote } from '@/components/director-note';
 import { ShimmerText, useActiveJob } from '@/components/generating';
@@ -23,7 +24,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { api } from '@/lib/api';
 import { BOARD_ROLE_LABEL, TIER_LABEL } from '@/lib/labels';
 import { useAction, useModels, useOverview } from '@/lib/queries';
-import type { AgentTask, Board, BoardRole, GenerationTier, ShotDetail, Take } from '@/lib/types';
+import type {
+  AgentTask,
+  Board,
+  BoardRole,
+  GenerationTier,
+  ReviewResult,
+  ShotDetail,
+  Take,
+} from '@/lib/types';
 
 type Queue = { queued: unknown[]; errors: Array<{ error: { message: string } }> };
 const FINISHED = ['ready', 'approved', 'stale', 'rejected'];
@@ -64,25 +73,35 @@ function RejectButton({ id }: { id: string }) {
   );
 }
 
-/** Who handles a change request: by the shot's difficulty (auto), Codex, or Claude (a brief to start it on). */
+/**
+ * Who handles a change request: the configured default (`agents.default`: Claude unless set otherwise), Codex, or
+ * Claude. Claude's tasks wait in the queue until the human says 處理任務 in Claude Code.
+ */
 type Agent = 'auto' | 'codex' | 'claude';
-const AGENT_LABEL: Record<Agent, string> = { auto: '自動分派', codex: 'Codex', claude: 'Claude' };
+const AGENT_LABEL: Record<Agent, string> = { auto: '預設', codex: 'Codex', claude: 'Claude' };
+const DEFAULT_LABEL = { claude: '預設（Claude）', codex: '預設（Codex）', auto: '自動分派' } as const;
+const DEFAULT_TITLE = {
+  claude: '預設交給 Claude：任務留在佇列，在 Claude Code 說「處理任務」處理；選 Codex 才由 Codex 自動接手',
+  codex: '預設交給 Codex 自動處理；選 Claude 改在 Claude Code 處理',
+  auto: '自動：簡單的交給 Codex；要換三個人以上、鏡頭裡有切鏡、或這一鏡已經退回兩次的影片，交給 Claude',
+} as const;
 
 function AgentPick({ value, onChange }: { value: Agent; onChange: (v: Agent) => void }) {
+  const fallback = useDefaultAgent();
   return (
     <Select value={value} onValueChange={(v) => onChange(v as Agent)}>
       <SelectTrigger
         size="sm"
-        className="h-8 w-[7.5rem] text-xs"
+        className="h-8 w-[8.5rem] text-xs"
         aria-label="要求修改交給誰"
-        title="自動：簡單的交給 Codex；要換三個人以上、鏡頭裡有切鏡、或這一鏡已經退回兩次的影片，整理好交給 Claude 接手"
+        title={DEFAULT_TITLE[fallback]}
       >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
         {(Object.keys(AGENT_LABEL) as Agent[]).map((a) => (
           <SelectItem key={a} value={a} className="text-xs">
-            交給：{AGENT_LABEL[a]}
+            交給：{a === 'auto' ? DEFAULT_LABEL[fallback] : AGENT_LABEL[a]}
           </SelectItem>
         ))}
       </SelectContent>
@@ -90,15 +109,15 @@ function AgentPick({ value, onChange }: { value: Agent; onChange: (v: Agent) => 
   );
 }
 
-const copy = (text: string, done: string) =>
-  navigator.clipboard.writeText(text).then(
-    () => toast.success(done),
-    () => toast.error('無法寫入剪貼簿', { description: text }),
-  );
+/** 要求修改's tooltip names the agent the request goes to. */
+const agentFor = (picked: Agent, fallback: Agent) => {
+  const to = picked === 'auto' ? fallback : picked;
+  return to === 'auto' ? 'Codex 或 Claude（依難度）' : AGENT_LABEL[to];
+};
 
 /**
- * What Codex is doing with the feedback on this version, and 交給 Claude 接手: a brief for Claude Code and the
- * command that starts it, copied for the terminal (Codex hands over on its own when the fix needs code).
+ * What happens to the feedback on this version: waiting for Claude (with the command that starts Claude Code), or
+ * what Codex is doing — and 交給 Claude 接手 for a Codex task: a brief, and the task waits for Claude instead.
  */
 function WorkingTasks({ tasks, targetId }: { tasks: AgentTask[]; targetId: string | undefined }) {
   const working = tasks.filter(
@@ -110,44 +129,38 @@ function WorkingTasks({ tasks, targetId }: { tasks: AgentTask[]; targetId: strin
       api.post<{ command: string }>(`/api/tasks/${id}/handoff`, { reason: '人類要 Claude 接手' }),
     {
       invalidate: [['shot'], ['project']],
-      onSuccess: (r) => void copy(r.command, '交接資料已整理，接手指令已複製：貼到終端機執行'),
+      onSuccess: (r) =>
+        void copyText(r.command, '已交給 Claude：指令已複製，貼到終端機執行，再說「處理任務」'),
     },
   );
-  return working.map((t) => {
-    const handoff = (t.payload as { handoff?: { to: string } }).handoff;
-    const command = handoff ? t.question?.split('執行：')[1]?.trim() : undefined;
-    return (
+  return working.map((t) =>
+    routeOf(t) === 'claude' ? (
       <div key={t.id} className="flex flex-wrap items-center gap-1.5 text-[11px] text-sky-200">
         <span>
-          {handoff
-            ? `已交給 Claude 接手：${(t.question ?? '').split('。要接手')[0]}`
-            : `Codex ${t.status === 'needs_user' ? `需要你回覆：${t.question ?? ''}` : '正在依意見修改…'}`}
+          {t.status === 'claimed'
+            ? 'Claude 正在處理…'
+            : t.status === 'needs_user'
+              ? `Claude 需要你回覆：${t.question ?? ''}`
+              : '等 Claude 處理：在 Claude Code 說「處理任務」'}
         </span>
-        {command ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 px-1.5 text-[11px]"
-            title={command}
-            onClick={() => void copy(command, '接手指令已複製：貼到終端機執行')}
-          >
-            複製接手指令
-          </Button>
-        ) : (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 px-1.5 text-[11px]"
-            disabled={handOff.isPending}
-            title="把意見、這一鏡的版本、Codex 試過的整理成交接資料，複製讓 Claude Code 接手的指令"
-            onClick={() => handOff.mutate(t.id)}
-          >
-            交給 Claude 接手
-          </Button>
-        )}
+        <CopyClaudeCommand />
       </div>
-    );
-  });
+    ) : (
+      <div key={t.id} className="flex flex-wrap items-center gap-1.5 text-[11px] text-sky-200">
+        <span>Codex {t.status === 'needs_user' ? `需要你回覆：${t.question ?? ''}` : '正在依意見修改…'}</span>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-1.5 text-[11px]"
+          disabled={handOff.isPending}
+          title="把意見、這一鏡的版本、Codex 試過的整理成交接資料，改由 Claude 處理，並複製啟動 Claude Code 的指令"
+          onClick={() => handOff.mutate(t.id)}
+        >
+          交給 Claude 接手
+        </Button>
+      </div>
+    ),
+  );
 }
 
 /**
@@ -171,6 +184,7 @@ export function BoardActions({
   const [model, setModel] = useModelPick('image', board, projectRef);
   const [say, setSay] = useState<PromptValue>(EMPTY_PROMPT);
   const [agent, setAgent] = useState<Agent>('auto');
+  const fallback = useDefaultAgent();
   const finished = board && FINISHED.includes(board.status);
   const generate = useAction(
     (fromBoardId: string | undefined) =>
@@ -192,7 +206,7 @@ export function BoardActions({
   );
   const review = useAction(
     (verdict: 'approve' | 'regenerate' | 'changes') =>
-      api.post('/api/reviews', {
+      api.post<ReviewResult>('/api/reviews', {
         targetId: board?.id,
         verdict,
         ...(verdict === 'changes' ? { ...promptFields(say, 'comment'), agent } : {}),
@@ -200,14 +214,8 @@ export function BoardActions({
       }),
     {
       invalidate,
-      success: (_r, v) =>
-        v === 'approve'
-          ? `${label}已通過`
-          : v === 'regenerate'
-            ? '已排入重新生成'
-            : agent === 'claude'
-              ? '意見已整理好交給 Claude：複製接手指令'
-              : '意見已送出',
+      success: (r, v) =>
+        v === 'approve' ? `${label}已通過` : v === 'regenerate' ? '已排入重新生成' : sentTo(r),
       onSuccess: (_r, v) => {
         if (v === 'changes') setSay(EMPTY_PROMPT);
       },
@@ -288,7 +296,7 @@ export function BoardActions({
             size="sm"
             variant="outline"
             disabled={!said || generate.isPending}
-            title="不經過 Codex：AI 導演照這段話和附圖直接重畫"
+            title="不經過 Agent：AI 導演照這段話和附圖直接重畫"
             onClick={() => generate.mutate(board.id)}
           >
             <WandIcon />
@@ -298,7 +306,7 @@ export function BoardActions({
           <Button
             size="sm"
             disabled={!say.text.trim() || review.isPending}
-            title="交給 Codex（或 Claude）：看圖和你的附圖、改提示詞、重畫並檢查"
+            title={`交給 ${agentFor(agent, fallback)}：看圖和你的附圖、改提示詞、重畫並檢查`}
             onClick={() => review.mutate('changes')}
           >
             <SendIcon />
@@ -332,6 +340,7 @@ export function TakeActions({
   const [model, setModel] = useModelPick('video', take, projectRef);
   const [say, setSay] = useState<PromptValue>(EMPTY_PROMPT);
   const [agent, setAgent] = useState<Agent>('auto');
+  const fallback = useDefaultAgent();
   const [force, setForce] = useState(false);
   const finished = take && FINISHED.includes(take.status);
   const keyApproved = d.boards.some((b) => b.role === 'key' && b.status === 'approved');
@@ -359,7 +368,7 @@ export function TakeActions({
   );
   const review = useAction(
     (verdict: 'approve' | 'regenerate' | 'changes') =>
-      api.post('/api/reviews', {
+      api.post<ReviewResult>('/api/reviews', {
         targetId: take?.id,
         verdict,
         ...(verdict === 'changes' ? { ...promptFields(say, 'comment'), agent } : {}),
@@ -367,14 +376,8 @@ export function TakeActions({
       }),
     {
       invalidate,
-      success: (_r, v) =>
-        v === 'approve'
-          ? '分鏡視頻已通過'
-          : v === 'regenerate'
-            ? '已排入重新生成'
-            : agent === 'claude'
-              ? '意見已整理好交給 Claude：複製接手指令'
-              : '意見已送出',
+      success: (r, v) =>
+        v === 'approve' ? '分鏡視頻已通過' : v === 'regenerate' ? '已排入重新生成' : sentTo(r),
       onSuccess: (_r, v) => {
         if (v === 'changes') setSay(EMPTY_PROMPT);
       },
@@ -480,7 +483,7 @@ export function TakeActions({
             size="sm"
             variant="outline"
             disabled={!said || generate.isPending}
-            title="不經過 Codex：AI 導演照這段話和附圖直接重做"
+            title="不經過 Agent：AI 導演照這段話和附圖直接重做"
             onClick={() => generate.mutate(take.id)}
           >
             <WandIcon />
@@ -490,7 +493,7 @@ export function TakeActions({
           <Button
             size="sm"
             disabled={!say.text.trim() || review.isPending}
-            title="自動：簡單的交給 Codex 修；複雜的鏡頭整理成交接資料，交給 Claude 接手"
+            title={`交給 ${agentFor(agent, fallback)}：看片和你的附圖、改提示詞、重做並檢查`}
             onClick={() => review.mutate('changes')}
           >
             <SendIcon />

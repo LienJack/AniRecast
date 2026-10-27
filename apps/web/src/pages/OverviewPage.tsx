@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { ClaudeQueue } from '@/components/claude';
 import { DiscussInCodex } from '@/components/codex';
 import { ConfirmDialog, EmptyState, ErrorState, Loading, PageHeader, Tag, Thumb } from '@/components/common';
 import { ModeBadge, StageBadge, TaskCard } from '@/components/domain';
@@ -558,6 +559,7 @@ export function OverviewPage() {
                 </Link>
               </CardHeader>
               <CardContent className="flex flex-col gap-2">
+                <ClaudeQueue tasks={o.openTasks} />
                 {o.openTasks.map((t) => (
                   <TaskCard key={t.id} task={t} showShot projectSlug={o.project.slug} />
                 ))}

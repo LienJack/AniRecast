@@ -1,6 +1,7 @@
 import { Link, useParams } from '@tanstack/react-router';
 import { RotateCcwIcon, SquareIcon } from 'lucide-react';
 import { useState } from 'react';
+import { ClaudeQueue } from '@/components/claude';
 import { DiscussionBadge } from '@/components/codex';
 import { EmptyState, ErrorState, Loading, PageHeader, Tag } from '@/components/common';
 import { ActorLink, TaskCard } from '@/components/domain';
@@ -296,7 +297,7 @@ export function TasksPage({
     <div className="flex flex-col">
       <PageHeader
         title={projectName ? `任務中心 · ${projectName}` : '任務中心'}
-        description="這個項目的背景任務（偵測、生成、合成）、Codex 討論、Codex Agent 任務和成本。"
+        description="這個項目的背景任務（偵測、生成、合成）、Codex 討論、Agent 任務（預設等 Claude 處理，指定 Codex 的由 Codex 自動接手）和成本。"
         actions={<JobsPauseButton />}
       />
       <div className="grid gap-4 p-5 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -351,6 +352,7 @@ export function TasksPage({
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
               {tasks.isError ? <ErrorState error={tasks.error} className="m-0" /> : null}
+              <ClaudeQueue tasks={tasks.data} />
               {taskList.map((t) => (
                 <TaskCard key={t.id} task={t} showShot projectSlug={slugOf(t.projectId)} />
               ))}
