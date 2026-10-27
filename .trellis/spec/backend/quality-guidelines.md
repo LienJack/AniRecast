@@ -50,7 +50,12 @@ Frame-count checks or sparse contact sheets alone do not catch unintended zoom.
 
 <!-- What level of testing is expected -->
 
-(To be filled by the team)
+### Tests run as the human, whichever shell starts them
+
+`vitest.setup.ts` deletes `CLAUDECODE` and `CODEX_THREAD_ID` before any test, because `actorFromEnv()` turns them into
+`claude` / `codex:<thread>` (see [agent-tasks.md](./agent-tasks.md)). Without that, running `pnpm -s check` from
+Claude Code makes every CLI-driven approve fail and flips `createdBy` assertions. A test about an agent identity sets
+the variable explicitly on the spawned CLI's env (e.g. `CLAUDECODE: '1'`), never by relying on the outer shell.
 
 ---
 
