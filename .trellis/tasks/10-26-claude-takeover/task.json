@@ -32,6 +32,6 @@
     "packages/cli/src/commands/setup.ts",
     "skills/anirecast/SKILL.md"
   ],
-  "notes": "Handoff written 2026-10-26; implementation not started.",
+  "notes": "Implemented and deployed 2026-10-26 (commits 3182467, 49e9dbf, 6768fe4, 9084a5d, spec c46b07c); daemon restarted, web rebuilt, ~/.claude/skills/anirecast linked, mediaHub/CLAUDE.md generated. Pending: live acceptance by the human (web review -> open/routedTo claude; Claude TUI 處理任務; manual Codex pick).",
   "meta": {}
 }
