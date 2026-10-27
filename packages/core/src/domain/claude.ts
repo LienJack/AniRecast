@@ -1,13 +1,18 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { AniError } from '@anirecast/shared';
-import { all, run, toJson } from '../db.ts';
+import type { LocalConfig } from '../config.ts';
+import { all } from '../db.ts';
 import type { Workspace } from '../workspace.ts';
-import { askUser, getAgentTask } from './agent-tasks.ts';
+import { getAgentTask, presetRoute, routeAgentTask, type TaskRoute } from './agent-tasks.ts';
 import { findActiveClip } from './clips.ts';
 import { listBoards, listTakes } from './generation.ts';
 import { getProject, projectDir } from './projects.ts';
 import { getShot } from './shots.ts';
+
+/** The one command that starts Claude Code in the workspace on its waiting tasks (web and hand-overs share it). */
+export const claudeCommand = (workspaceRoot: string): string =>
+  `cd ${workspaceRoot} && claude "處理 AniRecast 待辦任務"`;
 
 /** Where a task's brief for Claude Code goes, and the payload it records on the task. */
 export interface ClaudeHandoff {
@@ -39,8 +44,8 @@ function onScreen(ws: Workspace, shotId: string, startFrame: number): string[] {
 /**
  * Hands an agent task to Claude Code: writes a brief with everything needed to take over — what the human asked,
  * the shot, every version with its model, range and cost, the target's instruction and references, what the agent
- * tried and suggests — and puts the task to the human with the one command that starts Claude on it. For work
- * Codex cannot do: code changes (its sandbox writes only the workspace) or a problem the CLI cannot reach.
+ * tried and suggests — and routes the task to Claude, open for its next 「處理任務」 (a claim by Codex is let go).
+ * For work Codex cannot do: code changes (its sandbox writes only the workspace) or a problem the CLI cannot reach.
  */
 export function handOffToClaude(
   ws: Workspace,
@@ -48,7 +53,7 @@ export function handOffToClaude(
   input: { reason: string; tried?: string; plan?: string; repoRoot: string },
   actor: string,
   now: number = Date.now(),
-): { brief: string; command: string; question: string } {
+): { brief: string; command: string } {
   const task = getAgentTask(ws.db, taskId);
   if (task.status === 'done' || task.status === 'cancelled')
     throw new AniError('conflict', `Task ${taskId} is ${task.status}`);
@@ -168,8 +173,6 @@ export function handOffToClaude(
   const abs = ws.abs(rel);
   mkdirSync(path.dirname(abs), { recursive: true });
   writeFileSync(abs, `${lines.join('\n')}\n`);
-  const command = `cd ${input.repoRoot} && claude "接手 AniRecast 任務 ${task.id}：先讀 ${abs}"`;
-  const question = `${actor} 交給 Claude 接手：${input.reason.trim()}。要接手的話執行：${command}`;
   const handoff: ClaudeHandoff = {
     to: 'claude',
     brief: rel,
@@ -177,33 +180,37 @@ export function handOffToClaude(
     by: actor,
     at: now,
   };
-  run(ws.db, 'UPDATE agent_tasks SET payload_json = :payload WHERE id = :id', {
-    id: task.id,
-    payload: toJson({ ...task.payload, handoff }),
-  });
-  askUser(ws.db, task.id, question, actor, now);
-  return { brief: abs, command, question };
+  routeAgentTask(
+    ws.db,
+    task.id,
+    { to: 'claude', reasons: [`${actor} 交給 Claude：${input.reason.trim()}`] },
+    actor,
+    { reopen: true, extra: { handoff } },
+    now,
+  );
+  // 「處理任務」 picks it up like any other; `tasks show` points Claude at the brief.
+  return { brief: abs, command: claudeCommand(ws.root) };
 }
 
-/** Who handles a review: chosen by the human, or by the difficulty of the shot. */
+/** Who handles a review: chosen by the human, or (`auto`) the configured default. */
 export type TaskAgent = 'auto' | 'codex' | 'claude';
 
 /**
- * 半自動 routing: simple feedback goes to Codex; a shot video that is hard — three or more people to replace, cuts
- * inside the shot, or rejected twice already — is handed to Claude (a brief and a command for the human). The human
- * can pick either. A task already handed over and answered goes on with Codex.
+ * Who works on a task: the human's pick, else the configured default (`fallback`). Under `auto` (半自動) simple
+ * feedback goes to Codex and a shot video that is hard — three or more people to replace, cuts inside the shot, or
+ * rejected twice already — to Claude.
  */
 export function routeTask(
   ws: Workspace,
   taskId: string,
-  { cuts = 0 }: { cuts?: number } = {},
-): { to: 'codex' | 'claude'; reasons: string[] } {
+  { cuts = 0, fallback = 'auto' }: { cuts?: number; fallback?: LocalConfig['agents']['default'] } = {},
+): TaskRoute {
   const task = getAgentTask(ws.db, taskId);
-  const p = task.payload as { agent?: TaskAgent; targetType?: string; handoff?: unknown };
-  if (task.kind !== 'review_feedback' || p.handoff) return { to: 'codex', reasons: [] };
-  if (p.agent === 'codex') return { to: 'codex', reasons: ['人類指定 Codex'] };
-  if (p.agent === 'claude') return { to: 'claude', reasons: ['人類指定 Claude'] };
-  if (p.targetType !== 'take' || !task.shotId) return { to: 'codex', reasons: [] };
+  const preset = presetRoute(task.payload, fallback);
+  if (preset) return preset;
+  const p = task.payload as { targetType?: string };
+  if (task.kind !== 'review_feedback' || p.targetType !== 'take' || !task.shotId)
+    return { to: 'codex', reasons: [] };
   const reasons: string[] = [];
   const people = all<{ n: number }>(
     ws.db,

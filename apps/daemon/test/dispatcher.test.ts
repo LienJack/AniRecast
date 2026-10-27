@@ -61,10 +61,17 @@ describe('codex dispatcher (mock app-server)', () => {
     const { root, projectId, mockLog } = await setup();
     const ws = openWorkspace(root, { role: 'cli' });
     try {
+      const forClaude = createAgentTask(ws.db, {
+        kind: 'review_feedback',
+        projectId,
+        payload: { comment: '等 Claude' },
+        createdBy: 'user',
+      });
       const task = createAgentTask(ws.db, {
         kind: 'review_feedback',
         projectId,
-        payload: { comment: '頭髮更亮' },
+        // Codex takes only what the human gives it; everything else waits for Claude.
+        payload: { comment: '頭髮更亮', agent: 'codex' },
         createdBy: 'user',
       });
       const done = await waitFor(() => {
@@ -120,6 +127,11 @@ describe('codex dispatcher (mock app-server)', () => {
       expect(kinds).toEqual(expect.arrayContaining(['agent.started', 'agent.progress', 'agent.finished']));
       const actors = all<{ actor: string }>(ws.db, `SELECT actor FROM events WHERE kind = 'agent_task.done'`);
       expect(actors).toEqual([{ actor: 'codex:thr_mock_1' }]);
+      // The older task routed to Claude was passed over and is still waiting for it.
+      expect(getAgentTask(ws.db, forClaude.id)).toMatchObject({
+        status: 'open',
+        payload: { routedTo: 'claude' },
+      });
     } finally {
       ws.close();
     }
@@ -133,7 +145,7 @@ describe('codex dispatcher (mock app-server)', () => {
       const task = createAgentTask(ws.db, {
         kind: 'review_feedback',
         projectId,
-        payload: {},
+        payload: { agent: 'codex' },
         createdBy: 'user',
       });
       const t = await waitFor(() => {

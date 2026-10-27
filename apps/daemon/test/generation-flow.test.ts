@@ -285,6 +285,15 @@ describe('board → take → render with the fake provider', () => {
         '--comment',
         '頭髮再亮一點',
       ]);
+      // Routed to Claude (the default): Claude Code finds it, Codex does not; the human sees every task.
+      const claude = { ...t, env: { ...t.env, CLAUDECODE: '1' } };
+      const peek = await cliData<{ task: { id: string; payload: { routedTo: string } } }>(claude, [
+        'tasks',
+        'next',
+        '--peek',
+      ]);
+      expect(peek.task).toMatchObject({ id: changed.task.id, payload: { routedTo: 'claude' } });
+      expect(await cliData(claude, ['tasks', 'next', '--peek', '--for', 'codex'])).toBeNull();
       const next = await cliData<{
         task: { id: string; status: string };
         target: { absPath: string };

@@ -4,7 +4,7 @@ import { all, fromJson, one } from '../db.ts';
 import { enqueueJob } from '../jobs.ts';
 import { assertNotBlockedOut, assertQuota } from '../quota.ts';
 import type { Workspace } from '../workspace.ts';
-import { createAgentTask, getAgentTask, listAgentTasks } from './agent-tasks.ts';
+import { createAgentTask, getAgentTask, listAgentTasks, routeOf } from './agent-tasks.ts';
 import { attachToPlan, checkAttachments } from './attachments.ts';
 import { getCastMember, listCast, shotCast } from './cast.ts';
 import { markCastAnalysisQueued } from './cast-analysis.ts';
@@ -1097,7 +1097,11 @@ export function projectSummaries(ws: Workspace) {
 export function taskContext(ws: Workspace, taskId: string) {
   const task = getAgentTask(ws.db, taskId);
   const shot = task.shotId ? getShot(ws.db, task.shotId) : null;
-  const payload = task.payload as { targetType?: 'board' | 'take' | 'design'; targetId?: string };
+  const payload = task.payload as {
+    targetType?: 'board' | 'take' | 'design';
+    targetId?: string;
+    handoff?: { brief?: string };
+  };
   const target = payload.targetId
     ? payload.targetType === 'board'
       ? getBoard(ws.db, payload.targetId)
@@ -1109,6 +1113,8 @@ export function taskContext(ws: Workspace, taskId: string) {
   const project = getProject(ws.db, task.projectId);
   return {
     task,
+    // Handed over to Claude: the brief with what was asked, every version and what was tried. Read it first.
+    ...(payload.handoff?.brief ? { brief: abs(payload.handoff.brief) } : {}),
     project: { id: project.id, slug: project.slug, tier: project.generationTier },
     shot,
     target: target && {
@@ -1139,7 +1145,7 @@ export function taskContext(ws: Workspace, taskId: string) {
       payload.targetType === 'board'
         ? `Revise with \`anirecast board generate ${project.slug} --from ${payload.targetId} --extra "<instructions>" --wait\`, view the new board, then \`anirecast tasks done ${task.id} --note "…" --result <newBoardId>\`.`
         : payload.targetType === 'take'
-          ? `Revise with \`anirecast take generate ${project.slug} --from ${payload.targetId} --extra "<instructions>" --wait\` — or, when the human approved part of it, redo only the rest: \`anirecast take generate ${project.slug} ${task.shotId ?? '<shot>'} --range a-b --keep ${payload.targetId}\` (cuts: \`anirecast shots cuts ${task.shotId ?? '<shot>'}\`). Check it with \`anirecast take sheet <newTakeId>\`, then \`anirecast tasks done ${task.id} --note "…" --result <newTakeId>\`. Needs a code change? \`anirecast tasks handoff ${task.id} --to claude --reason "…"\`.`
+          ? `Revise with \`anirecast take generate ${project.slug} --from ${payload.targetId} --extra "<instructions>" --wait\` — or, when the human approved part of it, redo only the rest: \`anirecast take generate ${project.slug} ${task.shotId ?? '<shot>'} --range a-b --keep ${payload.targetId}\` (cuts: \`anirecast shots cuts ${task.shotId ?? '<shot>'}\`). Check it with \`anirecast take sheet <newTakeId>\`, then \`anirecast tasks done ${task.id} --note "…" --result <newTakeId>\`.${routeOf(task) === 'claude' ? '' : ` Needs a code change? \`anirecast tasks handoff ${task.id} --to claude --reason "…"\`.`}`
           : payload.targetType === 'design'
             ? `Revise with \`anirecast design generate ${project.slug} --from ${payload.targetId} --extra "<instructions>" --wait\`, view the new sheet, then \`anirecast tasks done ${task.id} --note "…" --result <newDesignId>\`.`
             : 'Follow the task payload.',

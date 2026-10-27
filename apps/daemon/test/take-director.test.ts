@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   addPersonaImage,
+  claimAgentTask,
   createAgentTask,
   createBoard,
   createCastMember,
@@ -320,15 +321,16 @@ describe('the video director', () => {
           await rangePsnr(path.join(root, kept.path!), path.join(root, done.path!), { from: 12, count: 12 }),
         ).toBeGreaterThan(40);
         expect(done.conform).toMatchObject({ range: { start: 0, end: 11 }, kept: { from: kept.id } });
-        // Codex hands the feedback on it to Claude: a brief, and the task put to the human with the command.
+        // Codex hands the feedback on it to Claude: a brief, and the task waits, open, for Claude.
         const db = openWorkspace(root, { role: 'cli' });
         const task = createAgentTask(db.db, {
           kind: 'review_feedback',
           projectId: projectOfShot(db.db, shotId).id,
           shotId,
-          payload: { targetType: 'take', targetId: done.id, comment: '第 0 幀還沒換' },
+          payload: { targetType: 'take', targetId: done.id, comment: '第 0 幀還沒換', agent: 'codex' },
           createdBy: 'user',
         });
+        claimAgentTask(db.db, task.id, 'codex:thr_1');
         const handed = handOffToClaude(
           db,
           task.id,
@@ -340,14 +342,14 @@ describe('the video director', () => {
         expect(brief).toContain('第 0 幀還沒換');
         expect(brief).toMatch(/\| v2 \(.+\) \| ready \| .+ \| 0–11 \|/);
         expect(brief).toContain(`anirecast tasks done ${task.id}`);
-        expect(handed.command).toBe(
-          `cd /repo && claude "接手 AniRecast 任務 ${task.id}：先讀 ${handed.brief}"`,
-        );
+        expect(handed.command).toBe(`cd ${root} && claude "處理 AniRecast 待辦任務"`);
         expect(getAgentTask(db.db, task.id)).toMatchObject({
-          status: 'needs_user',
-          payload: { handoff: { to: 'claude', by: 'codex' } },
+          status: 'open',
+          claimedBy: null,
+          payload: { routedTo: 'claude', handoff: { to: 'claude', by: 'codex' } },
         });
-        // Routing: a simple shot goes to Codex; cuts inside it, or the human's pick, send it to Claude.
+        // Routing: everything goes to Claude by default; under `auto` a simple shot goes to Codex and cuts inside
+        // it send it to Claude. The human's pick always wins.
         const feedback = (agent?: 'codex' | 'claude') =>
           createAgentTask(db.db, {
             kind: 'review_feedback',
@@ -356,15 +358,17 @@ describe('the video director', () => {
             payload: { targetType: 'take', targetId: done.id, ...(agent ? { agent } : {}) },
             createdBy: 'user',
           }).id;
+        expect(routeTask(db, feedback(), { fallback: 'claude' })).toEqual({
+          to: 'claude',
+          reasons: ['預設交給 Claude'],
+        });
         expect(routeTask(db, feedback())).toEqual({ to: 'codex', reasons: [] });
         expect(routeTask(db, feedback(), { cuts: 2 })).toEqual({
           to: 'claude',
           reasons: ['鏡頭裡有 2 個切鏡'],
         });
         expect(routeTask(db, feedback('claude')).to).toBe('claude');
-        expect(routeTask(db, feedback('codex'), { cuts: 2 }).to).toBe('codex');
-        // Once handed over and answered, it goes on with Codex.
-        expect(routeTask(db, task.id, { cuts: 2 }).to).toBe('codex');
+        expect(routeTask(db, feedback('codex'), { cuts: 2, fallback: 'claude' }).to).toBe('codex');
         db.close();
 
         // Two more parts made from the same base side by side, then joined: no model call.

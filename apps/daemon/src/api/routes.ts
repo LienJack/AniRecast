@@ -15,6 +15,7 @@ import {
   type BoardRole,
   cancelAgentTask,
   checkAttachments,
+  claudeCommand,
   closeHandoff,
   createClip,
   createHandoff,
@@ -922,7 +923,8 @@ export function registerRoutes(
         attachments?: string[];
         agent?: TaskAgent;
       }>(c);
-      const done = submitReview(ws, {
+      // A change request becomes a task routed to the agent picked here, else to the configured default.
+      return submitReview(ws, {
         targetId: b.targetId,
         verdict: b.verdict,
         comment: b.comment ?? null,
@@ -932,15 +934,6 @@ export function registerRoutes(
         ...(b.agent ? { agent: b.agent } : {}),
         actor: USER,
       });
-      // Asked for Claude: the brief and the command right away (auto routing happens when the task is picked up).
-      if (b.agent === 'claude' && 'task' in done && done.task)
-        handOffToClaude(
-          ws,
-          done.task.id,
-          { reason: '人類指定交給 Claude', repoRoot: REPO_ROOT.replace(/\/$/, '') },
-          USER,
-        );
-      return done;
     }),
   );
 
@@ -1085,6 +1078,8 @@ export function registerRoutes(
           model: config.codex.model,
           effort: config.codex.effort,
         },
+        // Who gets new tasks, and the command that starts Claude on the ones waiting for it.
+        agents: { default: config.agents.default, claudeCommand: claudeCommand(ws.root) },
         quota: quotaView(ws),
       };
     }),
@@ -1099,7 +1094,7 @@ export function registerRoutes(
     }),
   );
   app.post('/api/tasks/:id/cancel', (c) => handle(c, () => cancelAgentTask(ws.db, c.req.param('id'), USER)));
-  // 交給 Claude 接手: a brief for Claude Code and the command that starts it (copied by the web).
+  // 交給 Claude 接手: a brief for Claude Code; the task waits for Claude (the web copies the command that starts it).
   app.post('/api/tasks/:id/handoff', async (c) =>
     handle(c, async () => {
       const b = await body<{ reason?: string; tried?: string; plan?: string }>(c).catch(

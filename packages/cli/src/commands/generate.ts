@@ -56,6 +56,7 @@ import {
   queueTakeMerge,
   queueTakePlan,
   quotaOverview,
+  type RoutedTo,
   rejectVersion,
   resolveBindings,
   safetyBlockCount,
@@ -818,18 +819,22 @@ export function registerGenerate(program: Command): void {
     );
   review
     .command('request-changes <version>')
-    .description('Reject with a comment; an agent task hands the comment to Codex')
+    .description('Reject with a comment; an agent task hands the comment to Claude Code or Codex')
     .requiredOption('--comment <text>', 'what to change')
+    .option('--agent <agent>', 'claude|codex: who handles it (default: agents.default in the config)')
     .action(
-      command((id: string, opts: { comment: string }) =>
-        withWorkspace(globals(), (ws) =>
-          submitReview(ws, {
+      command((id: string, opts: { comment: string; agent?: string }) =>
+        withWorkspace(globals(), (ws) => {
+          if (opts.agent && opts.agent !== 'claude' && opts.agent !== 'codex')
+            throw new AniError('usage', `--agent must be claude or codex (got ${opts.agent})`);
+          return submitReview(ws, {
             targetId: id,
             verdict: 'changes',
             comment: opts.comment,
+            ...(opts.agent ? { agent: opts.agent as RoutedTo } : {}),
             actor: actorFromEnv(),
-          }),
-        ),
+          });
+        }),
       ),
     );
   review
@@ -961,16 +966,28 @@ export function registerGenerate(program: Command): void {
 
   const tasks = program
     .command('tasks')
-    .description('Agent tasks: review feedback and identity checks handed to Codex');
+    .description('Agent tasks: review feedback, identity and shot checks for Claude Code or Codex');
+  /** `--for`, else by who runs it: Claude its own tasks, Codex its own, the human every task. */
+  const forAgent = (opt: string | undefined): RoutedTo | undefined => {
+    const v =
+      opt ?? (actorFromEnv() === 'claude' ? 'claude' : actorFromEnv().startsWith('codex:') ? 'codex' : 'all');
+    if (v === 'claude' || v === 'codex') return v;
+    if (v === 'all') return undefined;
+    throw new AniError('usage', `--for must be claude, codex or all (got ${v})`);
+  };
+  const FOR_HELP = 'claude|codex|all: tasks routed to that agent (default: yours; all for the human)';
   tasks
     .command('list')
     .option('--status <status>', 'open|claimed|done|needs_user|cancelled')
     .option('--open', 'shortcut for --status open')
+    .option('--for <agent>', FOR_HELP)
     .action(
-      command((opts: { status?: AgentTaskStatus; open?: boolean }) =>
-        withWorkspace(globals(), (ws) =>
-          listAgentTasks(ws.db, opts.open ? { status: 'open' } : opts.status ? { status: opts.status } : {}),
-        ),
+      command((opts: { status?: AgentTaskStatus; open?: boolean; for?: string }) =>
+        withWorkspace(globals(), (ws) => {
+          const agent = forAgent(opts.for);
+          const status = opts.open ? 'open' : opts.status;
+          return listAgentTasks(ws.db, { ...(status ? { status } : {}), ...(agent ? { agent } : {}) });
+        }),
       ),
     );
   tasks
@@ -980,12 +997,14 @@ export function registerGenerate(program: Command): void {
     .command('next')
     .description('Claim the oldest open task and print everything needed to act on it')
     .option('--peek', 'show without claiming')
+    .option('--for <agent>', FOR_HELP)
     .action(
-      command((opts: { peek?: boolean }) =>
+      command((opts: { peek?: boolean; for?: string }) =>
         withWorkspace(globals(), (ws) => {
+          const agent = forAgent(opts.for);
           const task = opts.peek
-            ? listAgentTasks(ws.db, { status: 'open' })[0]
-            : claimNextAgentTask(ws.db, actorFromEnv());
+            ? listAgentTasks(ws.db, { status: 'open', ...(agent ? { agent } : {}) })[0]
+            : claimNextAgentTask(ws.db, actorFromEnv(), agent ? { agent } : {});
           return task ? taskContext(ws, task.id) : null;
         }),
       ),
@@ -1022,7 +1041,7 @@ export function registerGenerate(program: Command): void {
   tasks
     .command('handoff <task>')
     .description(
-      'Hand a task to Claude Code when it needs a code change (your sandbox writes only the workspace) or something the CLI cannot do: writes a brief and asks the human to start Claude on it',
+      'Hand a task to Claude Code when it needs a code change (your sandbox writes only the workspace) or something the CLI cannot do: writes a brief and routes the task to Claude',
     )
     .option('--to <agent>', 'who takes over (claude)', 'claude')
     .requiredOption('--reason <text>', 'why you cannot finish it yourself')

@@ -11,14 +11,17 @@ import {
   getProject,
   getShot,
   getTake,
-  handOffToClaude,
   type LocalConfig,
   listAgentTasks,
   listKeyframes,
+  presetRoute,
   recordCodexUsage,
   releaseAgentTask,
+  routeAgentTask,
+  routeOf,
   routeTask,
   saveCodexThread,
+  type TaskRoute,
   type ThreadScope,
   type Workspace,
 } from '@anirecast/core';
@@ -65,6 +68,8 @@ export async function startCodexClient(
     ),
   };
   delete env.CODEX_SANDBOX;
+  // A daemon started from a Claude Code shell must not make Codex's commands look like Claude's.
+  delete env.CLAUDECODE;
   const client = new AppServerClient({
     command: command.command,
     args: command.args,
@@ -95,7 +100,10 @@ export const codexCommandMissing = () =>
     hint: 'Install the Codex desktop app or CLI, or set codex.binPath.',
   });
 
-/** Hands open agent tasks to Codex through `codex app-server`, up to `codex.concurrency` turns at once (design §8.4). */
+/**
+ * Routes open agent tasks (Claude or Codex) and hands Codex's to it through `codex app-server`, up to
+ * `codex.concurrency` turns at once (design §8.4). Claude's wait for the human to say 「處理任務」 in its TUI.
+ */
 export class AgentDispatcher {
   private readonly opts: Required<Omit<DispatcherOptions, 'command'>> & { command: CodexCommand | undefined };
   private client: AppServerClient | undefined;
@@ -153,28 +161,18 @@ export class AgentDispatcher {
     this.picking = true;
     try {
       const db = this.opts.workspace.db;
+      // Tasks not routed yet: the `auto` default (the shot is judged here) and ones from before routes were kept.
+      for (const t of listAgentTasks(db, { status: 'open' }).filter((x) => !routeOf(x))) {
+        if (this.stopped) return;
+        routeAgentTask(db, t.id, await this.route(t), ACTOR);
+      }
       const max = Math.max(1, this.opts.config.codex.concurrency ?? 3);
       while (this.running.size < max && !this.stopped && Date.now() >= this.backoffUntil) {
         const claimedShots = new Set(listAgentTasks(db, { status: 'claimed' }).map((t) => t.shotId));
-        const next = listAgentTasks(db, { status: 'open' }).find(
+        const next = listAgentTasks(db, { status: 'open', agent: 'codex' }).find(
           (t) => !this.running.has(t.id) && (!t.shotId || !claimedShots.has(t.shotId)),
         );
         if (!next) return;
-        // 半自動: a hard shot video goes to Claude (a brief and a command for the human) instead of Codex.
-        const route = await this.route(next);
-        if (route.to === 'claude') {
-          handOffToClaude(
-            this.opts.workspace,
-            next.id,
-            {
-              reason: `複雜鏡頭（${route.reasons.join('、')}），交給 Claude 接手`,
-              repoRoot: REPO_ROOT.replace(/\/$/, ''),
-            },
-            'anirecast',
-          );
-          this.event('agent.handoff', next, { to: 'claude', reasons: route.reasons });
-          continue;
-        }
         const task = claimAgentTask(db, next.id, ACTOR);
         this.running.add(task.id);
         this.syncStatus();
@@ -215,19 +213,26 @@ export class AgentDispatcher {
     }
   }
 
-  /** Codex or Claude for a task; cuts inside the shot count toward a hard shot. */
-  private async route(task: AgentTask): Promise<{ to: 'codex' | 'claude'; reasons: string[] }> {
+  /** Codex or Claude for a task; under `auto`, cuts inside the shot count toward a hard shot. */
+  private async route(task: AgentTask): Promise<TaskRoute> {
     const ws = this.opts.workspace;
-    const p = task.payload as { targetType?: string; agent?: string; handoff?: unknown };
+    const fallback = this.opts.config.agents.default;
+    const p = task.payload as { targetType?: string };
     let cuts = 0;
-    if (task.kind === 'review_feedback' && p.targetType === 'take' && !p.agent && !p.handoff && task.shotId) {
+    // The scan decodes the whole segment: only when the shot is what decides.
+    if (
+      !presetRoute(task.payload, fallback) &&
+      task.kind === 'review_feedback' &&
+      p.targetType === 'take' &&
+      task.shotId
+    ) {
       const shot = getShot(ws.db, task.shotId);
       if (shot.sourcePath)
         cuts = (await sceneChanges(ws.abs(shot.sourcePath)).catch(() => [])).filter(
           (c) => c.kind === 'cut',
         ).length;
     }
-    return routeTask(ws, task.id, { cuts });
+    return routeTask(ws, task.id, { cuts, fallback });
   }
 
   /** One app-server for every concurrent task: tasks starting together share its start-up. */

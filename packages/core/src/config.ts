@@ -54,6 +54,11 @@ export interface LocalConfig {
     /** Agent tasks Codex works on at once (each in its own thread; never two on one shot). */
     concurrency?: number;
   };
+  /**
+   * Who handles agent tasks the human did not give to anyone: `claude` (Claude Code, worked from its TUI), `codex`
+   * (the dispatcher), or `auto` (Codex, but hard shot videos to Claude). A pick on the web always wins.
+   */
+  agents: { default: 'claude' | 'codex' | 'auto' };
   /** After shot detection, queue the Flash analysis and same-person identification automatically. */
   pipeline: { autoAnalyze: boolean };
   limits: {
@@ -87,7 +92,9 @@ export const DEFAULT_CONFIG: LocalConfig = {
   continuity: { enabled: true, autoMerge: 0.85, review: 0.5, maxShotSeconds: 10 },
   budget: { capUsd: null },
   concurrency: { generate: 3, media: 2, io: 2, video: 3 },
+  // Codex still takes the tasks routed to it (the human picks Codex on the web); every other task waits for Claude.
   codex: { autoDispatch: true, binPath: null, model: 'gpt-6.1-sol', effort: 'high', concurrency: 3 },
+  agents: { default: 'claude' },
   pipeline: { autoAnalyze: true },
   // Omni allows 100 requests a day on API tier 2 (measured 2026-10-25); raise it after upgrading the tier.
   limits: {
