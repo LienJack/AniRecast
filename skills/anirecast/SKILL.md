@@ -242,6 +242,7 @@ anirecast take frames <project> <shot> --range a-b --keep <take>   # 逐格重�
 anirecast take still <project> <shot> [--board <board>]   # hold a board for the shot's length (no model, no cost); --board names one the human asked to hold, even one sent back
 anirecast review reject <version>           # (human) 拒絕: out of 待評審, nothing more to do
 anirecast shots prepare <shot...>           # cut a damaged source segment again from the clip
+anirecast project prune <project> [--dry-run]   # (human's call) delete failed/cancelled versions; files go to trash/versions/
 anirecast tasks handoff <task> --to claude --reason "…"   # hand a task that needs code to Claude Code
 anirecast design list <project>             # bindings: original → library character, analysis, note, sheets
 anirecast design analyze <project> <cast>   # 原片分析 of one original (add --generate to redraw the sheets after)

@@ -15,7 +15,9 @@ import {
   initWorkspace,
   listBoards,
   listReviews,
+  listTakes,
   mapCast,
+  pruneFailedVersions,
   queueBoard,
   recomputeShotModes,
   replaceShots,
@@ -100,6 +102,63 @@ describe("deleting a shot's versions", () => {
       createdBy: 'user',
     });
     expect(() => discardShotVersions(ws, shot!.id, 'user')).toThrow(/still being generated/);
+    ws.close();
+  });
+
+  it('prunes only failed and cancelled versions of a project', () => {
+    const ws = initWorkspace(path.join(tempDir(), 'ws'));
+    const src = createSource(ws.db, { title: 'op' }, 'user');
+    updateSource(ws.db, src.id, { status: 'ready', fpsNum: 24, fpsDen: 1, durationMs: 1_000 }, 'daemon');
+    const project = createProject(ws.db, { name: 'OP', sourceId: src.id }, 'user');
+    const clip = createClip(ws.db, { projectRef: project.id, inFrame: 0, outFrame: 24 }, 'user');
+    const [shot] = replaceShots(ws.db, clip.id, [{ start: 0, end: 23 }], 'daemon');
+    mkdirSync(ws.abs('projects/op/shots'), { recursive: true });
+    writeFileSync(ws.abs('projects/op/shots/t002.mp4'), 'part');
+    const version = (table: string, id: string, n: number, status: string, file: string | null) =>
+      run(
+        ws.db,
+        `INSERT INTO ${table} (id, shot_id, version, status, path, prompt, model, created_by, created_at${table === 'takes' ? ', tier' : ''})
+         VALUES (:id, :shotId, :n, :status, :file, 'p', 'm', 'user', :n${table === 'takes' ? ", 'final'" : ''})`,
+        { id, shotId: shot!.id, n, status, file },
+      );
+    version('boards', 'brd_ok', 1, 'approved', null);
+    version('boards', 'brd_bad', 2, 'failed', null);
+    version('takes', 'tak_ok', 1, 'ready', null);
+    version('takes', 'tak_bad', 2, 'failed', 'projects/op/shots/t002.mp4');
+    run(ws.db, `UPDATE takes SET parent_id = 'tak_bad' WHERE id = 'tak_ok'`);
+    run(
+      ws.db,
+      `INSERT INTO designs (id, project_id, kind, version, status, prompt, model, created_by, created_at)
+       VALUES ('dsn_bad', :projectId, 'turnaround', 1, 'failed', 'p', 'm', 'user', 1)`,
+      { projectId: project.id },
+    );
+
+    expect(() => pruneFailedVersions(ws, project.slug, 'codex:thr_1')).toThrow(/human/);
+    const counts = { boards: 1, takes: 1, designs: 1 };
+    expect(pruneFailedVersions(ws, project.slug, 'user', 1, { dryRun: true })).toEqual({
+      ...counts,
+      trash: null,
+    });
+    expect(listBoards(ws.db, shot!.id)).toHaveLength(2);
+
+    const done = pruneFailedVersions(ws, project.slug, 'user', 1_700_000_000_000);
+    expect(done).toEqual({ ...counts, trash: 'trash/versions/op/failed-1700000000000' });
+    expect(listBoards(ws.db, shot!.id).map((b) => b.id)).toEqual(['brd_ok']);
+    expect(listTakes(ws.db, shot!.id).map((t) => [t.id, t.parentId])).toEqual([['tak_ok', null]]);
+    expect(existsSync(ws.abs('projects/op/shots/t002.mp4'))).toBe(false);
+    expect(existsSync(ws.abs(`${done.trash}/projects/op/shots/t002.mp4`))).toBe(true);
+    const saved = JSON.parse(readFileSync(ws.abs(`${done.trash}/versions.json`), 'utf8'));
+    expect([saved.boards[0].id, saved.takes[0].id, saved.designs[0].id]).toEqual([
+      'brd_bad',
+      'tak_bad',
+      'dsn_bad',
+    ]);
+    expect(pruneFailedVersions(ws, project.slug, 'user')).toEqual({
+      boards: 0,
+      takes: 0,
+      designs: 0,
+      trash: null,
+    });
     ws.close();
   });
 });

@@ -24,6 +24,7 @@ import {
   mergeShots,
   projectModels,
   projectOfShot,
+  pruneFailedVersions,
   queueShotCast,
   queueStyleAnalysis,
   recomputeShotModes,
@@ -242,6 +243,19 @@ export function registerMedia(program: Command): void {
     .action(
       command((ref: string, tier: GenerationTier) =>
         withWorkspace(globals(), (ws) => setGenerationTier(ws.db, ref, tier, actorFromEnv())),
+      ),
+    );
+  project
+    .command('prune <project>')
+    .description(
+      'Delete failed and cancelled versions (storyboard frames, takes, design sheets); files go to trash/versions/…, every other version stays',
+    )
+    .option('--dry-run', 'only count them')
+    .action(
+      command((ref: string, opts: { dryRun?: boolean }) =>
+        withWorkspace(globals(), (ws) =>
+          pruneFailedVersions(ws, ref, actorFromEnv(), Date.now(), { dryRun: Boolean(opts.dryRun) }),
+        ),
       ),
     );
 
