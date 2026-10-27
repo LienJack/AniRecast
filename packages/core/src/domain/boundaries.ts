@@ -9,7 +9,7 @@ export interface ShotBoundary {
   verdict: BoundaryVerdict;
   confidence: number | null;
   reason: string | null;
-  /** `jev:<model>`, `codex:<thread>`, `user` or `daemon`. */
+  /** `jev:<model>`, `codex:<thread>`, `claude`, `user` or `daemon`. */
   decidedBy: string;
   /** A human decision; judges and Codex never override it. */
   locked: boolean;
@@ -97,5 +97,5 @@ export function recordBoundary(
   return true;
 }
 
-/** A human split or merge is a locked decision; one by Codex or the daemon can still be revisited. */
+/** A human split or merge is a locked decision; one by Codex, Claude Code or the daemon can still be revisited. */
 export const isHumanActor = (actor: string): boolean => actor === 'user';

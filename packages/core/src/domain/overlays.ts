@@ -96,7 +96,8 @@ export function setOverlayRemoval(
       category === 'in_scene'
         ? false
         : (patch.remove ?? (patch.category ? defaultRemove(category) : row.remove === 1));
-    const decidedBy = actor.startsWith('codex:') ? 'codex' : 'user';
+    // Only the human's call is `user`; Claude, Codex and the daemon decide as AI (`decided_by` allows no other value).
+    const decidedBy = actor === 'user' ? 'user' : 'codex';
     run(
       db,
       'UPDATE text_overlays SET category = :category, remove = :remove, decided_by = :decidedBy WHERE id = :overlayId',

@@ -69,7 +69,14 @@ export function latestEventSeq(db: Db): number {
   return one<{ seq: number | null }>(db, 'SELECT MAX(seq) AS seq FROM events')?.seq ?? 0;
 }
 
-/** `codex:<thread>` when running inside a Codex sandbox turn, otherwise the human user. */
+/**
+ * `codex:<thread>` inside a Codex sandbox turn, `claude` inside Claude Code (its shell sets `CLAUDECODE=1`),
+ * otherwise the human user. Codex first: a Codex turn started from a Claude shell is still Codex.
+ */
 export function actorFromEnv(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CODEX_THREAD_ID ? `codex:${env.CODEX_THREAD_ID}` : 'user';
+  if (env.CODEX_THREAD_ID) return `codex:${env.CODEX_THREAD_ID}`;
+  return env.CLAUDECODE === '1' ? 'claude' : 'user';
 }
+
+/** An AI agent (Codex or Claude Code), not the human: it may recommend but never approve. */
+export const isAgentActor = (actor: string): boolean => actor.startsWith('codex:') || actor === 'claude';

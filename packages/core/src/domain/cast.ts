@@ -79,8 +79,10 @@ const toTracklet = (r: TrackletRow): Tracklet => ({
   bodyCropPath: r.body_crop_path,
 });
 
-/** `codex:<thread>` actors are Codex decisions; everyone else is the human user. */
-/** Only a person locks a decision; Codex, the JEV judge and other programs decide as AI (`codex`). */
+/**
+ * Only a person locks a decision; Codex, Claude Code, the JEV judge and other programs decide as AI (`codex`: the
+ * `source` CHECK allows codex/user only), so the human can still change what Claude decided.
+ */
 export const sourceOfActor = (actor: string): DecisionSource => (actor === 'user' ? 'user' : 'codex');
 
 export function listLooks(db: Db, castMemberId: string): Look[] {

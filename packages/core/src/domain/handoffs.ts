@@ -1199,7 +1199,8 @@ function applyOne(ws: Workspace, h: Handoff, a: HandoffAction, actor: string): s
 
 /**
  * Imports the ticked actions (all by default) in order. Each succeeds or fails on its own; an action that
- * already succeeded is never run twice. Importing is the human's decision, so Codex cannot do it.
+ * already succeeded is never run twice. Importing is the human's decision, so Codex cannot do it; Claude Code can
+ * when the human asks for it in the TUI.
  */
 export function applyHandoff(
   ws: Workspace,

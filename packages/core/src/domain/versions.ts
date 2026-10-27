@@ -27,7 +27,7 @@ export function shotVersionCount(db: Db, shotId: string): { boards: number; take
  * Deletes every storyboard frame and take of a shot so it can be split or merged freely. The files move to
  * `trash/versions/<project>/<shot>-<time>/` together with `versions.json` (the deleted records), so nothing is
  * lost for good; reviews of those versions go, open agent tasks about them are cancelled. A person's decision:
- * Codex cannot do it, and nothing may still be generating.
+ * Codex cannot do it (Claude Code can, when the human asks in the TUI), and nothing may still be generating.
  */
 export function discardShotVersions(
   ws: Workspace,

@@ -1,6 +1,6 @@
 import { AniError, newId } from '@anirecast/shared';
 import { all, type Db, fromJson, one, run, toJson, tx } from '../db.ts';
-import { appendEvent } from '../events.ts';
+import { appendEvent, isAgentActor } from '../events.ts';
 import { type CastMember, listCast } from './cast.ts';
 import { getCastAnalysis } from './cast-analysis.ts';
 import type { InputRef, Review, Verdict, VersionStatus } from './generation.ts';
@@ -347,8 +347,11 @@ export function reviewDesign(
     if (input.verdict === 'approve') {
       if (!['ready', 'approved', 'stale'].includes(d.status))
         throw new AniError('conflict', `Only a finished design can be approved (this one is ${d.status})`);
-      if (input.createdBy.startsWith('codex:'))
-        throw new AniError('conflict', 'Approval is a human decision; Codex can recommend but not approve');
+      if (isAgentActor(input.createdBy))
+        throw new AniError(
+          'conflict',
+          'Approval is a human decision; an agent can recommend but not approve',
+        );
       run(
         db,
         `UPDATE designs SET status = 'ready' WHERE project_id = :p AND persona_id IS :q AND kind = :k

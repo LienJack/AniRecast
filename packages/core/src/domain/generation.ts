@@ -1,6 +1,6 @@
 import { AniError, newId } from '@anirecast/shared';
 import { all, type Db, fromJson, one, run, toJson, tx } from '../db.ts';
-import { appendEvent } from '../events.ts';
+import { appendEvent, isAgentActor } from '../events.ts';
 import type { GenerationTier } from './projects.ts';
 import { getShot, projectOfShot, updateShot } from './shots.ts';
 
@@ -386,8 +386,11 @@ export function addReview(
           'conflict',
           `Only a finished version can be approved (this one is ${target.status})`,
         );
-      if (input.createdBy.startsWith('codex:'))
-        throw new AniError('conflict', 'Approval is a human decision; Codex can recommend but not approve');
+      if (isAgentActor(input.createdBy))
+        throw new AniError(
+          'conflict',
+          'Approval is a human decision; an agent can recommend but not approve',
+        );
       const table = input.targetType === 'board' ? 'boards' : 'takes';
       const sameKind = input.targetType === 'take' ? 'AND tier = :tier' : 'AND role = :role';
       run(

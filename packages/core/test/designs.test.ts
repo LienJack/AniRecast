@@ -269,6 +269,9 @@ describe('character design', () => {
     expect(() =>
       submitReview(ws, { targetId: turnaround!.design.id, verdict: 'approve', actor: 'codex:thr_1' }),
     ).toThrow(/human decision/);
+    expect(() =>
+      submitReview(ws, { targetId: turnaround!.design.id, verdict: 'approve', actor: 'claude' }),
+    ).toThrow(/human decision/);
     submitReview(ws, { targetId: turnaround!.design.id, verdict: 'approve', actor: 'user' });
     submitReview(ws, { targetId: expressions!.design.id, verdict: 'approve', actor: 'user' });
     const roles = planBoard(ws, shotId).inputs.map((i) => i.path);

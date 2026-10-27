@@ -97,6 +97,10 @@ describe('three storyboard frames', () => {
     const [key, first] = queueBoards(ws, shotId, 'user').boards.map((q) => q.board);
     for (const b of [first!, key!]) finish(ws, b.id);
     expect(shotStage(ws.db, shotId, 'final')).toBe('board_review');
+    // Claude Code, like Codex, recommends; the human approves.
+    expect(() => submitReview(ws, { targetId: first!.id, verdict: 'approve', actor: 'claude' })).toThrow(
+      /human decision/,
+    );
     submitReview(ws, { targetId: first!.id, verdict: 'approve', actor: 'user' });
     expect(shotStage(ws.db, shotId, 'final')).toBe('board_review');
     submitReview(ws, { targetId: key!.id, verdict: 'approve', actor: 'user' });
